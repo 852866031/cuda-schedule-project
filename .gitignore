@@ -1,3 +1,4 @@
 .vscode/*
 .vscode
 .claude/*
+__pycache__/*
