@@ -8,8 +8,9 @@ This repo is organized around several measurement layers:
 - **DCGM** for aggregated hardware telemetry such as `SM_ACTIVE` and `SM_OCCUPANCY`
 - **Nsight Systems** for CPU–GPU timeline structure
 - **Nsight Compute** for kernel-level efficiency and bottleneck analysis
+- **CUPTI** for injection-based kernel tracing and hardware counter profiling on unmodified CUDA applications
 
-The repository currently contains the top-level directories `.vscode`, `DCGM`, `cpu_util`, `nsight_compute`, `nsight_systems`, and `nvml`.
+The repository currently contains the top-level directories `.vscode`, `DCGM`, `cpu_util`, `cupti`, `nsight_compute`, `nsight_systems`, and `nvml`.
 
 ## Repository layout
 
@@ -27,6 +28,15 @@ Contains a two-GPU kernel experiment (`workload_two_gpu.py`), DCGM helpers, a tu
 
 ### `nsight_systems/`
 Contains a two-GPU inference-pipeline example (`inf_sys.py`), NVML/DCGM runners, combined plotting code, a `Makefile`, and a local README. The goal is to show that similar GPU activity does not necessarily imply similar productive or service-level utilization.  [oai_citation:5‡GitHub](https://github.com/852866031/gpu-util-demo/tree/main/nsight_systems)
+
+### `cupti/`
+Contains two injection-based CUPTI libraries for profiling unmodified CUDA applications, plus an LLM inference workload (Llama-3-8B) for realistic testing and plotting scripts for visualization.
+
+- **Tracer** (`tracer/`) — a lightweight library that attaches via `CUDA_INJECTION64_PATH` and records every kernel's launch count and GPU execution time into CSV hotspot tables. Overhead is ~1-5%.
+- **Auto-Profiler** (`profiler/`) — a more advanced library that cycles between tracing and profiling. It traces kernels to identify the hottest one, then uses CUPTI's Profiler API with hardware counter collection (AutoRange + KernelReplay) to profile that kernel's next launch. The kernel is transparently replayed across multiple passes to read hardware performance counters (SM utilization, occupancy, DRAM throughput). Results are written to JSON files with per-cycle metrics.
+- **Plotting** (`plot_all.py`) — generates hotspot charts, overhead comparison across all three modes (baseline / tracer / profiler), and per-cycle profiling analysis with SM utilization breakdown, DRAM traffic, and automated bottleneck diagnosis.
+
+See [cupti/README.md](cupti/README.md) for the full workflow, and [cupti/profiler/README.md](cupti/profiler/README.md) for detailed documentation on the profiler's kernel replay mechanism and metric interpretation.
 
 ## Create a conda environment
 
@@ -70,6 +80,9 @@ Suggested workflow
 4. Compare pipeline efficiency
 	•	nsight_systems/ to see why similar GPU activity does not imply similar throughput or latency at the pipeline level
 
+5. Injection-based profiling on real workloads
+	•	cupti/ to trace and profile an LLM inference workload without modifying the application, and collect hardware performance counters for the hottest kernels
+
 Examples
 
 Run the Nsight Systems inference example directly:
@@ -95,4 +108,13 @@ make run
 make plot
 make ncu-gather
 make ncu-dense
+```
+
+Run the CUPTI tracing and profiling workflow on an LLM workload:
+
+```
+cd ../cupti
+make llm-trace        # trace kernel hotspots
+make llm-profile      # auto-profile the hottest kernel (requires sudo)
+make plot             # generate hotspot, overhead, and profiling charts
 ```
