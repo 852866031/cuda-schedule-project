@@ -1,0 +1,2 @@
+trigger_round,kernel_name,callback_name,start_ns,end_ns,duration_us,profiling_started,profiling_finished,note
+1,"void cutlass::Kernel2<cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_128x2_tn_align8>(cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_128x2_tn_align8::Params)","_ZN7cutlass7Kernel2I66cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_128x2_tn_align8EEvNT_6ParamsE",29288347124968,29288347154748,29.78,1,1,"target_session_stopped_decoded"

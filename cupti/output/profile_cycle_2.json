@@ -1,0 +1,15 @@
+{
+  "cycle": 2,
+  "target_kernel": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_128x2_tn_align8>(cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_128x2_tn_align8::Params)",
+  "trace_duration_s": 10,
+  "total_launches": 93183,
+  "total_gpu_time_ms": 4666.21,
+  "avg_duration_us": 50.0758,
+  "metrics": {
+    "sm__cycles_elapsed.avg": 74151.6,
+    "sm__cycles_active.avg": 67594.1,
+    "sm__warps_active.avg": 101384,
+    "dram__bytes_read.sum": 3.35762e+07,
+    "dram__bytes_write.sum": 6.0119e+06
+  }
+}

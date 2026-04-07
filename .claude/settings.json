@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /usr/local/cuda-12.8 -name libcupti* -o -name libnvperf*)",
+      "Bash(find /usr/local/cuda-12.8 -name *.cpp -path */profiler*)",
+      "Bash(find /usr/local/cuda-12.8 -name *.cpp -path */sample* -name *profil*)",
+      "Bash(find /usr/local/cuda /usr/local/cuda-* -name nvperf_host.h -o -name nvperf_cuda_host.h -o -name nvperf_target.h)",
+      "Bash(head -20 grep -rn \"CUpti_Device_GetChipName\\\\|cuptiDeviceGetChipName\" /usr/local/cuda/extras/CUPTI/include/)",
+      "Bash(/dev/null find:*)",
+      "Bash(find /usr/local/cuda-12.8 -name cupti*.h)",
+      "Bash(head -20 grep -rn \"GetChipName\\\\|chipName\\\\|pChipName\" /usr/local/cuda-12.8/targets/x86_64-linux/include/cupti_profiler_host.h)",
+      "Bash(head -20 grep -n \"GetChipName\\\\|ChipName\\\\|GetCounterAvailability\" /usr/local/cuda-12.8/targets/x86_64-linux/include/cupti_profiler_target.h)",
+      "Bash(head -10 grep -n \"NVPW_MetricEvalRequest_STRUCT_SIZE\\\\|NVPW_MetricEvalRequest\\\\b\" /usr/local/cuda-12.8/targets/x86_64-linux/include/nvperf_host.h)"
+    ]
+  }
+}
