@@ -362,6 +362,127 @@ JSON structure:
 }
 ```
 
+## Understanding the profiled metrics
+
+### NVPW metric naming convention
+
+NVIDIA Perfworks metric names follow a structured format:
+
+```
+<unit>__<quantity>.<rollup>
+```
+
+- **unit** — the hardware unit being measured (e.g. `sm` = streaming multiprocessor, `dram` = device memory, `lts` = L2 cache).
+- **quantity** — what is being counted (e.g. `cycles_active`, `bytes_read`, `warps_active`).
+- **rollup** — how per-unit values are aggregated: `.avg` (average across all units), `.sum` (total across all units), `.min`, `.max`, `.per_cycle_active`, etc.
+
+For example, `sm__cycles_active.avg` means: "the number of cycles during which the SM was doing useful work, averaged across all SMs on the GPU."
+
+### Default metrics explained
+
+These are the five metrics collected by default. They give a first-order picture of whether a kernel is compute-bound, memory-bound, or underutilizing the GPU.
+
+#### `sm__cycles_elapsed.avg`
+
+**What it is:** The total number of GPU clock cycles that elapsed from the start to the end of the kernel, averaged across all SMs.
+
+**What it tells you:** This is the wall-clock duration of the kernel in GPU cycles. Multiply by the GPU clock period to get time in nanoseconds. It includes all time — active computation, stalls, idle gaps, everything.
+
+**How to use it:** This is the denominator for utilization calculations. Comparing it against `sm__cycles_active.avg` tells you what fraction of elapsed time the SMs were actually busy.
+
+#### `sm__cycles_active.avg`
+
+**What it is:** The number of GPU clock cycles during which the SM had at least one active warp (i.e., was doing useful work), averaged across all SMs.
+
+**What it tells you:** How much of the kernel's execution time the SMs were actually doing something, as opposed to sitting idle waiting for memory, synchronization, or other stalls.
+
+**How to use it:** Compute the **SM active ratio**:
+
+```
+active_ratio = sm__cycles_active.avg / sm__cycles_elapsed.avg
+```
+
+- Close to 1.0 → the SMs are busy for the entire kernel duration. Good utilization.
+- Much less than 1.0 → the SMs are frequently idle. The kernel is likely bottlenecked on memory, synchronization barriers, or has insufficient parallelism.
+
+#### `sm__warps_active.avg`
+
+**What it is:** The average number of warps (groups of 32 threads) that are resident and eligible for execution on an SM, averaged across all SMs and all cycles.
+
+**What it tells you:** This is a direct measure of **occupancy** — how well the kernel keeps the SM's warp schedulers fed with work. Modern GPUs can have 32–64 concurrent warps per SM; this metric tells you how many you are actually using.
+
+**How to use it:**
+
+- Divide by the GPU's maximum warps-per-SM to get the occupancy percentage. For example, if max is 48 and `sm__warps_active.avg` is 24, occupancy is 50%.
+- Low occupancy means the warp schedulers have fewer warps to choose from, which reduces the GPU's ability to hide memory latency through warp switching. This is often caused by:
+  - High register usage per thread (limits concurrent warps)
+  - High shared memory usage per block
+  - Small grid sizes (not enough blocks to fill the GPU)
+
+#### `dram__bytes_read.sum`
+
+**What it is:** The total number of bytes read from device memory (DRAM / HBM) across the entire GPU during the kernel execution.
+
+**What it tells you:** How much data the kernel fetched from global memory. This is the actual bytes transferred on the memory bus, which may be higher than what the kernel logically requested due to cache line granularity (memory transactions are 32-byte or 128-byte sectors).
+
+**How to use it:** Compute the **memory read throughput**:
+
+```
+read_throughput_GB_s = dram__bytes_read.sum / (kernel_duration_ns) * 1e9 / 1e9
+```
+
+Compare this against the GPU's peak memory bandwidth. For example:
+- A100: ~2 TB/s peak HBM bandwidth
+- RTX 4090: ~1 TB/s peak GDDR6X bandwidth
+- If your read throughput is a large fraction of peak, the kernel is **memory-read-bound**.
+
+#### `dram__bytes_write.sum`
+
+**What it is:** The total number of bytes written to device memory across the entire GPU during the kernel execution.
+
+**What it tells you:** Same as `dram__bytes_read.sum` but for writes. Includes both store instructions and write-back from caches.
+
+**How to use it:** Same throughput calculation as reads. Add reads + writes for total memory bandwidth utilization:
+
+```
+total_bandwidth = (dram__bytes_read.sum + dram__bytes_write.sum) / kernel_duration_ns * 1e9
+```
+
+### Putting the metrics together
+
+The five default metrics answer the key performance question for any GPU kernel: **what is the bottleneck?**
+
+| Observation | Diagnosis |
+|-------------|-----------|
+| High `cycles_active / cycles_elapsed`, low DRAM bytes | **Compute-bound** — the SMs are busy doing math, memory is not the bottleneck |
+| Low `cycles_active / cycles_elapsed`, high DRAM bytes | **Memory-bound** — the SMs are frequently stalled waiting for data from DRAM |
+| Low `cycles_active / cycles_elapsed`, low DRAM bytes | **Latency-bound** — stalled on something else (synchronization, L2 misses not turning into DRAM traffic, small grid) |
+| Low `warps_active` | **Low occupancy** — not enough concurrent warps to hide latency; consider reducing register/shared memory usage or increasing grid size |
+| High `warps_active`, low `cycles_active` | **Memory-latency-bound** — many warps are resident but all are stalled on memory; the memory subsystem can't keep up |
+
+### Customizing metrics
+
+Set `INJECTION_METRICS` to collect different counters:
+
+```bash
+INJECTION_METRICS="sm__cycles_active.avg,dram__throughput.avg.pct_of_peak_sustained_elapsed,lts__throughput.avg.pct_of_peak_sustained_elapsed" \
+CUDA_INJECTION64_PATH=... ./your_app
+```
+
+Some useful metrics for deeper analysis:
+
+| Metric | What it measures |
+|--------|-----------------|
+| `dram__throughput.avg.pct_of_peak_sustained_elapsed` | DRAM bandwidth utilization as % of peak |
+| `lts__throughput.avg.pct_of_peak_sustained_elapsed` | L2 cache throughput as % of peak |
+| `sm__throughput.avg.pct_of_peak_sustained_elapsed` | Overall SM utilization as % of peak |
+| `sm__pipe_fma_cycles_active.avg.pct_of_peak_sustained_active` | FMA pipe utilization |
+| `sm__inst_executed.avg.per_cycle_active` | Instructions per cycle (IPC) |
+| `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum` | L1 cache sectors read for global loads |
+| `smsp__sass_thread_inst_executed_op_dadd_pred_on.avg` | Double-precision add instructions |
+
+The full list of available metrics for your GPU can be queried with `ncu --query-metrics`.
+
 ## Build
 
 ```bash
