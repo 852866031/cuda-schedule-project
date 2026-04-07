@@ -330,11 +330,53 @@ def _find_profile_cycle_jsons(out_dir: Path):
     return paths
 
 
+def _fmt_value(val):
+    """Format a metric value for display on a bar label."""
+    if val >= 1e9:
+        return f"{val:.2e}"
+    elif val >= 1e6:
+        return f"{val / 1e6:,.1f}M"
+    elif val >= 1e3:
+        return f"{val / 1e3:,.1f}K"
+    elif val >= 1:
+        return f"{val:,.2f}"
+    else:
+        return f"{val:.4f}"
+
+
+def _bar_label(ax, bars, values, fontsize=8):
+    """Add value annotations on top of bars."""
+    max_val = max(values) if values else 1.0
+    for bar, val in zip(bars, values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + max_val * 0.01,
+            _fmt_value(val),
+            ha="center", va="bottom", fontsize=fontsize,
+        )
+
+
+def _hbar_label(ax, bars, values, fontsize=8):
+    """Add value annotations to the right of horizontal bars."""
+    max_val = max(abs(v) for v in values) if values else 1.0
+    for bar, val in zip(bars, values):
+        ax.text(
+            bar.get_width() + max_val * 0.02, bar.get_y() + bar.get_height() / 2,
+            _fmt_value(val),
+            va="center", fontsize=fontsize,
+        )
+
+
 def plot_profile_cycle(json_path: Path, out_path: Path):
     """
-    Generate a two-panel figure for a single profiling cycle:
-      Left:  horizontal bar chart of all collected metrics
-      Right: kernel identity card (name, launches, avg duration, trace window)
+    Generate a comprehensive multi-subplot figure for a single profiling
+    cycle.  The layout adapts based on which metrics are present:
+
+      Row 1:  [Raw metric values (hbar)]  [Kernel info card]
+      Row 2:  [SM utilization gauge]  [Memory throughput]  [Bottleneck diagnosis]
+
+    Row 2 panels are only drawn when the relevant default metrics are
+    available (cycles_elapsed, cycles_active, warps_active, dram bytes).
     """
     with json_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
@@ -351,90 +393,273 @@ def plot_profile_cycle(json_path: Path, out_path: Path):
         print(f"  Skipping {json_path.name}: no metrics collected")
         return
 
+    # ------------------------------------------------------------------
+    # Derive higher-level insights from the raw metrics
+    # ------------------------------------------------------------------
+    cycles_elapsed = metrics.get("sm__cycles_elapsed.avg", 0.0)
+    cycles_active = metrics.get("sm__cycles_active.avg", 0.0)
+    warps_active = metrics.get("sm__warps_active.avg", 0.0)
+    dram_read = metrics.get("dram__bytes_read.sum", 0.0)
+    dram_write = metrics.get("dram__bytes_write.sum", 0.0)
+
+    has_sm = cycles_elapsed > 0
+    has_warps = warps_active > 0 or "sm__warps_active.avg" in metrics
+    has_dram = "dram__bytes_read.sum" in metrics or "dram__bytes_write.sum" in metrics
+
+    active_ratio = (cycles_active / cycles_elapsed) if has_sm else None
+    dram_total = dram_read + dram_write
+
+    # ------------------------------------------------------------------
+    # Build the figure layout
+    # ------------------------------------------------------------------
+    # Row 1 (counters + info card) is compact; row 2 (analysis) is taller
+    # so the SM / memory / diagnosis panels have room for labels and legends.
+    has_row2 = has_sm or has_dram  # whether we need the analysis row
+
+    if has_row2:
+        fig = plt.figure(figsize=(18, 13))
+        gs = fig.add_gridspec(2, 3, height_ratios=[2, 3], hspace=0.38, wspace=0.35)
+        ax_raw = fig.add_subplot(gs[0, 0:2])   # raw metrics bar chart (wide)
+        ax_info = fig.add_subplot(gs[0, 2])     # kernel info card
+        ax_sm = fig.add_subplot(gs[1, 0])       # SM utilization
+        ax_mem = fig.add_subplot(gs[1, 1])       # memory breakdown
+        ax_diag = fig.add_subplot(gs[1, 2])      # bottleneck diagnosis
+    else:
+        fig = plt.figure(figsize=(16, 5.5))
+        gs = fig.add_gridspec(1, 3, width_ratios=[2, 2, 1])
+        ax_raw = fig.add_subplot(gs[0, 0:2])
+        ax_info = fig.add_subplot(gs[0, 2])
+        ax_sm = ax_mem = ax_diag = None
+
+    # ------------------------------------------------------------------
+    # Panel 1: Raw metric values (horizontal bar chart)
+    # ------------------------------------------------------------------
     metric_names = list(metrics.keys())
     metric_values = [metrics[k] for k in metric_names]
+    short_names = [m if len(m) <= 40 else m[:37] + "..." for m in metric_names]
 
-    # Shorten metric names for display
-    short_names = []
-    for m in metric_names:
-        # e.g. "sm__cycles_active.avg" -> "sm__cycles_active .avg"
-        short_names.append(m if len(m) <= 45 else m[:42] + "...")
-
-    fig, axes = plt.subplots(
-        1, 2, figsize=(16, max(4.5, 1.2 * len(metric_names))),
-        gridspec_kw={"width_ratios": [3, 2]},
-    )
-    ax_bar, ax_info = axes
-
-    # --- Left: metric values bar chart ---
-    colors = []
+    colors_raw = []
     for m in metric_names:
         if "dram" in m:
-            colors.append("#c44e52")
+            colors_raw.append("#c44e52")
         elif "warp" in m or "occupancy" in m:
-            colors.append("#dd8452")
+            colors_raw.append("#dd8452")
+        elif "lts" in m or "l1tex" in m:
+            colors_raw.append("#8c564b")
         else:
-            colors.append("#4c72b0")
+            colors_raw.append("#4c72b0")
 
-    y_pos = range(len(short_names))
-    ax_bar.barh(y_pos, metric_values, color=colors)
-    ax_bar.set_yticks(y_pos)
-    ax_bar.set_yticklabels(short_names, fontsize=9, family="monospace")
-    ax_bar.set_xlabel("Value")
-    ax_bar.set_title(f"Profiling Metrics (cycle {cycle})", fontsize=12)
-    ax_bar.invert_yaxis()
+    y_pos = list(range(len(short_names)))
+    bars_raw = ax_raw.barh(y_pos, metric_values, color=colors_raw)
+    ax_raw.set_yticks(y_pos)
+    ax_raw.set_yticklabels(short_names, fontsize=9, family="monospace")
+    ax_raw.set_xlabel("Value")
+    ax_raw.set_title("Collected Hardware Counters", fontsize=11, fontweight="bold")
+    ax_raw.invert_yaxis()
+    _hbar_label(ax_raw, bars_raw, metric_values, fontsize=8)
+    max_raw = max(metric_values) if metric_values else 1.0
+    ax_raw.set_xlim(0, max_raw * 1.25 if max_raw > 0 else 1.0)
 
-    # Add value labels on bars
-    max_val = max(metric_values) if metric_values else 1.0
-    for i, val in enumerate(metric_values):
-        if val >= 1e6:
-            label = f"{val:.2e}"
-        elif val >= 1000:
-            label = f"{val:,.0f}"
-        elif val >= 1:
-            label = f"{val:.2f}"
-        else:
-            label = f"{val:.4f}"
-        ax_bar.text(
-            val + max_val * 0.01, i, label,
-            va="center", fontsize=8,
-        )
-    ax_bar.set_xlim(0, max_val * 1.20 if max_val > 0 else 1.0)
-
-    # --- Right: kernel info card ---
+    # ------------------------------------------------------------------
+    # Panel 2: Kernel info card
+    # ------------------------------------------------------------------
     ax_info.axis("off")
-
     display_kernel = humanize_kernel_name(kernel_name)
-    raw_short = kernel_name if len(kernel_name) <= 80 else kernel_name[:77] + "..."
+    raw_short = kernel_name if len(kernel_name) <= 70 else kernel_name[:67] + "..."
 
-    info_lines = [
+    card_lines = [
         ("Cycle", str(cycle)),
         ("Trace window", f"{trace_s} s"),
-        ("Kernel (short)", display_kernel),
-        ("Total launches", f"{launches:,}"),
+        ("Kernel", display_kernel),
+        ("Launches", f"{launches:,}"),
         ("Total GPU time", f"{total_ms:,.2f} ms"),
         ("Avg duration", f"{avg_us:,.2f} us"),
     ]
+    if active_ratio is not None:
+        card_lines.append(("SM active ratio", f"{active_ratio:.1%}"))
+    if has_dram:
+        card_lines.append(("DRAM total", _fmt_value(dram_total) + " B"))
 
-    y_start = 0.92
-    y_step = 0.10
-    for i, (key, val) in enumerate(info_lines):
+    y_start = 0.95
+    y_step = 0.085
+    for i, (key, val) in enumerate(card_lines):
         y = y_start - i * y_step
-        ax_info.text(0.05, y, f"{key}:", fontsize=10, fontweight="bold",
+        ax_info.text(0.02, y, f"{key}:", fontsize=9, fontweight="bold",
                      transform=ax_info.transAxes, va="top")
-        ax_info.text(0.48, y, val, fontsize=10,
+        ax_info.text(0.45, y, val, fontsize=9,
                      transform=ax_info.transAxes, va="top")
 
-    # Raw kernel name at the bottom, small font
     ax_info.text(
-        0.05, 0.05, f"Raw: {raw_short}",
-        fontsize=7, family="monospace", color="gray",
-        transform=ax_info.transAxes, va="bottom",
-        wrap=True,
+        0.02, 0.03, f"Raw: {raw_short}",
+        fontsize=6, family="monospace", color="gray",
+        transform=ax_info.transAxes, va="bottom", wrap=True,
     )
+    ax_info.set_title("Kernel Identity", fontsize=11, fontweight="bold")
 
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=160)
+    # ------------------------------------------------------------------
+    # Panel 3: SM utilization breakdown (stacked bar)
+    # ------------------------------------------------------------------
+    if ax_sm is not None and has_sm:
+        active = cycles_active
+        idle = max(0, cycles_elapsed - cycles_active)
+        bars_a = ax_sm.bar(["SM Cycles"], [active], color="#4c72b0", label="Active")
+        ax_sm.bar(["SM Cycles"], [idle], bottom=[active], color="#d9d9d9", label="Idle")
+        ax_sm.set_ylabel("Cycles (avg per SM)")
+        ax_sm.set_title("SM Utilization", fontsize=11, fontweight="bold")
+
+        ratio_pct = (active_ratio * 100) if active_ratio is not None else 0
+        # Extra headroom for label + legend above bars
+        ax_sm.set_ylim(0, cycles_elapsed * 1.35 if cycles_elapsed > 0 else 1.0)
+        ax_sm.text(
+            0, active + idle + (cycles_elapsed * 0.02),
+            f"{ratio_pct:.1f}% active",
+            ha="center", va="bottom", fontsize=10, fontweight="bold",
+            color="#4c72b0",
+        )
+
+        if has_warps:
+            ax_sm2 = ax_sm.twinx()
+            ax_sm2.bar(["Warps Active"], [warps_active], color="#dd8452", width=0.4,
+                       label="Warps active")
+            ax_sm2.set_ylabel("Warps active (avg)", color="#dd8452")
+            ax_sm2.tick_params(axis="y", labelcolor="#dd8452")
+            ax_sm2.set_ylim(0, warps_active * 2.0 if warps_active > 0 else 1.0)
+            ax_sm2.text(
+                1, warps_active + warps_active * 0.05,
+                f"{warps_active:.1f}",
+                ha="center", va="bottom", fontsize=9, color="#dd8452",
+            )
+            # Combine legends from both axes, place above the plot
+            handles1, labels1 = ax_sm.get_legend_handles_labels()
+            handles2, labels2 = ax_sm2.get_legend_handles_labels()
+            ax_sm.legend(handles1 + handles2, labels1 + labels2,
+                         loc="upper center", fontsize=8, ncol=3,
+                         bbox_to_anchor=(0.5, 1.0))
+        else:
+            ax_sm.legend(loc="upper center", fontsize=8, ncol=2,
+                         bbox_to_anchor=(0.5, 1.0))
+    elif ax_sm is not None:
+        ax_sm.axis("off")
+        ax_sm.text(0.5, 0.5, "SM metrics\nnot collected",
+                   ha="center", va="center", fontsize=11, color="gray",
+                   transform=ax_sm.transAxes)
+
+    # ------------------------------------------------------------------
+    # Panel 4: DRAM memory throughput breakdown
+    # ------------------------------------------------------------------
+    if ax_mem is not None and has_dram:
+        mem_labels = []
+        mem_vals = []
+        mem_colors = []
+        if "dram__bytes_read.sum" in metrics:
+            mem_labels.append("DRAM Read")
+            mem_vals.append(dram_read)
+            mem_colors.append("#4c72b0")
+        if "dram__bytes_write.sum" in metrics:
+            mem_labels.append("DRAM Write")
+            mem_vals.append(dram_write)
+            mem_colors.append("#c44e52")
+        if len(mem_vals) == 2:
+            mem_labels.append("Total")
+            mem_vals.append(dram_total)
+            mem_colors.append("#2ca02c")
+
+        bars_mem = ax_mem.bar(mem_labels, mem_vals, color=mem_colors)
+        ax_mem.set_ylabel("Bytes")
+        ax_mem.set_title("DRAM Traffic", fontsize=11, fontweight="bold")
+        _bar_label(ax_mem, bars_mem, mem_vals, fontsize=9)
+        ax_mem.set_ylim(0, max(mem_vals) * 1.35 if max(mem_vals) > 0 else 1.0)
+
+        # Add read/write ratio annotation
+        if dram_total > 0 and len(mem_vals) >= 2:
+            rd_pct = dram_read / dram_total * 100
+            wr_pct = dram_write / dram_total * 100
+            ax_mem.text(
+                0.5, 0.92,
+                f"Read {rd_pct:.0f}% / Write {wr_pct:.0f}%",
+                ha="center", va="top", fontsize=9,
+                transform=ax_mem.transAxes,
+                bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="orange", alpha=0.8),
+            )
+    elif ax_mem is not None:
+        ax_mem.axis("off")
+        ax_mem.text(0.5, 0.5, "DRAM metrics\nnot collected",
+                   ha="center", va="center", fontsize=11, color="gray",
+                   transform=ax_mem.transAxes)
+
+    # ------------------------------------------------------------------
+    # Panel 5: Bottleneck diagnosis
+    # ------------------------------------------------------------------
+    if ax_diag is not None:
+        ax_diag.axis("off")
+        ax_diag.set_title("Bottleneck Analysis", fontsize=11, fontweight="bold")
+
+        diag_lines = []
+        diag_color = "black"
+
+        if has_sm and has_dram:
+            if active_ratio is not None and active_ratio > 0.8 and dram_total < 1e6:
+                diag_lines.append("COMPUTE-BOUND")
+                diag_lines.append("SMs are busy; memory is not the bottleneck.")
+                diag_lines.append("Consider algorithmic optimizations.")
+                diag_color = "#4c72b0"
+            elif active_ratio is not None and active_ratio < 0.5 and dram_total > 1e6:
+                diag_lines.append("MEMORY-BOUND")
+                diag_lines.append("SMs are often stalled waiting for DRAM.")
+                diag_lines.append("Consider reducing memory traffic,")
+                diag_lines.append("improving data locality, or using")
+                diag_lines.append("shared memory / tiling.")
+                diag_color = "#c44e52"
+            elif active_ratio is not None and active_ratio < 0.5 and dram_total < 1e6:
+                diag_lines.append("LATENCY-BOUND")
+                diag_lines.append("SMs are idle but DRAM traffic is low.")
+                diag_lines.append("Likely stalled on sync, small grid,")
+                diag_lines.append("or L2 misses not reaching DRAM.")
+                diag_color = "#dd8452"
+            else:
+                diag_lines.append("MIXED / BALANCED")
+                diag_lines.append("No single dominant bottleneck detected.")
+                diag_lines.append("Profile with more metrics for deeper")
+                diag_lines.append("analysis.")
+                diag_color = "#2ca02c"
+
+            if has_warps and warps_active < 8:
+                diag_lines.append("")
+                diag_lines.append("LOW OCCUPANCY")
+                diag_lines.append(f"Only {warps_active:.1f} warps active (avg).")
+                diag_lines.append("Consider reducing register/shmem usage")
+                diag_lines.append("or increasing grid size.")
+        elif has_sm:
+            if active_ratio is not None:
+                label = "HIGH" if active_ratio > 0.7 else "LOW"
+                diag_lines.append(f"SM Active Ratio: {label}")
+                diag_lines.append(f"({active_ratio:.1%} of elapsed cycles)")
+                diag_color = "#4c72b0" if active_ratio > 0.7 else "#dd8452"
+            else:
+                diag_lines.append("Insufficient data for diagnosis.")
+        else:
+            diag_lines.append("Need sm__cycles_elapsed.avg and")
+            diag_lines.append("dram__bytes_*.sum for bottleneck")
+            diag_lines.append("diagnosis. Set INJECTION_METRICS.")
+
+        # Render diagnosis text
+        y = 0.85
+        for i, line in enumerate(diag_lines):
+            weight = "bold" if i == 0 else "normal"
+            color = diag_color if i == 0 else "black"
+            fontsize = 12 if i == 0 else 9
+            ax_diag.text(
+                0.05, y, line,
+                fontsize=fontsize, fontweight=weight, color=color,
+                transform=ax_diag.transAxes, va="top",
+            )
+            y -= 0.10 if i == 0 else 0.08
+
+    fig.suptitle(
+        f"Profiling Results \u2014 Cycle {cycle}",
+        fontsize=14, fontweight="bold", y=0.98,
+    )
+    fig.savefig(out_path, dpi=160, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved plot to {out_path}")
 

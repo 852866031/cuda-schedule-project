@@ -9,56 +9,100 @@ The profiler operates in a continuous **trace → profile → trace** cycle:
 3. **Profile** the next launch of that kernel using CUPTI's range profiling API with hardware counter collection.
 4. **Write** the results to a JSON file, then return to step 1.
 
-## Build
+## Architecture
 
-```bash
-make                # builds libauto_profiler.so
-make clean          # removes .o and .so files
-make print-config   # shows CUDA paths
+The library is compiled as a shared object (`libauto_profiler.so`) and loaded via CUDA's injection mechanism (`CUDA_INJECTION64_PATH`). Before the target application's first CUDA call, the CUDA runtime `dlopen`s the library and calls its `InitializeInjection()` entry point. From that point on, the profiler runs invisibly alongside the application.
+
+It combines three CUPTI subsystems:
+
+| Subsystem | Purpose | When active |
+|-----------|---------|-------------|
+| **Activity API** | Records kernel launch timestamps to build the hotspot table | Tracing mode |
+| **Callback API** | Intercepts `cuLaunchKernel` calls to detect the target kernel and capture the CUDA context | Always |
+| **Profiler API** | Collects hardware performance counters (AutoRange + KernelReplay) | Profiling mode |
+
+Two threads coordinate the work:
+
+- A **state machine thread** manages the trace timer, hotspot analysis, profiler setup, and result evaluation.
+- The **application's own threads** (via CUPTI callbacks) handle the profiling session start/stop, since these calls require an active CUDA context.
+
+```
+                   ┌──────────────────────────────────────────────┐
+                   │                                              │
+                   ▼                                              │
+              ┌─────────┐    timer    ┌──────────────────────┐    │
+              │ TRACING │───expires──▶│ TRANSITION_TO_       │    │
+              │         │             │ PROFILING             │    │
+              └─────────┘             └──────────┬───────────┘    │
+                   ▲                             │                │
+                   │                    target kernel launches    │
+                   │                             │                │
+                   │                             ▼                │
+                   │                  ┌──────────────────────┐    │
+                   │                  │ PROFILING_ACTIVE      │    │
+                   │                  │ (kernel replayed for  │    │
+                   │                  │  multi-pass counters) │    │
+                   │                  └──────────┬───────────┘    │
+                   │                             │                │
+                   │                    kernel exits              │
+                   │                             │                │
+                   │                             ▼                │
+                   │                  ┌──────────────────────┐    │
+                   └──────────────────│ PROFILING_DONE        │────┘
+                     evaluate +       │ (evaluate metrics,    │
+                     write JSON       │  write results)       │
+                                      └──────────────────────┘
 ```
 
-Requires CUDA 12.4+ with CUPTI, NVPW (nvperf_host, nvperf_target). Edit `CUDA_HOME` in the Makefile if your CUDA install is not at `/usr/local/cuda`.
+## How it works
 
-## Usage
+### The trace → profile cycle
 
-### With the LLM workload (from the parent directory)
+Once the library is injected, it runs through these phases repeatedly:
 
-```bash
-cd cupti/
-make llm-profile
-```
+**Phase 1 — Trace.** The CUPTI Activity API records every kernel launch on the GPU. For each kernel, the profiler accumulates a running total of launch count and GPU execution time (nanoseconds). This runs for a configurable window (default 10 seconds) with very low overhead (~1-5%).
 
-This builds the profiler and runs the LLM app with injection. `sudo` is required because CUPTI's profiling API needs elevated privileges for hardware counter access.
+**Phase 2 — Select.** The state machine thread wakes up, flushes pending CUPTI records, and scans the stats table. The kernel with the highest cumulative GPU time is chosen as the profiling target. A hotspot CSV is written to disk.
 
-### With any CUDA application
+**Phase 3 — Profile.** Activity tracing is paused. The profiler arms itself and waits for the next launch of the target kernel. When the application calls `cuLaunchKernel` for that kernel, the CUPTI Profiler API takes over:
 
-```bash
-sudo CUDA_INJECTION64_PATH=$(pwd)/libauto_profiler.so \
-     CUPTI_TRACE_OUTDIR=output \
-     LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH \
-     ./your_cuda_app
-```
+- CUPTI saves the kernel's GPU input state (global memory, arguments, grid configuration).
+- The kernel is **replayed multiple times**, once per hardware counter pass. Each pass programs a different group of performance counter registers and collects their values. Between passes, CUPTI restores the saved input state so every pass sees identical data.
+- On the final pass, the output is kept. From the application's perspective, the kernel ran once and produced correct results — it just took longer.
 
-## Environment variables
+This replay mechanism is necessary because GPUs have a limited number of counter registers that cannot all be read simultaneously. CUPTI's KernelReplay mode handles the scheduling transparently.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CUPTI_PROFILER_TRACE_S` | `10` | Seconds to trace before selecting the hottest kernel |
-| `CUPTI_TRACE_OUTDIR` | `output` | Directory for CSV and JSON output files |
-| `INJECTION_METRICS` | See below | Comma/semicolon-separated list of NVPW metric names |
+**Phase 4 — Evaluate.** The raw counter values are decoded into the requested high-level metrics (e.g. "average active cycles per SM") using the CUPTI Profiler Host API. Results are written to a JSON file and printed to stderr.
 
-Default metrics:
-- `sm__cycles_elapsed.avg`
-- `sm__cycles_active.avg`
-- `sm__warps_active.avg`
-- `dram__bytes_read.sum`
-- `dram__bytes_write.sum`
+**Phase 5 — Reset.** Kernel stats are cleared, activity tracing is re-enabled, and the cycle begins again from Phase 1.
+
+On process exit, an `atexit` handler stops the state machine thread, flushes any remaining activity records, and writes a final CSV snapshot.
+
+### Normal execution vs profiled execution
+
+During tracing, the application runs at near-normal speed — CUPTI only adds timestamps to kernel records. During profiling, only the single target kernel is affected:
+
+| | Normal | Tracing mode | Profiling mode |
+|---|---|---|---|
+| **Kernel behavior** | Runs once | Runs once (timestamps added) | Replayed N times (once per counter pass) |
+| **Performance impact** | Baseline | ~1-5% overhead | N x slowdown for the profiled kernel only |
+| **GPU memory state** | Unmodified | Unmodified | Input saved/restored between passes |
+| **Output correctness** | Correct | Correct | Correct (final pass output kept) |
+| **Scope** | — | All kernels | Single target kernel per cycle |
+
+The profiled kernel's `cuLaunchKernel` call blocks for longer than usual, but all other kernels and the rest of the application are unaffected. The application sees correct output because only the final replay pass's writes are preserved.
+
+### Why multi-pass replay is necessary
+
+GPU streaming multiprocessors (SMs) have a fixed number of performance monitoring registers. Each register can count one hardware event at a time (e.g. "FMA instructions executed" or "L2 cache misses"). Different metrics need different events, and many events conflict — they require the same physical register.
+
+When you request 5 metrics, they decompose into 10+ raw counters that may need 2-3 separate passes. NVPW figures out the minimum pass schedule and CUPTI's KernelReplay executes it automatically.
 
 ## Output files
 
 | File | Description |
 |------|-------------|
-| `kernel_hotspots_global.csv` | Hotspot table at each trace-phase snapshot |
+| `kernel_hotspots_global.csv` | Hotspot table snapshot from each tracing phase |
 | `profile_cycle_1.json` | Profiling results for cycle 1 |
 | `profile_cycle_2.json` | Profiling results for cycle 2 |
 | ... | One JSON per profiling cycle |
@@ -102,87 +146,116 @@ For example, `sm__cycles_active.avg` means: "the number of cycles during which t
 
 ### Default metrics explained
 
-These are the five metrics collected by default. They give a first-order picture of whether a kernel is compute-bound, memory-bound, or underutilizing the GPU.
+These are the five metrics collected by default. Together they answer the first-order question for any GPU kernel: **what is the bottleneck?**
 
 #### `sm__cycles_elapsed.avg`
 
-**What it is:** The total number of GPU clock cycles that elapsed from the start to the end of the kernel, averaged across all SMs.
+**What it is:** Total GPU clock cycles from kernel start to end, averaged across all SMs.
 
-**What it tells you:** This is the wall-clock duration of the kernel in GPU cycles. Multiply by the GPU clock period to get time in nanoseconds. It includes all time — active computation, stalls, idle gaps, everything.
-
-**How to use it:** This is the denominator for utilization calculations. Comparing it against `sm__cycles_active.avg` tells you what fraction of elapsed time the SMs were actually busy.
+**What it tells you:** The wall-clock duration of the kernel in GPU cycles. This is the denominator for utilization calculations — compare it against `sm__cycles_active.avg` to see what fraction of elapsed time the SMs were actually busy.
 
 #### `sm__cycles_active.avg`
 
-**What it is:** The number of GPU clock cycles during which the SM had at least one active warp (i.e., was doing useful work), averaged across all SMs.
+**What it is:** GPU clock cycles during which the SM had at least one active warp, averaged across all SMs.
 
-**What it tells you:** How much of the kernel's execution time the SMs were actually doing something, as opposed to sitting idle waiting for memory, synchronization, or other stalls.
+**What it tells you:** How much of the kernel's time the SMs spent doing useful work vs sitting idle.
 
-**How to use it:** Compute the **SM active ratio**:
+**How to use it:** Compute the SM active ratio:
 
 ```
 active_ratio = sm__cycles_active.avg / sm__cycles_elapsed.avg
 ```
 
-- Close to 1.0 → the SMs are busy for the entire kernel duration. Good utilization.
-- Much less than 1.0 → the SMs are frequently idle. The kernel is likely bottlenecked on memory, synchronization barriers, or has insufficient parallelism.
+- Close to 1.0 → SMs are busy the entire time. Good utilization.
+- Much less than 1.0 → SMs are frequently idle (memory stalls, sync barriers, insufficient parallelism).
 
 #### `sm__warps_active.avg`
 
-**What it is:** The average number of warps (groups of 32 threads) that are resident and eligible for execution on an SM, averaged across all SMs and all cycles.
+**What it is:** Average number of resident warps (groups of 32 threads) per SM, averaged across all SMs and cycles.
 
-**What it tells you:** This is a direct measure of **occupancy** — how well the kernel keeps the SM's warp schedulers fed with work. Modern GPUs can have 32–64 concurrent warps per SM; this metric tells you how many you are actually using.
+**What it tells you:** This measures **occupancy** — how well the kernel fills the SM's warp schedulers. Modern GPUs support 32–64 concurrent warps per SM.
 
-**How to use it:**
-
-- Divide by the GPU's maximum warps-per-SM to get the occupancy percentage. For example, if max is 48 and `sm__warps_active.avg` is 24, occupancy is 50%.
-- Low occupancy means the warp schedulers have fewer warps to choose from, which reduces the GPU's ability to hide memory latency through warp switching. This is often caused by:
-  - High register usage per thread (limits concurrent warps)
-  - High shared memory usage per block
-  - Small grid sizes (not enough blocks to fill the GPU)
+**How to use it:** Divide by max warps-per-SM for occupancy percentage. Low occupancy (often caused by high register/shared memory usage or small grids) limits the GPU's ability to hide memory latency through warp switching.
 
 #### `dram__bytes_read.sum`
 
-**What it is:** The total number of bytes read from device memory (DRAM / HBM) across the entire GPU during the kernel execution.
+**What it is:** Total bytes read from device memory (DRAM/HBM) across the entire GPU.
 
-**What it tells you:** How much data the kernel fetched from global memory. This is the actual bytes transferred on the memory bus, which may be higher than what the kernel logically requested due to cache line granularity (memory transactions are 32-byte or 128-byte sectors).
-
-**How to use it:** Compute the **memory read throughput**:
+**What it tells you:** How much data the kernel fetched from global memory. Compare against peak memory bandwidth to assess memory-boundedness:
 
 ```
-read_throughput_GB_s = dram__bytes_read.sum / (kernel_duration_ns) * 1e9 / 1e9
+read_throughput_GB_s = dram__bytes_read.sum / kernel_duration_ns
 ```
-
-Compare this against the GPU's peak memory bandwidth. For example:
-- A100: ~2 TB/s peak HBM bandwidth
-- RTX 4090: ~1 TB/s peak GDDR6X bandwidth
-- If your read throughput is a large fraction of peak, the kernel is **memory-read-bound**.
 
 #### `dram__bytes_write.sum`
 
-**What it is:** The total number of bytes written to device memory across the entire GPU during the kernel execution.
+**What it is:** Total bytes written to device memory across the entire GPU.
 
-**What it tells you:** Same as `dram__bytes_read.sum` but for writes. Includes both store instructions and write-back from caches.
-
-**How to use it:** Same throughput calculation as reads. Add reads + writes for total memory bandwidth utilization:
+**How to use it:** Add reads + writes for total memory bandwidth utilization:
 
 ```
-total_bandwidth = (dram__bytes_read.sum + dram__bytes_write.sum) / kernel_duration_ns * 1e9
+total_bandwidth_GB_s = (dram__bytes_read.sum + dram__bytes_write.sum) / kernel_duration_ns
 ```
 
 ### Putting the metrics together
 
-The five default metrics answer the key performance question for any GPU kernel: **what is the bottleneck?**
-
 | Observation | Diagnosis |
 |-------------|-----------|
-| High `cycles_active / cycles_elapsed`, low DRAM bytes | **Compute-bound** — the SMs are busy doing math, memory is not the bottleneck |
-| Low `cycles_active / cycles_elapsed`, high DRAM bytes | **Memory-bound** — the SMs are frequently stalled waiting for data from DRAM |
-| Low `cycles_active / cycles_elapsed`, low DRAM bytes | **Latency-bound** — stalled on something else (synchronization, L2 misses not turning into DRAM traffic, small grid) |
-| Low `warps_active` | **Low occupancy** — not enough concurrent warps to hide latency; consider reducing register/shared memory usage or increasing grid size |
-| High `warps_active`, low `cycles_active` | **Memory-latency-bound** — many warps are resident but all are stalled on memory; the memory subsystem can't keep up |
+| High `active / elapsed`, low DRAM bytes | **Compute-bound** — SMs are busy doing math, memory is not the bottleneck |
+| Low `active / elapsed`, high DRAM bytes | **Memory-bound** — SMs are stalled waiting for data from DRAM |
+| Low `active / elapsed`, low DRAM bytes | **Latency-bound** — stalled on synchronization, small grid, or L2 misses not reaching DRAM |
+| Low `warps_active` | **Low occupancy** — not enough concurrent warps to hide latency |
+| High `warps_active`, low `active` | **Memory-latency-bound** — many warps are resident but all stalled on memory |
 
-### Customizing metrics
+## Build
+
+```bash
+make                # builds libauto_profiler.so
+make clean          # removes .o and .so files
+make print-config   # shows CUDA paths
+```
+
+Requires CUDA 12.4+ with CUPTI, NVPW (nvperf_host, nvperf_target). Edit `CUDA_HOME` in the Makefile if your CUDA install is not at `/usr/local/cuda`.
+
+From the parent `cupti/` directory, additional make targets are available:
+
+```bash
+make profiler       # build libauto_profiler.so
+make llm-profile    # build + run LLM app with profiler injected (requires sudo)
+make plot           # generate all plots (hotspots, overhead, profiling cycles)
+```
+
+### Usage
+
+#### With the LLM workload
+
+```bash
+cd cupti/
+make llm-profile
+```
+
+This builds the profiler and runs the LLM app with injection. `sudo` is required because CUPTI's profiling API needs elevated privileges for hardware counter access.
+
+#### With any CUDA application
+
+```bash
+sudo CUDA_INJECTION64_PATH=$(pwd)/libauto_profiler.so \
+     CUPTI_TRACE_OUTDIR=output \
+     LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH \
+     ./your_cuda_app
+```
+
+## Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CUPTI_PROFILER_TRACE_S` | `10` | Seconds to trace before selecting the hottest kernel |
+| `CUPTI_TRACE_OUTDIR` | `output` | Directory for CSV and JSON output files |
+| `INJECTION_METRICS` | See below | Comma/semicolon-separated list of NVPW metric names |
+
+Default metrics: `sm__cycles_elapsed.avg`, `sm__cycles_active.avg`, `sm__warps_active.avg`, `dram__bytes_read.sum`, `dram__bytes_write.sum`
+
+## Customizing metrics
 
 Set `INJECTION_METRICS` to collect different counters:
 
@@ -207,262 +280,7 @@ The full list of available metrics for your GPU can be queried with `ncu --query
 
 ---
 
-## How it works
-
-Everything above is sufficient to use the profiler. The sections below explain the internal design for anyone who wants to understand or modify the code.
-
-### Running pipeline (step by step)
-
-Here is what happens from `make llm-profile` to output files:
-
-#### 1. Build
-
-```
-make -C profiler
-  g++ -c auto_profiler.cpp → auto_profiler.o
-  g++ -c nvpw_metrics.cpp  → nvpw_metrics.o
-  g++ -c tracing.cpp       → tracing.o
-  g++ *.o → libauto_profiler.so  (linked against -lcupti -lnvperf_host -lnvperf_target)
-```
-
-#### 2. Injection
-
-The LLM app is launched with:
-```bash
-CUDA_INJECTION64_PATH=profiler/libauto_profiler.so python run_llm.py
-```
-
-Before any CUDA API call reaches the application, the CUDA runtime:
-1. `dlopen()`s `libauto_profiler.so`
-2. Calls `InitializeInjection()` via `dlsym`
-
-#### 3. Initialization (InitializeInjection)
-
-- Reads `CUPTI_PROFILER_TRACE_S` (trace window) and `INJECTION_METRICS` (metric list) from environment.
-- Registers CUPTI activity callbacks and enables `CONCURRENT_KERNEL` activity recording.
-- Subscribes to CUPTI callbacks for `cuLaunchKernel` and context creation.
-- Spawns the state machine background thread.
-- Registers `finalizeProfiler()` with `atexit`.
-- Returns control to the application.
-
-#### 4. Tracing phase
-
-The application runs normally. As kernels execute on the GPU:
-
-- CUPTI fills activity buffers with `CUpti_ActivityKernel9` records.
-- `bufferCompleted()` processes each record: demangles the kernel name, computes `duration = end - start`, and increments `g_kernel_stats[name].count` and `.total_ns`.
-- Meanwhile, the state machine thread is sleeping for the trace duration.
-
-#### 5. Hotspot selection
-
-After the trace window expires:
-
-- `cuptiActivityFlushAll(1)` drains any pending records.
-- `writeGlobalCsv()` writes a snapshot of all observed kernels.
-- `findHottestKernel()` picks the kernel with the highest `total_ns`.
-
-#### 6. Profiler context setup (first cycle only)
-
-On the first transition to profiling mode:
-
-- `cuptiProfilerInitialize()` + `NVPW_InitializeHost()` — global initialization.
-- `cuptiDeviceGetChipName()` — discovers the NVPW chip name.
-- `cuptiProfilerDeviceSupported()` — verifies range profiling is supported.
-- `cuptiProfilerGetCounterAvailability()` — queries which HW counters exist.
-- `getConfigImage()` — builds the config image via NVPW.
-- `getCounterDataPrefixImage()` — builds the counter data prefix via NVPW.
-- `createCounterDataImage()` — allocates and initializes the results buffer.
-
-If any step fails, the profiler falls back to tracing-only mode permanently.
-
-#### 7. Profiling phase
-
-Activity tracing is disabled (`cuptiActivityDisable`). The mode is set to `TRANSITION_TO_PROFILING`. The application continues running — all kernel launches pass through the callback handler, which checks each kernel's demangled name against the target.
-
-When the application launches the target kernel:
-
-- **ENTER callback**: `compare_exchange_strong` atomically claims the transition (so only one thread wins if the same kernel is launched concurrently). The counter data image is re-initialized to clear stale data. `beginProfilingSession()` calls `cuptiProfilerBeginSession` (AutoRange + KernelReplay), `SetConfig`, `EnableProfiling`. At this point CUPTI has programmed the GPU's hardware performance counters and is ready to collect.
-
-- **The kernel executes with replay** — this is where the profiling phase fundamentally differs from normal execution. See the detailed explanation below.
-
-- **EXIT callback**: `endProfilingSession()` calls `DisableProfiling`, `UnsetConfig`, `EndSession`. The mode is set to `PROFILING_DONE` and the condition variable is signaled.
-
-#### 8. Evaluation and output
-
-The state machine thread wakes up (signaled by the EXIT callback via the condition variable).
-
-At this point, `g_profiler_data.counterDataImage` contains raw hardware counter values collected across all replay passes. These are raw register reads — not yet the human-readable metrics the user requested. The evaluation step decodes them:
-
-- `evaluateMetrics()` initializes a CUPTI Profiler Host API object for the chip, then calls `cuptiProfilerHostEvaluateToGpuValues()`. This function takes the raw counter data image and the metric names, and computes the final metric values by:
-  - Looking up which raw counters each metric depends on
-  - Applying the metric's formula (e.g., `sm__cycles_active.avg` = sum of active cycles across all SMs / number of SMs)
-  - Returning one `double` per metric
-
-- `writeProfilingJson()` writes the results to `output/profile_cycle_N.json`.
-- A summary is printed to stderr showing each metric name and value.
-
-#### 9. Reset and repeat
-
-- Kernel stats are cleared.
-- Activity tracing is re-enabled.
-- Mode returns to `TRACING`.
-- The cycle repeats from step 4.
-
-#### 10. Finalization
-
-When the application exits, `finalizeProfiler()`:
-- Sets mode to `SHUTDOWN` and joins the state machine thread.
-- Synchronizes the GPU and flushes remaining activity records.
-- Writes a final CSV snapshot.
-
-### What happens to the profiled kernel (AutoRange + KernelReplay)
-
-This is the core of what makes profiling different from normal execution. Understanding it requires knowing how GPU hardware performance counters work.
-
-**Normal execution (no profiler)**
-
-When an application calls `cuLaunchKernel`, the CUDA driver submits the kernel to the GPU command queue. The GPU schedules it, the kernel runs once, produces its output, and the driver returns. The kernel's execution time is whatever the GPU hardware takes.
-
-```
-App calls cuLaunchKernel(myKernel, ...)
-  └─► GPU runs myKernel once
-       └─► writes output to device memory
-  └─► cuLaunchKernel returns
-```
-
-**With the profiler (AutoRange + KernelReplay mode)**
-
-GPUs have a limited number of hardware performance counter registers. A modern NVIDIA GPU might have ~16 counter registers per SM, but a single metric like `sm__cycles_active.avg` might require reading 2-3 raw counters, and different metrics often need counters from different groups that cannot be collected simultaneously. When you request 5 metrics, they might decompose into 10+ raw counters that require 2-3 separate "passes" through the kernel.
-
-CUPTI handles this transparently using **Kernel Replay**:
-
-```
-App calls cuLaunchKernel(myKernel, ...)
-  │
-  ├─► CUPTI intercepts the launch (ENTER callback)
-  │     └─► profiler enables hardware counter collection
-  │
-  ├─► CUPTI saves the kernel's input state
-  │     • copies all input buffers (global memory the kernel reads)
-  │     • records grid dims, block dims, shared memory, kernel arguments
-  │
-  ├─► Pass 1: GPU runs myKernel
-  │     • hardware counters group A are programmed
-  │     • kernel executes, counters collect data for group A
-  │     • CUPTI reads counter values into the counter data image
-  │     • output memory is discarded (rolled back)
-  │     • input state is restored from the saved copy
-  │
-  ├─► Pass 2: GPU runs myKernel again
-  │     • hardware counters group B are programmed
-  │     • kernel executes identically (same inputs)
-  │     • CUPTI reads counter values for group B
-  │     • output memory is discarded again
-  │     • input state is restored again
-  │
-  ├─► ... (repeat for as many passes as needed)
-  │
-  ├─► Final pass: GPU runs myKernel one last time
-  │     • last counter group is collected
-  │     • this time the output is kept (not rolled back)
-  │     • the application sees the correct final result
-  │
-  ├─► CUPTI signals completion (EXIT callback)
-  │     └─► profiler disables hardware counter collection
-  │
-  └─► cuLaunchKernel returns
-       • from the application's perspective, nothing unusual happened
-       • the kernel produced the correct output
-       • but it took N× longer because it was replayed N times
-```
-
-Key points about what the replay does:
-
-1. **The kernel is launched multiple times** but the application sees it as a single launch. The `cuLaunchKernel` call blocks for longer than usual because the kernel is being replayed internally.
-
-2. **Input state is saved and restored** between passes. CUPTI snapshots the GPU memory regions the kernel reads before the first pass, and restores them before each subsequent pass. This ensures every pass sees identical inputs and produces identical execution behavior (same branch paths, same memory access patterns), so the counters from different passes are consistent with each other.
-
-3. **Output is discarded until the final pass.** Intermediate passes might write garbage to output buffers (since the kernel runs to completion each time), but CUPTI rolls back those writes. Only the final pass's output is kept, so the application gets correct results.
-
-4. **The application is unaware.** From the app's perspective, the kernel ran once and produced the right output. The only observable difference is that `cuLaunchKernel` took longer to return (wall-clock time increases by roughly N× for N passes, plus overhead for state save/restore).
-
-5. **Other kernels are not affected.** Only kernels launched while profiling is enabled get replayed. Since we enable profiling in the ENTER callback and disable it in the EXIT callback of the same `cuLaunchKernel` call, only the target kernel is replayed. Other kernels launched by other threads during this window may also be replayed, but we only evaluate metrics for the target kernel's range.
-
-#### Overhead comparison: tracing vs profiling vs normal
-
-| | Normal execution | Tracing mode | Profiling mode |
-|---|---|---|---|
-| **Mechanism** | None | CUPTI Activity API | CUPTI Profiler API |
-| **What is recorded** | Nothing | Kernel name + GPU timestamps | Hardware performance counter values |
-| **Kernel behavior** | Runs once | Runs once (timestamps added) | Runs N times (replayed per pass) |
-| **Performance impact** | Baseline | Low (~1-5% overhead) | High for the profiled kernel only (N× slowdown) |
-| **GPU state** | Unmodified | Unmodified | Input memory saved/restored between passes |
-| **Output correctness** | Correct | Correct | Correct (final pass output kept) |
-| **Scope** | N/A | All kernels | Single target kernel per cycle |
-
-#### Why multi-pass replay is necessary
-
-A natural question is: why can't the GPU just collect all counters in a single pass?
-
-The answer is hardware constraints. GPU streaming multiprocessors (SMs) have a fixed number of performance monitoring registers. These registers are multiplexed: each register can count one specific hardware event at a time (e.g., "FMA instructions executed" or "L2 cache misses"). Different metrics require different events, and many events conflict — they need the same physical counter register.
-
-NVPW's config image generation (in `getConfigImage()`) figures out the minimum number of passes needed to collect all requested raw counters without conflicts, and encodes the counter programming schedule. CUPTI's KernelReplay mode then executes that schedule automatically.
-
-For example, with 5 default metrics:
-- `sm__cycles_elapsed.avg` and `sm__cycles_active.avg` might share a pass (non-conflicting counters)
-- `sm__warps_active.avg` might need its own pass (conflicts with the above)
-- `dram__bytes_read.sum` and `dram__bytes_write.sum` might share a third pass
-
-This would result in 2-3 replay passes. The exact number depends on the GPU architecture and the specific metrics requested.
-
-### Architecture
-
-The library is compiled as a shared object (`libauto_profiler.so`) and loaded via CUDA's injection mechanism. It combines three CUPTI subsystems:
-
-| Subsystem | Purpose | When active |
-|-----------|---------|-------------|
-| **Activity API** | Records kernel launch timestamps to build the hotspot table | Tracing mode |
-| **Callback API** | Intercepts `cuLaunchKernel` calls to detect the target kernel | Always |
-| **Profiler API** | Collects hardware performance counters (AutoRange + KernelReplay) | Profiling mode |
-
-#### State machine
-
-```
-                   ┌──────────────────────────────────────────────┐
-                   │                                              │
-                   ▼                                              │
-              ┌─────────┐    timer    ┌──────────────────────┐    │
-              │ TRACING │───expires──▶│ TRANSITION_TO_       │    │
-              │         │             │ PROFILING             │    │
-              └─────────┘             └──────────┬───────────┘    │
-                   ▲                             │                │
-                   │                    target kernel launches    │
-                   │                             │                │
-                   │                             ▼                │
-                   │                  ┌──────────────────────┐    │
-                   │                  │ PROFILING_ACTIVE      │    │
-                   │                  │ (kernel replayed for  │    │
-                   │                  │  multi-pass counters) │    │
-                   │                  └──────────┬───────────┘    │
-                   │                             │                │
-                   │                    kernel exits              │
-                   │                             │                │
-                   │                             ▼                │
-                   │                  ┌──────────────────────┐    │
-                   └──────────────────│ PROFILING_DONE        │────┘
-                     evaluate +       │ (evaluate metrics,    │
-                     write JSON       │  write results)       │
-                                      └──────────────────────┘
-```
-
-Transitions happen on two threads:
-
-- **State machine thread** — manages the timer, hotspot analysis, and mode transitions.
-- **Application thread** (via CUPTI callback) — begins and ends the profiling session inside the `cuLaunchKernel` call, ensuring the correct CUDA context is active.
-
-A `thread_local` flag and `compare_exchange_strong` on the mode atomic prevent race conditions when multiple application threads launch kernels concurrently.
-
-### File structure
+## File structure
 
 ```
 profiler/
@@ -476,7 +294,7 @@ profiler/
 └── README.md              This file
 ```
 
-#### profiler_common.h
+### profiler_common.h
 
 The shared header included by every translation unit. Contains:
 
@@ -487,56 +305,48 @@ The shared header included by every translation unit. Contains:
 - **Global state declarations** — `extern` declarations for the kernel stats map, mode atomic, condition variable, profiler context, etc.
 - **Inline utilities** — `demangleName()` (C++ symbol demangling), `getOutdir()`, `setupOutputPaths()`.
 
-#### nvpw_metrics.h / nvpw_metrics.cpp
+### nvpw_metrics.h / nvpw_metrics.cpp
 
 All NVPW (Perfworks) and CUPTI Profiler API setup. This is the most complex module because hardware counter collection requires multiple binary blobs to be generated before a profiling session can start:
 
 1. **`getRawMetricRequests()`** — Resolves high-level metric names (e.g. `sm__cycles_active.avg`) into the raw hardware counter names they depend on, using the NVPW MetricsEvaluator.
 
-2. **`getConfigImage()`** — Generates the *config image*, a binary blob that tells CUPTI which hardware counters to program and how to schedule them across passes. Uses `NVPW_CUDA_RawMetricsConfig_*` functions.
+2. **`getConfigImage()`** — Generates the *config image*, a binary blob that tells CUPTI which hardware counters to program and how to schedule them across passes.
 
-3. **`getCounterDataPrefixImage()`** — Generates the *counter data prefix*, a template that sizes the results buffer. Uses `NVPW_CUDA_CounterDataBuilder_*` functions.
+3. **`getCounterDataPrefixImage()`** — Generates the *counter data prefix*, a template that sizes the results buffer.
 
-4. **`createCounterDataImage()`** — Allocates the *counter data image* (where CUPTI writes raw counter values) and its scratch buffer. Uses `cuptiProfilerCounterDataImage*` functions. Called once.
+4. **`createCounterDataImage()`** — Allocates the *counter data image* (where CUPTI writes raw counter values) and its scratch buffer. Called once.
 
 5. **`reinitCounterDataImage()`** — Clears stale counter data between profiling cycles. Reuses the same buffer.
 
-6. **`evaluateMetrics()`** — Decodes raw counter values into human-readable metric doubles using the CUPTI Profiler Host API (`cuptiProfilerHostEvaluateToGpuValues`).
+6. **`evaluateMetrics()`** — Decodes raw counter values into human-readable metric doubles using the CUPTI Profiler Host API.
 
 7. **`initializeProfilerContext()`** — One-time setup: initializes CUPTI Profiler + NVPW, discovers the chip name, checks device support, queries counter availability, then calls (2)–(4) above.
 
-8. **`beginProfilingSession()` / `endProfilingSession()`** — Start and stop a CUPTI profiling session with AutoRange + KernelReplay mode. Must be called on a thread with an active CUDA context.
+8. **`beginProfilingSession()` / `endProfilingSession()`** — Start and stop a CUPTI profiling session with AutoRange + KernelReplay mode.
 
-#### tracing.h / tracing.cpp
+### tracing.h / tracing.cpp
 
 The tracing-mode half of the profiler, using the CUPTI Activity API (same mechanism as the standalone tracer):
 
 - **`bufferRequested()` / `bufferCompleted()`** — CUPTI buffer lifecycle callbacks. Allocate 32 KB heap buffers, iterate packed activity records, dispatch `CONCURRENT_KERNEL` records to the stats table.
 - **`writeGlobalCsv()`** — Snapshots the kernel stats map under lock and writes `kernel_hotspots_global.csv`.
 - **`findHottestKernel()`** — Scans the stats map and returns the kernel with the highest `total_ns`.
-- **`writeProfilingJson()`** — Writes one profiling cycle's results (target kernel, trace-phase stats, metric values) to `profile_cycle_N.json`.
+- **`writeProfilingJson()`** — Writes one profiling cycle's results to `profile_cycle_N.json`.
 
-#### auto_profiler.cpp
+### auto_profiler.cpp
 
 The main entry point and orchestration logic:
 
 - **Global state definitions** — the single copy of all `extern` variables declared in `profiler_common.h`.
-- **`callbackHandler()`** — CUPTI callback registered for two domains:
-  - `CUPTI_CB_DOMAIN_RESOURCE` — captures the first CUDA context created by the application.
-  - `CUPTI_CB_DOMAIN_DRIVER_API` (`cuLaunchKernel`) — in `TRANSITION_TO_PROFILING` mode, checks if the launched kernel matches the target. On match: reinitializes counter data, begins a profiling session (ENTER callback), ends the session (EXIT callback), then signals the state machine thread.
-- **`stateMachineLoop()`** — background thread that cycles through six phases:
-  1. Sleep for the trace duration.
-  2. Flush activity buffers and find the hottest kernel.
-  3. One-time profiler context initialization (if first cycle).
-  4. Disable activity tracing, set target kernel, enter `TRANSITION_TO_PROFILING`.
-  5. Wait (with timeout) for the callback to complete profiling.
-  6. Evaluate metrics, write JSON, clear stats, re-enable tracing.
-- **`finalizeProfiler()`** — `atexit` handler that shuts down the state machine thread, flushes remaining records, and writes a final CSV.
+- **`callbackHandler()`** — CUPTI callback registered for context creation (captures the CUDA context) and kernel launches (manages profiling around the target kernel using `compare_exchange_strong` for thread safety).
+- **`stateMachineLoop()`** — background thread that cycles through: sleep → flush → hotspot analysis → profiler setup → wait for callback → evaluate → write → reset.
+- **`finalizeProfiler()`** — `atexit` handler that stops the state machine, flushes records, and writes final output.
 - **`InitializeInjection()`** — called by CUDA runtime via `dlsym`. Parses env vars, registers activity + callback APIs, starts the state machine thread.
 
-### Implementation notes
+## Implementation notes
 
-- **Thread safety**: A single `std::mutex` protects the kernel stats map. Mode transitions use `std::atomic<Mode>` with `compare_exchange_strong` to prevent races in multi-threaded applications.
+- **Thread safety**: A single `std::mutex` protects the kernel stats map. Mode transitions use `std::atomic<Mode>` with `compare_exchange_strong` and a `thread_local` flag to prevent races when multiple application threads launch kernels concurrently.
 - **Graceful fallback**: If profiler initialization fails (unsupported GPU, missing privileges, NVPW errors), the library continues in tracing-only mode rather than crashing the target application.
 - **Activity/Profiler coexistence**: CUPTI activity recording is disabled during profiling to avoid interference with hardware counter collection, then re-enabled afterward.
 - **Counter data reuse**: The config image, counter data prefix, and scratch buffers are created once and reused. Only the counter data image itself is re-initialized between cycles.
