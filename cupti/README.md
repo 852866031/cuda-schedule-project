@@ -100,19 +100,7 @@ Generates multiple visualizations from the collected data:
 
 Each bar is annotated with its value and the percentage overhead relative to the baseline:
 
-```
-  ┌─────────────────────────────────────────────────────────────┐
-  │  Total Execution Time           Tokens per Second           │
-  │                                                             │
-  │   5.88s    5.99s    7.12s       348      342      299       │
-  │   ████     ████     ████        ████     ████     ████      │
-  │   ████     ████     ████        ████     ████     ████      │
-  │   ████     ████     ████        ████     ████     ████      │
-  │            +1.9%    +21.1%               -1.7%   -14.1%     │
-  │                                                             │
-  │   llm    llm_trace llm_profile  llm   llm_trace llm_profile│
-  └─────────────────────────────────────────────────────────────┘
-```
+![Three-way overhead comparison: plain vs tracer vs profiler](output/plots/overhead_compare_three_way.png)
 
 **Profiling cycle charts** — for each `profile_cycle_N.json`, a multi-panel figure with:
 - Collected hardware counter values (horizontal bar chart)
