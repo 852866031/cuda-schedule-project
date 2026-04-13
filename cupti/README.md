@@ -42,12 +42,12 @@ CUPTI exposes a family of APIs, each targeting a different point on the precisio
 
 | API | Description | Overhead model | Cost |
 |-----|-------------|----------------|------|
-| **Activity API** * | Asynchronously records kernel timestamps, memory copies, and API calls | % of total runtime | ~1–5% |
-| **Callback API** * | Synchronous notifications on CUDA events | Per kernel launch | ~ns per launch (atomic + string compare) |
+| **Activity API** * | **Asynchronously** records kernel timestamps, memory copies, and API calls | % of total runtime | ~1–5% |
+| **Callback API** * | **Synchronous** notifications on CUDA events | Per kernel launch | ~ns per launch (atomic + string compare) |
 | **Range / Host Profiling API** * | Exact hardware counter values via **kernel replay** | Per profiled kernel | N× slowdown for that kernel only |
-| **PM Sampling API** | Samples hardware PMU (Performance Monitoring Unit) registers at fixed intervals. e.g. SM utilization over time, DRAM bandwidth trend, L2 cache hit rate, Tensor Core activity | % of total runtime | Lower than replay, approximate values |
-| **PC Sampling API** | Statistically samples warp program counter and scheduler state. e.g. which source code lines the GPU stalls on most, stall reasons, warp scheduler state distribution | % of total runtime | Medium; instruction-level, probabilistic |
-| **SASS Metric API** | Maps counter values to individual GPU assembly (SASS) instructions. e.g. FMA throughput per assembly line, which specific instructions cause L1 cache misses, register bank conflicts per instruction | Per profiled kernel | Highest; exact per-instruction |
+| **PM Sampling API** | **Periodically samples** hardware PMU (Performance Monitoring Unit) registers. e.g. SM utilization over time, DRAM bandwidth trend, L2 cache hit rate, Tensor Core activity | % of total runtime | Lower than replay, approximate values |
+| **PC Sampling API** | **Periodically interrupts & samples** samples warp program counter and scheduler state. e.g. which source code lines the GPU stalls on most, stall reasons, warp scheduler state distribution | % of total runtime | Medium; instruction-level, probabilistic |
+| **SASS Metric API** | Maps counter values to individual GPU assembly instructions. e.g. FMA throughput per assembly line, which specific instructions cause L1 cache misses, register bank conflicts per instruction | Per profiled kernel | Highest; exact per-instruction |
 | **Checkpoint API** | Saves and restores GPU memory state | Per save/restore | Infrastructure primitive; used internally by kernel replay |
 ## Quick start
 
