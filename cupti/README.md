@@ -38,25 +38,17 @@ cupti/
 
 # CUPTI API Overview
 
-CUPTI exposes a family of APIs, each targeting a different point on the precision-vs-overhead spectrum.
+CUPTI exposes a family of APIs, each targeting a different point on the precision-vs-overhead spectrum. APIs marked with * are used in this project.
 
-## APIs Used in This Project
-
-| API | Description | Overhead | Notes |
-|-----|-------------|----------|-------|
-| **Activity API** | Asynchronously records kernel timestamps, memory copies, and API calls | ~1–5% | Used in tracer and profiler |
-| **Callback API** | Synchronous notifications on CUDA events (e.g. `cuLaunchKernel`) | Minimal | Used in profiler |
-| **Range / Host Profiling API** | Exact hardware counter values via kernel replay | High (N× per pass) | Used in profiler. Requires `sudo` |
-
-## Other APIs (not used, shown for context)
-
-| API | Description | Overhead | Precision |
-|-----|-------------|----------|-----------|
-| **PM Sampling API** | Samples hardware PMU registers at fixed intervals | Lower than replay | Approximate |
-| **PC Sampling API** | Statistically samples warp program counter and scheduler state | Medium | Instruction-level, probabilistic |
-| **SASS Metric API** | Maps counter values to individual GPU assembly (SASS) instructions | Highest | Highest |
-| **Checkpoint API** | Saves and restores GPU memory state | — | Infrastructure primitive; used internally by kernel replay, exposed for custom tools |
-
+| API | Description | Overhead model | Cost |
+|-----|-------------|----------------|------|
+| **Activity API** * | Asynchronously records kernel timestamps, memory copies, and API calls | % of total runtime | ~1–5% |
+| **Callback API** * | Synchronous notifications on CUDA events (e.g. `cuLaunchKernel`) | Per kernel launch | ~ns per launch (atomic + string compare) |
+| **Range / Host Profiling API** * | Exact hardware counter values via kernel replay. Requires `sudo` | Per profiled kernel | N× slowdown for that kernel only |
+| **PM Sampling API** | Samples hardware PMU registers at fixed intervals | % of total runtime | Lower than replay, approximate values |
+| **PC Sampling API** | Statistically samples warp program counter and scheduler state | % of total runtime | Medium; instruction-level, probabilistic |
+| **SASS Metric API** | Maps counter values to individual GPU assembly (SASS) instructions | Per profiled kernel | Highest; exact per-instruction |
+| **Checkpoint API** | Saves and restores GPU memory state | Per save/restore | Infrastructure primitive; used internally by kernel replay |
 ## Quick start
 
 ```bash
