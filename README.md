@@ -14,17 +14,17 @@ The repository currently contains the top-level directories `.vscode`, `DCGM`, `
 
 ## GPU observability tools at a glance
 
-A high GPU-Util reading only means "at least one kernel was resident during the sample window" — not that the GPU is doing useful work. Two GPUs can both report ~100% utilization while one draws 562 W and the other 99 W. Answering *what* is running and *how hard* the hardware is actually working requires going further down the observability stack:
+GPU-Util only measures the fraction of time *some* kernel was resident — not how much work the GPU is doing. Each tool below answers a different question, at a different depth:
 
-| Tool | Granularity | What it can do | Example / typical scenario | Overhead |
-|------|-------------|----------------|----------------------------|----------|
-| **nvidia-smi / NVML** | Whole device, sampled (~1 s) | GPU-Util (% of time *any* kernel was resident), power draw, memory usage, clocks, temperature | Quick health check: "is my training job actually using the GPU?", "am I about to OOM?", watching power/temp during a run. First thing everyone types, sufficient for none of the *why* questions | ~0 |
-| **DCGM** | Whole device, sampled; fleet-scale | Continuous cluster monitoring with real PMU counters (`DCGM_FI_PROF_*`): SM active, SM occupancy, Tensor Core active, DRAM bandwidth utilization — plus health checks and policy alerts | Cluster dashboards (DCGM exporter → Prometheus/Grafana): spot stragglers among 1000 GPUs, detect ECC errors/thermal throttling, alert when Tensor Core activity drops fleet-wide after a bad deploy | <1%, always-on |
-| **Nsight Systems** | Per kernel + CPU, timeline | Whole-application timeline: every kernel launch, memcpy, CUDA API call, CPU thread, NCCL op — see gaps, serialization, and CPU-GPU interaction | "GPU-Util is 100% but throughput is low — where does the time go?": find dataloader stalls between training steps, CPU launch overhead, NCCL waits, unexpected H2D copies. The first profiler to reach for on an unfamiliar workload | Low, dev-time sessions |
-| **Nsight Compute** | Single kernel, deep dive | Exhaustive per-kernel analysis: full hardware counter sets, roofline placement, memory workload breakdown, source/SASS-level hotspots, guided optimization advice | Optimizing one kernel you own: "is my attention kernel memory- or compute-bound?", "why is occupancy 25%?", checking Tensor Core utilization of a custom GEMM, finding the exact source line causing uncoalesced loads | Very high (many replay passes), offline |
-| **CUPTI** | Programmable — per kernel to per counter | The API layer beneath the Nsight tools: build custom, headless, always-on instrumentation. Activity API traces every kernel's timing (~1-5%); Callback API intercepts CUDA calls; Profiler API reads exact hardware counters via kernel replay | When packaged tools don't fit: always-on hotspot tracking in a production inference server, auto-profiling the hottest kernel without stopping the service, feeding per-kernel metrics into your own telemetry — this is what PyTorch Profiler and the Nsight tools are built on | You choose the trade-off |
+| Tool | What it does | Typical use | Overhead |
+|------|--------------|-------------|----------|
+| **nvidia-smi / NVML** | Device-level busy %, power, memory, clocks | Quick check: is the GPU being used at all? | ~0 |
+| **DCGM** | Hardware telemetry (SM active, occupancy, Tensor Core, DRAM bandwidth), fleet-scale | Always-on cluster monitoring, dashboards, alerts | <1% |
+| **Nsight Systems** | CPU–GPU timeline of kernels, memcpys, API calls | Find where time goes: launch gaps, stalls, serialization | Low, dev-time |
+| **Nsight Compute** | Full hardware counters + roofline for one kernel | Explain why a kernel is slow; guide optimization | High (replay), dev-time |
+| **CUPTI** | Programmable API under the Nsight tools: kernel tracing, call interception, counter collection | Custom always-on instrumentation for production, no app changes | Depends on usage |
 
-Read top to bottom, the table is also a diagnosis workflow: notice something is off (NVML), monitor it at scale (DCGM), locate where the time goes (Nsight Systems), explain why one kernel is slow (Nsight Compute), and automate any of it with your own instrumentation (CUPTI).
+Top to bottom, this is also the diagnosis path: detect (NVML) → monitor (DCGM) → locate (Nsight Systems) → explain (Nsight Compute) → automate (CUPTI).
 
 ## Repository layout
 
