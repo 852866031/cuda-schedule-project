@@ -16,13 +16,13 @@ The repository currently contains the top-level directories `.vscode`, `DCGM`, `
 
 GPU-Util only measures the fraction of time *some* kernel was resident — not how much work the GPU is doing. Each tool below answers a different question, at a different depth:
 
-| Tool | What it does | Typical use | Overhead |
-|------|--------------|-------------|----------|
-| **nvidia-smi / NVML** | Device-level busy %, power, memory, clocks | Quick check: is the GPU being used at all? | ~0 |
-| **DCGM** | Hardware telemetry (SM active, occupancy, Tensor Core, DRAM bandwidth), fleet-scale | Always-on cluster monitoring, dashboards, alerts | <1% |
-| **Nsight Systems** | CPU–GPU timeline of kernels, memcpys, API calls | Find where time goes: launch gaps, stalls, serialization | Low, dev-time |
-| **Nsight Compute** | Full hardware counters + roofline for one kernel | Explain why a kernel is slow; guide optimization | High (replay), dev-time |
-| **CUPTI** | Programmable API under the Nsight tools: kernel tracing, call interception, counter collection | Custom always-on instrumentation for production, no app changes | Depends on usage |
+| Tool | Capabilities | Typical Use Case | Overhead |
+|---|---|---|---|
+| **nvidia-smi / NVML** | Reports device-level utilization, power consumption, memory usage, and clock speeds | Rapidly determine whether the GPU is active and assess its basic operating state | Negligible |
+| **DCGM** | Provides hardware telemetry—including SM activity, occupancy, Tensor Core utilization, and DRAM bandwidth—across large-scale deployments | Continuous cluster monitoring, dashboarding, and automated alerting | Less than 1% |
+| **Nsight Systems** | Captures CPU–GPU timelines covering kernel execution, memory transfers, and API calls | Identify performance bottlenecks such as launch gaps, stalls, and unintended serialization | Low; intended primarily for development |
+| **Nsight Compute** | Collects detailed hardware performance counters and performs kernel-level roofline analysis | Diagnose kernel performance limitations and guide targeted optimization | High due to replay; intended for development |
+| **CUPTI** | Provides the programmable instrumentation interface underlying NVIDIA Nsight tools, including kernel tracing, API interception, and performance-counter collection | Build customized, continuously running production instrumentation without modifying application source code | Varies by the enabled instrumentation |
 
 Top to bottom, this is also the diagnosis path: detect (NVML) → monitor (DCGM) → locate (Nsight Systems) → explain (Nsight Compute) → automate (CUPTI).
 
