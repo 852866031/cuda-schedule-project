@@ -19,9 +19,9 @@ GPU-Util only measures the fraction of time *some* kernel was resident — not h
 | Tool | Capabilities | Typical Use | Overhead |
 |---|---|---|---|
 | **nvidia-smi / NVML** | Reports **device utilization, power consumption, memory usage, and clock speeds** | Quickly confirm **GPU activity and operating status** | **Negligible** |
-| **DCGM** | Provides **SM activity, occupancy, Tensor Core utilization, and DRAM bandwidth** across clusters | Support continuous **cluster monitoring, dashboards, and alerts** | **Less than 1%** |
+| **DCGM** | Provides **device-level telemetry**, such as SM activity, Tensor Core utilization, and DRAM bandwidth across clusters | Support continuous **cluster monitoring, dashboards, and alerts** | **Less than 1%** |
 | **Nsight Systems** | Captures **CPU and GPU timelines**, including kernels, memory transfers, and API calls | Identify **launch gaps, stalls, synchronization issues, and serialization** | **Low, primarily during development** |
-| **Nsight Compute** | Collects **detailed hardware counters** and performs **kernel roofline analysis** | Diagnose kernel bottlenecks and guide **targeted performance optimization** | **High due to replay, primarily during development** |
+| **Nsight Compute** | Collects **detailed hardware counters** and performs **kernel roofline analysis** | Diagnose kernel bottlenecks and guide **targeted performance optimization** | **High due to replay** |
 | **CUPTI** | Provides programmable APIs for **kernel tracing, API interception, and counter collection** | Build **custom production instrumentation** with minimal application changes | **Varies with the enabled features** |
 
 Top to bottom, this is also the diagnosis path: detect (NVML) → monitor (DCGM) → locate (Nsight Systems) → explain (Nsight Compute) → automate (CUPTI).
