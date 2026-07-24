@@ -158,6 +158,12 @@ static void CUPTIAPI callbackHandler(
                 // since we are inside a cuLaunchKernel callback).
                 if (beginProfilingSession(g_profiler_data)) {
                     tl_profiling_this_kernel = true;
+                    // Start wall-clock timing of the replayed launch.
+                    // In KernelReplay mode cuLaunchKernel blocks until
+                    // all N passes finish, so the matching EXIT timestamp
+                    // gives us the total replayed-launch duration.
+                    g_profiler_data.profileEnterTime =
+                        std::chrono::steady_clock::now();
                     std::fprintf(stderr, "[profiler] Profiling ENABLED for: %s\n",
                                  g_target_kernel.c_str());
                 } else {
@@ -177,12 +183,24 @@ static void CUPTIAPI callbackHandler(
         if (tl_profiling_this_kernel) {
             tl_profiling_this_kernel = false;
 
+            // Stop wall-clock timer before ending the session so that the
+            // measurement reflects only the replayed launch itself, not
+            // the session teardown work.
+            auto profileEndTime = std::chrono::steady_clock::now();
+            g_profiler_data.lastProfileWallNs =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    profileEndTime - g_profiler_data.profileEnterTime).count();
+
             // End the session.  In KernelReplay mode, all passes have
             // already been replayed within the cuLaunchKernel call.
             endProfilingSession(g_profiler_data);
 
-            std::fprintf(stderr, "[profiler] Profiling COMPLETED for: %s\n",
-                         g_target_kernel.c_str());
+            std::fprintf(stderr,
+                         "[profiler] Profiling COMPLETED for: %s "
+                         "(wall=%.3f ms, passes=%d)\n",
+                         g_target_kernel.c_str(),
+                         g_profiler_data.lastProfileWallNs / 1e6,
+                         g_profiler_data.numPasses);
 
             // Signal the state machine thread to evaluate results.
             g_mode.store(Mode::PROFILING_DONE, std::memory_order_release);
@@ -342,7 +360,9 @@ static void stateMachineLoop() {
         std::vector<double> metricValues;
         if (evaluateMetrics(g_profiler_data, g_metric_names, metricValues)) {
             writeProfilingJson(hotKernel, g_profiling_cycle, g_metric_names,
-                               metricValues, hotCount, hotTotalNs);
+                               metricValues, hotCount, hotTotalNs,
+                               g_profiler_data.lastProfileWallNs,
+                               g_profiler_data.numPasses);
 
             // Print a summary to stderr.
             std::fprintf(stderr,

@@ -202,6 +202,20 @@ struct ProfilerCtxData {
 
     int maxNumRanges      = 1;    // We profile exactly one kernel per cycle
     int maxRangeNameLength = 256;
+
+    // Number of hardware replay passes required to collect all configured
+    // counters.  Queried from NVPW after config image generation.  Used to
+    // derive per-pass kernel time from the wall-clock profile duration.
+    int numPasses = 0;
+
+    // Wall-clock bracket around the profiled cuLaunchKernel call.
+    // profileEnterTime is captured in the CUPTI_API_ENTER callback just
+    // before beginProfilingSession; lastProfileWallNs is the delta
+    // captured in the matching CUPTI_API_EXIT callback.  In KernelReplay
+    // mode cuLaunchKernel blocks for the entire replay sequence, so this
+    // delta covers all N passes + save/restore overhead.
+    std::chrono::steady_clock::time_point profileEnterTime;
+    uint64_t lastProfileWallNs = 0;
 };
 
 // =====================================================================

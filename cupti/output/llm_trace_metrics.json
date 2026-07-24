@@ -7,7 +7,7 @@
   "device": "cuda",
   "total_requests": 256,
   "total_generated_tokens": 8192,
-  "total_time_sec": 23.397099456999968,
-  "tokens_per_sec": 350.1288702497313,
-  "requests_per_sec": 10.941527195304102
+  "total_time_sec": 23.40703730899986,
+  "tokens_per_sec": 349.9802171396645,
+  "requests_per_sec": 10.936881785614515
 }

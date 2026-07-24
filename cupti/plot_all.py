@@ -128,14 +128,14 @@ def plot_one(csv_path: Path, out_path: Path, title_prefix: str):
 
     footnote_text = "\n".join(footnotes)
 
-    fig.subplots_adjust(bottom=0.34, wspace=0.35)
+    fig.subplots_adjust(bottom=0.42, wspace=0.35)
     fig.text(
         0.01,
         0.02,
         footnote_text,
         ha="left",
         va="bottom",
-        fontsize=8,
+        fontsize=15,
         family="monospace",
     )
 
@@ -387,6 +387,9 @@ def plot_profile_cycle(json_path: Path, out_path: Path):
     launches = data.get("total_launches", 0)
     total_ms = data.get("total_gpu_time_ms", 0.0)
     avg_us = data.get("avg_duration_us", 0.0)
+    num_passes = data.get("num_replay_passes", 0)
+    profile_wall_us = data.get("profile_wall_time_us", 0.0)
+    profiled_kernel_us = data.get("profiled_kernel_time_us", 0.0)
     metrics = data.get("metrics", {})
 
     if not metrics:
@@ -417,7 +420,7 @@ def plot_profile_cycle(json_path: Path, out_path: Path):
     has_row2 = has_sm or has_dram  # whether we need the analysis row
 
     if has_row2:
-        fig = plt.figure(figsize=(18, 13))
+        fig = plt.figure(figsize=(25, 13))
         gs = fig.add_gridspec(2, 3, height_ratios=[2, 3], hspace=0.38, wspace=0.35)
         ax_raw = fig.add_subplot(gs[0, 0:2])   # raw metrics bar chart (wide)
         ax_info = fig.add_subplot(gs[0, 2])     # kernel info card
@@ -475,26 +478,32 @@ def plot_profile_cycle(json_path: Path, out_path: Path):
         ("Total GPU time", f"{total_ms:,.2f} ms"),
         ("Avg duration", f"{avg_us:,.2f} us"),
     ]
+    if num_passes > 0:
+        card_lines.append(("Total runs (with replay)", str(num_passes)))
+    if profile_wall_us > 0:
+        card_lines.append(("Profile wall time", f"{profile_wall_us:,.1f} us"))
+    if profiled_kernel_us > 0:
+        card_lines.append(("Profiled kernel time", f"{profiled_kernel_us:,.1f} us"))
     if active_ratio is not None:
         card_lines.append(("SM active ratio", f"{active_ratio:.1%}"))
     if has_dram:
         card_lines.append(("DRAM total", _fmt_value(dram_total) + " B"))
 
     y_start = 0.95
-    y_step = 0.085
+    y_step = 0.075
     for i, (key, val) in enumerate(card_lines):
         y = y_start - i * y_step
-        ax_info.text(0.02, y, f"{key}:", fontsize=9, fontweight="bold",
+        ax_info.text(0.02, y, f"{key}:", fontsize=12, fontweight="bold",
                      transform=ax_info.transAxes, va="top")
-        ax_info.text(0.45, y, val, fontsize=9,
+        ax_info.text(0.45, y, val, fontsize=12,
                      transform=ax_info.transAxes, va="top")
 
     ax_info.text(
         0.02, 0.03, f"Raw: {raw_short}",
-        fontsize=6, family="monospace", color="gray",
+        fontsize=8, family="monospace", color="gray",
         transform=ax_info.transAxes, va="bottom", wrap=True,
     )
-    ax_info.set_title("Kernel Identity", fontsize=11, fontweight="bold")
+    ax_info.set_title("Kernel Identity", fontsize=13, fontweight="bold")
 
     # ------------------------------------------------------------------
     # Panel 3: SM utilization breakdown (stacked bar)
@@ -505,7 +514,7 @@ def plot_profile_cycle(json_path: Path, out_path: Path):
         bars_a = ax_sm.bar(["SM Cycles"], [active], color="#4c72b0", label="Active")
         ax_sm.bar(["SM Cycles"], [idle], bottom=[active], color="#d9d9d9", label="Idle")
         ax_sm.set_ylabel("Cycles (avg per SM)")
-        ax_sm.set_title("SM Utilization", fontsize=11, fontweight="bold")
+        ax_sm.set_title("SM Utilization", fontsize=13, fontweight="bold")
 
         ratio_pct = (active_ratio * 100) if active_ratio is not None else 0
         # Extra headroom for label + legend above bars
@@ -513,7 +522,7 @@ def plot_profile_cycle(json_path: Path, out_path: Path):
         ax_sm.text(
             0, active + idle + (cycles_elapsed * 0.02),
             f"{ratio_pct:.1f}% active",
-            ha="center", va="bottom", fontsize=10, fontweight="bold",
+            ha="center", va="bottom", fontsize=12, fontweight="bold",
             color="#4c72b0",
         )
 
@@ -527,21 +536,21 @@ def plot_profile_cycle(json_path: Path, out_path: Path):
             ax_sm2.text(
                 1, warps_active + warps_active * 0.05,
                 f"{warps_active:.1f}",
-                ha="center", va="bottom", fontsize=9, color="#dd8452",
+                ha="center", va="bottom", fontsize=12, color="#dd8452",
             )
             # Combine legends from both axes, place above the plot
             handles1, labels1 = ax_sm.get_legend_handles_labels()
             handles2, labels2 = ax_sm2.get_legend_handles_labels()
             ax_sm.legend(handles1 + handles2, labels1 + labels2,
-                         loc="upper center", fontsize=8, ncol=3,
+                         loc="upper center", fontsize=12, ncol=3,
                          bbox_to_anchor=(0.5, 1.0))
         else:
-            ax_sm.legend(loc="upper center", fontsize=8, ncol=2,
+            ax_sm.legend(loc="upper center", fontsize=12, ncol=2,
                          bbox_to_anchor=(0.5, 1.0))
     elif ax_sm is not None:
         ax_sm.axis("off")
         ax_sm.text(0.5, 0.5, "SM metrics\nnot collected",
-                   ha="center", va="center", fontsize=11, color="gray",
+                   ha="center", va="center", fontsize=12, color="gray",
                    transform=ax_sm.transAxes)
 
     # ------------------------------------------------------------------
@@ -577,14 +586,14 @@ def plot_profile_cycle(json_path: Path, out_path: Path):
             ax_mem.text(
                 0.5, 0.92,
                 f"Read {rd_pct:.0f}% / Write {wr_pct:.0f}%",
-                ha="center", va="top", fontsize=9,
+                ha="center", va="top", fontsize=12,
                 transform=ax_mem.transAxes,
                 bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="orange", alpha=0.8),
             )
     elif ax_mem is not None:
         ax_mem.axis("off")
         ax_mem.text(0.5, 0.5, "DRAM metrics\nnot collected",
-                   ha="center", va="center", fontsize=11, color="gray",
+                   ha="center", va="center", fontsize=12, color="gray",
                    transform=ax_mem.transAxes)
 
     # ------------------------------------------------------------------
@@ -592,7 +601,7 @@ def plot_profile_cycle(json_path: Path, out_path: Path):
     # ------------------------------------------------------------------
     if ax_diag is not None:
         ax_diag.axis("off")
-        ax_diag.set_title("Bottleneck Analysis", fontsize=11, fontweight="bold")
+        ax_diag.set_title("Bottleneck Analysis", fontsize=13, fontweight="bold")
 
         diag_lines = []
         diag_color = "black"
@@ -647,7 +656,7 @@ def plot_profile_cycle(json_path: Path, out_path: Path):
         for i, line in enumerate(diag_lines):
             weight = "bold" if i == 0 else "normal"
             color = diag_color if i == 0 else "black"
-            fontsize = 12 if i == 0 else 9
+            fontsize = 12
             ax_diag.text(
                 0.05, y, line,
                 fontsize=fontsize, fontweight=weight, color=color,
@@ -733,7 +742,163 @@ def plot_profile_cycles_summary(json_paths, out_path: Path):
     fig.savefig(out_path, dpi=160)
     plt.close(fig)
     print(f"Saved plot to {out_path}")
-    
+
+
+def plot_profile_cycle_pair(c1_path: Path, c2_path: Path, out_path: Path):
+    """
+    Side-by-side comparison of two profiling cycles (typically cycle 1 and
+    cycle 2). Shows the two kernels' identity cards, their SM utilization
+    breakdown, and their DRAM traffic breakdown in one figure so the
+    per-cycle hot-kernel behavior can be contrasted at a glance.
+    """
+    with c1_path.open("r", encoding="utf-8") as f:
+        c1 = json.load(f)
+    with c2_path.open("r", encoding="utf-8") as f:
+        c2 = json.load(f)
+
+    cycles = [c1, c2]
+    labels = []
+    for c in cycles:
+        cnum = c.get("cycle", "?")
+        kname = humanize_kernel_name(c.get("target_kernel", "?"))
+        labels.append(f"Cycle {cnum}\n{kname}")
+
+    # Extract derived quantities per cycle
+    def _derive(c):
+        m = c.get("metrics", {}) or {}
+        elapsed = m.get("sm__cycles_elapsed.avg", 0.0)
+        active = m.get("sm__cycles_active.avg", 0.0)
+        idle = max(0.0, elapsed - active)
+        warps = m.get("sm__warps_active.avg", 0.0)
+        rd = m.get("dram__bytes_read.sum", 0.0)
+        wr = m.get("dram__bytes_write.sum", 0.0)
+        ratio = (active / elapsed) if elapsed > 0 else 0.0
+        return {
+            "elapsed": elapsed,
+            "active": active,
+            "idle": idle,
+            "ratio": ratio,
+            "warps": warps,
+            "dram_read": rd,
+            "dram_write": wr,
+            "dram_total": rd + wr,
+        }
+
+    d = [_derive(c) for c in cycles]
+
+    fig = plt.figure(figsize=(16, 6))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 1.0], wspace=0.35)
+    ax_info = fig.add_subplot(gs[0, 0])
+    ax_sm = fig.add_subplot(gs[0, 1])
+    ax_mem = fig.add_subplot(gs[0, 2])
+
+    # ---------------- Identity card ----------------
+    ax_info.axis("off")
+    ax_info.set_title("Kernel Identity", fontsize=13, fontweight="bold")
+    y = 0.97
+    for i, c in enumerate(cycles):
+        cnum = c.get("cycle", "?")
+        kname = humanize_kernel_name(c.get("target_kernel", "?"))
+        launches = c.get("total_launches", 0)
+        avg_us = c.get("avg_duration_us", 0.0)
+        num_passes = c.get("num_replay_passes", 0)
+        profile_wall_us = c.get("profile_wall_time_us", 0.0)
+        profiled_kernel_us = c.get("profiled_kernel_time_us", 0.0)
+        color = "#4c72b0" if i == 0 else "#dd8452"
+        ax_info.text(0.02, y, f"Cycle {cnum}", fontsize=12, fontweight="bold",
+                     color=color, transform=ax_info.transAxes, va="top")
+        y -= 0.055
+        ax_info.text(0.02, y, kname, fontsize=10,
+                     transform=ax_info.transAxes, va="top")
+        y -= 0.048
+        ax_info.text(0.02, y, f"launches: {launches:,}", fontsize=9,
+                     transform=ax_info.transAxes, va="top")
+        y -= 0.040
+        ax_info.text(0.02, y, f"trace avg:      {avg_us:.1f} us", fontsize=9,
+                     family="monospace",
+                     transform=ax_info.transAxes, va="top")
+        y -= 0.040
+        if num_passes > 0:
+            ax_info.text(0.02, y,
+                         f"Total runs (original run + replay):  {num_passes}",
+                         fontsize=9, family="monospace",
+                         transform=ax_info.transAxes, va="top")
+            y -= 0.040
+        if profile_wall_us > 0:
+            ax_info.text(0.02, y,
+                         f"profile wall:   {profile_wall_us:.1f} us",
+                         fontsize=9, family="monospace",
+                         transform=ax_info.transAxes, va="top")
+            y -= 0.040
+        if profiled_kernel_us > 0:
+            ax_info.text(0.02, y,
+                         f"per-pass kernel:{profiled_kernel_us:.1f} us",
+                         fontsize=9, family="monospace",
+                         transform=ax_info.transAxes, va="top")
+            y -= 0.040
+        ax_info.text(0.02, y,
+                     f"SM active:      {d[i]['ratio'] * 100:.1f}%",
+                     fontsize=9, family="monospace",
+                     transform=ax_info.transAxes, va="top")
+        y -= 0.065
+
+    # ---------------- SM utilization ----------------
+    x = [0, 1]
+    actives = [d[0]["active"], d[1]["active"]]
+    idles = [d[0]["idle"], d[1]["idle"]]
+    elapseds = [d[0]["elapsed"], d[1]["elapsed"]]
+    ax_sm.bar(x, actives, color="#4c72b0", label="Active")
+    ax_sm.bar(x, idles, bottom=actives, color="#d9d9d9", label="Idle")
+    ax_sm.set_xticks(x)
+    ax_sm.set_xticklabels(labels, fontsize=10)
+    ax_sm.set_ylabel("Cycles (avg per SM)")
+    ax_sm.set_title("SM Utilization", fontsize=13, fontweight="bold")
+    ymax = max(elapseds) if max(elapseds) > 0 else 1.0
+    ax_sm.set_ylim(0, ymax * 1.30)
+    for xi, di in zip(x, d):
+        if di["elapsed"] > 0:
+            ax_sm.text(
+                xi, di["elapsed"] + ymax * 0.02,
+                f"{di['ratio'] * 100:.1f}% active",
+                ha="center", va="bottom", fontsize=11,
+                fontweight="bold", color="#4c72b0",
+            )
+    ax_sm.legend(loc="upper center", fontsize=10, ncol=2,
+                 bbox_to_anchor=(0.5, 1.0))
+
+    # ---------------- DRAM traffic ----------------
+    reads = [d[0]["dram_read"], d[1]["dram_read"]]
+    writes = [d[0]["dram_write"], d[1]["dram_write"]]
+    totals = [d[0]["dram_total"], d[1]["dram_total"]]
+    ax_mem.bar(x, reads, color="#55a868", label="Read")
+    ax_mem.bar(x, writes, bottom=reads, color="#c44e52", label="Write")
+    ax_mem.set_xticks(x)
+    ax_mem.set_xticklabels(labels, fontsize=10)
+    ax_mem.set_ylabel("DRAM bytes")
+    ax_mem.set_title("DRAM Traffic", fontsize=13, fontweight="bold")
+    mmax = max(totals) if max(totals) > 0 else 1.0
+    ax_mem.set_ylim(0, mmax * 1.30)
+    for xi, di in zip(x, d):
+        if di["dram_total"] > 0:
+            ax_mem.text(
+                xi, di["dram_total"] + mmax * 0.02,
+                _fmt_value(di["dram_total"]) + " B",
+                ha="center", va="bottom", fontsize=11,
+                fontweight="bold",
+            )
+    ax_mem.legend(loc="upper center", fontsize=10, ncol=2,
+                  bbox_to_anchor=(0.5, 1.0))
+
+    fig.suptitle(
+        f"Profiling Cycle {c1.get('cycle', '?')} vs Cycle {c2.get('cycle', '?')}",
+        fontsize=14, fontweight="bold", y=0.99,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+    print(f"Saved plot to {out_path}")
+
+
 def main():
     PLOT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -786,6 +951,14 @@ def main():
         plot_profile_cycles_summary(
             cycle_jsons, PLOT_DIR / "profile_cycles_summary.png"
         )
+
+        # Focused side-by-side comparison of cycle 1 and cycle 2
+        if len(cycle_jsons) >= 2:
+            plot_profile_cycle_pair(
+                cycle_jsons[0],
+                cycle_jsons[1],
+                PLOT_DIR / "profile_cycle_1_vs_2.png",
+            )
     else:
         print("  No profile_cycle_*.json files found; skipping profiling plots")
 

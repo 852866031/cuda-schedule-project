@@ -40,11 +40,15 @@ bool getRawMetricRequests(
 // Flow:
 //   raw requests ──► RawMetricsConfig ──► BeginPassGroup ──► AddMetrics
 //       ──► EndPassGroup ──► GenerateConfigImage ──► GetConfigImage bytes
+// outNumPasses (if non-null) receives the total number of hardware
+// replay passes required to collect all configured counters
+// (numPipelinedPasses + numIsolatedPasses).
 bool getConfigImage(
     const std::string& chipName,
     const std::vector<std::string>& metricNames,
     std::vector<uint8_t>& configImage,
-    const uint8_t* pCounterAvailabilityImage);
+    const uint8_t* pCounterAvailabilityImage,
+    int* outNumPasses = nullptr);
 
 // Build the counter data prefix image: a template that CUPTI uses to
 // determine the size and layout of the counter data image.

@@ -59,7 +59,7 @@ def main() -> None:
     with torch.cuda.nvtx.range("load_model"):
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_NAME,
-            dtype=DTYPE,
+            torch_dtype=DTYPE,
         ).to(DEVICE)
         model.eval()
 

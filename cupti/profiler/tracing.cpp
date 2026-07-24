@@ -161,7 +161,9 @@ void writeProfilingJson(
     const std::vector<std::string>& metricNames,
     const std::vector<double>& values,
     uint64_t kernelCount,
-    uint64_t kernelTotalNs)
+    uint64_t kernelTotalNs,
+    uint64_t profileWallNs,
+    int numPasses)
 {
     std::string path = getOutdir() + "/profile_cycle_"
                      + std::to_string(cycle) + ".json";
@@ -176,6 +178,15 @@ void writeProfilingJson(
         ? static_cast<double>(kernelTotalNs) / kernelCount / 1e3
         : 0.0;
 
+    // Profile-phase timing (wall clock of the replayed cuLaunchKernel).
+    // profiled_kernel_time_us is the amortized per-pass time; treat as an
+    // approximation of the "natural" kernel duration under counter
+    // collection, since replay passes can have slightly different costs.
+    double profile_wall_us = static_cast<double>(profileWallNs) / 1e3;
+    double profiled_kernel_us = numPasses > 0
+        ? profile_wall_us / numPasses
+        : 0.0;
+
     ofs << "{\n";
     ofs << "  \"cycle\": " << cycle << ",\n";
     ofs << "  \"target_kernel\": \"" << kernelName << "\",\n";
@@ -183,6 +194,9 @@ void writeProfilingJson(
     ofs << "  \"total_launches\": " << kernelCount << ",\n";
     ofs << "  \"total_gpu_time_ms\": " << total_ms << ",\n";
     ofs << "  \"avg_duration_us\": " << avg_us << ",\n";
+    ofs << "  \"num_replay_passes\": " << numPasses << ",\n";
+    ofs << "  \"profile_wall_time_us\": " << profile_wall_us << ",\n";
+    ofs << "  \"profiled_kernel_time_us\": " << profiled_kernel_us << ",\n";
     ofs << "  \"metrics\": {\n";
     for (size_t i = 0; i < metricNames.size(); ++i) {
         ofs << "    \"" << metricNames[i] << "\": " << values[i];

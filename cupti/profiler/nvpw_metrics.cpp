@@ -130,7 +130,8 @@ bool getConfigImage(
     const std::string& chipName,
     const std::vector<std::string>& metricNames,
     std::vector<uint8_t>& configImage,
-    const uint8_t* pCounterAvailabilityImage)
+    const uint8_t* pCounterAvailabilityImage,
+    int* outNumPasses)
 {
     // Step 1.
     std::vector<NVPA_RawMetricRequest> rawReqs;
@@ -194,6 +195,19 @@ bool getConfigImage(
     getParams.bytesAllocated = configImage.size();
     getParams.pBuffer = configImage.data();
     NVPW_TRY(NVPW_RawMetricsConfig_GetConfigImage(&getParams));
+
+    // Query the number of hardware replay passes required.  In KernelReplay
+    // mode CUPTI will run the kernel this many times for each profiled
+    // launch, each pass programming a different set of counters.
+    if (outNumPasses) {
+        NVPW_RawMetricsConfig_GetNumPasses_Params numPassesParams = {
+            NVPW_RawMetricsConfig_GetNumPasses_Params_STRUCT_SIZE};
+        numPassesParams.pRawMetricsConfig = pConfig;
+        NVPW_TRY(NVPW_RawMetricsConfig_GetNumPasses(&numPassesParams));
+        *outNumPasses = static_cast<int>(
+            numPassesParams.numPipelinedPasses +
+            numPassesParams.numIsolatedPasses);
+    }
 
     // Clean up.
     NVPW_RawMetricsConfig_Destroy_Params destroyP = {
@@ -449,12 +463,17 @@ bool initializeProfilerContext(ProfilerCtxData& pd) {
     availParams.pCounterAvailabilityImage = pd.counterAvailabilityImage.data();
     CUPTI_TRY(cuptiProfilerGetCounterAvailability(&availParams));
 
-    // Generate config image (which counters to collect).
+    // Generate config image (which counters to collect).  Also asks NVPW
+    // how many hardware passes this counter set will take — in KernelReplay
+    // mode this is exactly how many times each profiled kernel is run.
     if (!getConfigImage(pd.chipName, g_metric_names, pd.configImage,
-                        pd.counterAvailabilityImage.data())) {
+                        pd.counterAvailabilityImage.data(),
+                        &pd.numPasses)) {
         std::fprintf(stderr, "[profiler] Failed to create config image.\n");
         return false;
     }
+    std::fprintf(stderr, "[profiler] Counter config requires %d replay pass(es)\n",
+                 pd.numPasses);
 
     // Generate counter data prefix image (sizes the results buffer).
     if (!getCounterDataPrefixImage(pd.chipName, g_metric_names,

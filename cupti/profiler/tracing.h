@@ -52,12 +52,19 @@ std::string findHottestKernel();
 // =====================================================================
 
 // Write one profiling cycle's results to <outdir>/profile_cycle_N.json.
-// Contains the target kernel name, trace-phase stats, and the collected
-// metric values.
+// Contains the target kernel name, trace-phase stats, collected metric
+// values, and replay-phase timing information:
+//   - numPasses:      how many hardware replay passes ran for the kernel
+//   - profileWallNs:  total wall-clock duration of the replayed launch
+//                     (i.e. cuLaunchKernel blocking time for all passes)
+// From these the JSON derives profile_wall_time_us and
+// profiled_kernel_time_us (= profile_wall_time_us / num_replay_passes).
 void writeProfilingJson(
     const std::string& kernelName,
     int cycle,
     const std::vector<std::string>& metricNames,
     const std::vector<double>& values,
     uint64_t kernelCount,
-    uint64_t kernelTotalNs);
+    uint64_t kernelTotalNs,
+    uint64_t profileWallNs,
+    int numPasses);

@@ -2,14 +2,17 @@
   "cycle": 2,
   "target_kernel": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_128x2_tn_align8>(cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_128x2_tn_align8::Params)",
   "trace_duration_s": 10,
-  "total_launches": 93183,
-  "total_gpu_time_ms": 4666.21,
-  "avg_duration_us": 50.0758,
+  "total_launches": 92906,
+  "total_gpu_time_ms": 4652.96,
+  "avg_duration_us": 50.0825,
+  "num_replay_passes": 1,
+  "profile_wall_time_us": 12949.7,
+  "profiled_kernel_time_us": 12949.7,
   "metrics": {
-    "sm__cycles_elapsed.avg": 74151.6,
-    "sm__cycles_active.avg": 67594.1,
-    "sm__warps_active.avg": 101384,
-    "dram__bytes_read.sum": 3.35762e+07,
-    "dram__bytes_write.sum": 6.0119e+06
+    "sm__cycles_elapsed.avg": 63499,
+    "sm__cycles_active.avg": 58079.6,
+    "sm__warps_active.avg": 87148.2,
+    "dram__bytes_read.sum": 3.35759e+07,
+    "dram__bytes_write.sum": 1.34861e+06
   }
 }
