@@ -2,9 +2,9 @@
 
 ## Scope and Reading Guide
 
-This review covers the seven PDF files stored directly in the main `orion-citation` directory. The collection spans several layers of the GPU-sharing stack. Bless, Hummingbird, LithOS, MMK, and Tally directly manipulate GPU execution at kernel, thread-block, stream, context, or SM/TPC granularity. SMore performs cluster-level admission and placement for serverless inference functions. The file named `Harli SLO-Aware Co-location of LLM Inference and PEFT Finetuning.pdf` contains the OSDI 2024 paper *Usher: Holistic Interference Avoidance for Resource Optimized ML Inference*, not Harli; this review follows the paper content and records the filename mismatch.
+This review covers the seven PDF files stored directly in the main `orion-citation` directory. The collection spans several layers of the GPU-sharing stack. Bless, Hummingbird, Tally, MMK, and LithOS directly manipulate GPU execution at kernel, thread-block, stream, context, or SM/TPC granularity. SMore performs cluster-level admission and placement for serverless inference functions. The file named `Harli SLO-Aware Co-location of LLM Inference and PEFT Finetuning.pdf` contains the OSDI 2024 paper *Usher: Holistic Interference Avoidance for Resource Optimized ML Inference*, not Harli; this review follows the paper content and records the filename mismatch.
 
-The papers are reviewed with an emphasis on five questions:
+The review first presents direct kernel schedulers from focused launch-time mechanisms to broader hierarchical and GPU-OS designs, then covers complementary workload-level systems. The papers are reviewed with an emphasis on five questions:
 
 1. What resource-underutilization or interference problem does the paper target?
 2. At what layer and granularity does it make scheduling decisions?
@@ -55,6 +55,12 @@ Bless is implemented in more than 5,000 lines of C++ and supports applications b
 
 The main reported result is a **21.1%-37.3% average latency reduction** over state-of-the-art sharing approaches while preserving promised quotas. In homogeneous cases, colocating two BERT inference instances reduces average latency by 39.1%; with four BERT instances, the reduction reaches 41.2%. The paper also evaluates beyond pairwise sharing, quota combinations, kernel-squad granularity, prediction accuracy, and scheduling overhead. Kernel squads in the evaluation generally last approximately 0.7-10 ms, enabling allocation changes substantially faster than request-level schedulers.
 
+### Comparison with Orion
+
+Bless and Orion share the same basic control opportunity: both transparently observe CUDA launches, profile kernel behavior, and decide which kernels from independent applications should execute concurrently. Orion is primarily **interference-aware**: it classifies kernels by resource behavior and attempts to overlap complementary kernels, especially compute-intensive and memory-intensive work, while respecting application priorities. Bless is primarily **quota- and bubble-aware**: it asks whether each application is making the progress promised by its SM quota and lets another application reclaim capacity that the quota owner cannot currently use.
+
+Their scheduling units and enforcement mechanisms also differ. Orion schedules individual, non-preemptive kernels through intercepted queues and relies on the GPU's concurrent-kernel execution; once admitted, a kernel normally runs to completion. Bless groups several kernels into short **kernel squads** and dispatches them through pre-created MPS contexts representing different SM allocations. This gives Bless more explicit spatial control and a clearer quota guarantee, but requires offline profiles and a discrete context/configuration space. Orion is conceptually simpler and more directly targets beneficial kernel pairing; Bless is better suited when proportional allocation and fair bubble reclamation are first-class requirements.
+
 ### Assessment
 
 Bless belongs strongly in the kernel-scheduling category. It wraps CUDA launch APIs, observes individual kernels, creates cross-application kernel squads, and enforces spatial configurations through multiple contexts. Relative to Orion, Bless focuses more directly on accurate quota enforcement and bubble reclamation. Its key limitation is dependence on offline profiling and a discrete set of pre-created contexts. Its ability to generalize to dynamic-shape workloads, unseen kernels, rapidly changing LLM batches, and GPUs with different resource-partitioning behavior depends on the quality and coverage of those profiles.
@@ -101,56 +107,72 @@ The evaluation covers different NVIDIA GPU architectures, DNN inference, CNN wor
 
 The results also separate the gains from splitting, scheduling, and bubble harvesting. The value of splitting is largest when low-priority kernels otherwise have long blocking times. Bubble harvesting contributes most when high-priority workloads contain recurrent synchronization or communication gaps.
 
+### Comparison with Orion
+
+Orion improves utilization through interference-aware **spatial overlap** of whole kernels: it chooses compatible high- and low-priority kernels and lets them execute concurrently. This works well when complementary kernels exist, but it cannot promptly evict a long low-priority kernel after launch. Hummingbird instead emphasizes **temporal borrowing with software preemption**. It rewrites low-priority PTX into small execution units, allowing best-effort work to enter short bubbles and stop at microsecond-scale boundaries when high-priority computation resumes.
+
+This distinction matters for LLM and distributed workloads. Orion's kernel classification can reduce average interference, but its whole-kernel granularity and opaque multi-stream execution cannot guarantee that a supposedly compatible kernel will avoid HBM contention during a memory-intensive decode step. Hummingbird uses synchronization and NCCL patterns to detect workload phases and prioritizes rapid withdrawal over sustained overlap. It therefore provides stronger SLO protection and handles small bubbles more effectively, at the cost of PTX-transformation complexity, repeated scheduling work, and limited control over closed-source kernels. Orion has a lighter execution path; Hummingbird offers finer preemption and more explicit awareness of modern LLM/runtime behavior.
+
 ### Assessment
 
 Hummingbird is directly aligned with the target research direction: it intercepts CUDA Driver APIs, transforms kernels at PTX level, and schedules at microsecond-scale boundaries. Compared with Tally, it places greater emphasis on bubble detection across modern LLM and distributed-training stacks and on SLO-oriented preemption. The major limitations are PTX availability, transformation correctness for unusual kernels, runtime complexity across CUDA versions, and shared-resource interference that cannot be eliminated merely by stopping thread blocks quickly.
 
-## 3. LithOS: An Operating System for Efficient Machine Learning on GPUs
+## 3. Tally: Non-Intrusive Performance Isolation for Concurrent Deep Learning Workloads
 
-> **In brief:** LithOS is a GPU operating-system layer that schedules individual TPCs and atomized kernel fragments rather than whole kernels or processes. By integrating TPC stealing, hardware right-sizing, and power management, it provides work-conserving isolation and substantially improves colocated ML latency and throughput.
+> **In brief:** Tally virtualizes CUDA execution and transforms best-effort PTX kernels into sliced or cooperatively preemptible forms, exposing thread-block-level yield points without application changes. A centralized priority scheduler uses these primitives to protect high-priority tail latency while retaining most of the throughput from colocated work.
 
 ### Problem and motivation
 
-LithOS argues that GPU resource management needs an operating-system-like layer rather than isolated mechanisms for priority, sharing, or power control. Existing software typically schedules whole kernels, streams, processes, or inference requests. These units are too coarse: a kernel can occupy the GPU long after a latency-critical request arrives, static SM partitioning strands capacity, and allocating a fixed hardware width ignores the fact that different kernels saturate at different numbers of SMs/TPCs.
+Tally focuses on transparent colocation of a latency-sensitive high-priority workload with a throughput-oriented best-effort workload. Existing systems face a three-way tradeoff: native time slicing and MPS are compatible but provide weak tail-latency isolation; research schedulers often require framework or application changes; and systems based on whole-kernel priority cannot promptly stop a long-running best-effort kernel.
 
-LithOS treats the GPU's Texture Processing Clusters (TPCs) as schedulable compute units. Its goal is to provide transparent spatial scheduling, work conservation, fine-grained preemption-like behavior, performance isolation, hardware right-sizing, and power management within one runtime.
+Tally's objective is to preserve the high-priority task's performance while harvesting idle GPU cycles, without requiring application, framework, or kernel-source modifications.
 
-![LithOS motivation: MPS concurrency still produces head-of-line blocking and idle GPU capacity.](assets/paper_figures/lithos_motivation.png)
+![Tally motivation: CUDA kernels consist of independently schedulable thread blocks and warps.](assets/paper_figures/tally_motivation.png)
 
-*Motivation (Figure 3): even when MPS admits two workloads concurrently, long kernels and fixed resource use can delay later requests and leave capacity unused. LithOS seeks finer control than stream- or process-level multiplexing.*
+*Motivation (Figure 1): whole-kernel scheduling is unnecessarily coarse because a grid is already decomposed into thread blocks. Tally exploits this structure to create safe yield points below the application-visible kernel boundary.*
 
-### Architecture
+### Virtualization and interception
 
-LithOS introduces four mechanisms:
+Tally inserts a client/server virtualization layer between applications and CUDA. A preload/interposition library captures CUDA API calls from unmodified processes and forwards them to a centralized server that owns the GPU context and scheduling policy. The server maintains separate streams and queues for high- and low-priority work, controls memory and synchronization operations, and observes kernel launches before they reach the GPU.
 
-![LithOS mechanism: a GPU OS layer exposing TPC scheduling, kernel atomization, right-sizing, and power management.](assets/paper_figures/lithos_mechanism.png)
+![Tally mechanism: client interception and a centralized virtualization server for transformation, profiling, and scheduling.](assets/paper_figures/tally_mechanism.png)
 
-*Main mechanism (Figure 7): unmodified frameworks send work through LibLithOS to a unified device driver. The runtime jointly controls TPC placement, atomized kernel execution, hardware width, and power instead of treating them as separate policies.*
+*Main mechanism (Figure 2): unmodified frameworks are intercepted on the client side. The server transforms kernels into sliced or preemptible forms, profiles their turnaround behavior, and chooses dispatch configurations using a priority-aware scheduler.*
 
-- **TPC scheduler.** Each workload receives a logical allocation of TPCs. The scheduler maps ready work onto physical TPCs and can steal idle TPCs from a workload that cannot currently use its allocation. This separates reservation from instantaneous use: quotas provide isolation, while stealing makes the system work-conserving.
-- **Kernel atomizer.** A kernel is transformed into smaller atoms, each containing a subset of the original thread blocks. Atoms are scheduled independently, so LithOS can change a workload's physical width between atoms instead of waiting for a full kernel to finish. This reduces head-of-line blocking and provides a software analogue of fine-grained preemption.
-- **Hardware right-sizing.** More TPCs do not always reduce kernel latency proportionally. LithOS predicts each kernel's scaling curve and allocates the smallest width that stays within an acceptable performance loss, leaving the remaining TPCs for other workloads.
-- **Transparent power management.** The runtime chooses frequency/power settings using the characteristics of in-flight work. It can reduce frequency for kernels that are insensitive to compute frequency while maintaining latency or throughput targets.
+This architecture provides a global scheduling point across otherwise independent applications. It also lets Tally transform kernels before launch while keeping the original application binaries and ML frameworks unchanged.
 
-Applications interact with a userspace layer that submits work to LithOS queues. The GPU-side execution engine decouples logical kernel work from physical thread-block execution. Kernel atomization makes the original grid schedulable in pieces, and the TPC scheduler dynamically maps those pieces to resources.
+### Thread-block-level scheduling primitives
 
-### Scheduling behavior
+Tally implements two software primitives through PTX transformation:
 
-LithOS combines reservations, priorities, and TPC stealing. Latency-sensitive work receives enough dedicated capacity to meet its target. Best-effort work consumes otherwise idle TPCs but yields as atom boundaries permit. Right-sizing prevents a single workload from receiving resources beyond its saturation point. Because decisions occur below the model/request layer, LithOS can support inference-inference and inference-training colocation without requiring each ML framework to implement a custom scheduler.
+- **Kernel slicing.** The original grid is divided into multiple smaller kernel launches. Each slice receives a block offset, and transformed uses of `blockIdx` recover the original logical index. Smaller slices shorten the maximum time before high-priority work can run, but repeated launches add host and launch overhead.
+- **Kernel preemption.** The kernel is converted into a persistent-worker style execution. Physical thread blocks repeatedly obtain logical block indices from a global counter. Between logical blocks they inspect a preemption flag. When high-priority work arrives, no new logical blocks are claimed, so the best-effort kernel drains quickly without a second launch for every slice.
 
-Its performance models operate online and are kernel-dependent. The system learns how execution time scales with TPC count and uses this information for subsequent atoms. This is more adaptive than a fixed per-process MPS percentage, although early invocations and shape changes can cause prediction errors.
+The transformation must preserve synchronization semantics. A naive early return can deadlock if some threads exit before a block-wide barrier. Tally rewrites control flow so that threads reach required synchronization points consistently and only stop at safe logical boundaries.
 
-### Implementation and evaluation
+Slicing and preemption have different overheads. Slicing is mechanically simpler but incurs repeated launches. Persistent preemption uses fewer launches but adds counter accesses, flag checks, and synchronization logic. Tally profiles each best-effort kernel online under candidate configurations and selects the primitive and granularity that keep high-priority turnaround below a bound while maximizing low-priority throughput. The default turnaround target used in the paper is approximately 0.0316 ms.
 
-LithOS is implemented in Rust and evaluated against NVIDIA mechanisms and research systems including MPS, MIG, time slicing, REEF, TGS, priority-based execution, and Orion. Workloads include Llama 3, GPT-J, BERT, RetinaNet, YOLO, MobileNet, DLRM, and training/inference combinations.
+### Priority-aware scheduler
 
-For inference stacking, LithOS reports up to **13x lower tail latency than MPS**. Relative to the best-performing prior system, it reduces tail latency by about **4x** while improving aggregate goodput by approximately **1.3x**. For inference-training stacking, it reduces tail latency by **4.7x** relative to MPS; against the strongest prior baseline, it reduces tail latency by about **1.18x** while improving aggregate throughput by roughly **1.35x**.
+High-priority kernels are launched as soon as possible. Best-effort work runs opportunistically when the high-priority queue is empty and is provisioned in sufficiently small units that it can yield quickly. The scheduler accounts for kernel transformation overhead, expected segment duration, and the fact that aggressive slicing may improve isolation while reducing useful throughput.
 
-Right-sizing saves approximately one quarter of GPU capacity on average for less than 4% performance loss. The transparent power-management mechanism reduces total GPU energy by approximately one quarter at around 7% performance cost. The evaluation also studies atom size, prediction errors, kernel-dependent scaling, scheduler overhead, and the contribution of TPC stealing.
+Tally also virtualizes CUDA synchronization and memory-related calls so that application-visible ordering remains correct despite centralized execution. Its compatibility goal covers common DL frameworks and closed-source libraries; kernels for which transformable PTX is unavailable or that use unsupported features require conservative handling.
+
+### Evaluation
+
+The benchmark suite combines high-priority inference with best-effort training across vision, language, and generative workloads. The principal metric is P99 latency overhead of the high-priority task relative to exclusive execution, together with throughput retained by the best-effort task.
+
+Tally reports an average high-priority P99 overhead of **7.2%**, compared with **252.3%** for GPU time slicing, **345%** for MPS, **195.5%** for MPS priority, and **188.9%** for TGS. At the same time, Tally retains more than **80% of TGS's aggregate throughput**. Kernel transformation adds roughly 25% overhead to best-effort execution in the reported decomposition, illustrating the deliberate tradeoff between isolation and harvested work.
+
+### Comparison with Orion
+
+Both Tally and Orion interpose below unmodified DL frameworks and centralize scheduling across applications, but they expose different execution units. Orion queues and schedules **whole kernels**, using priority and predicted resource compatibility to decide when kernels may overlap. Tally rewrites PTX so that a logical kernel can yield between thread-block-sized units, using either repeated slices or a persistent-worker preemption protocol. Consequently, Tally can bound the time for which best-effort work delays a newly arrived high-priority kernel; Orion's bound is the remaining duration of kernels already admitted to the GPU.
+
+The systems also optimize different notions of successful sharing. Orion seeks high utilization and throughput while controlling interference through pairing decisions. Tally prioritizes **non-intrusive performance isolation**, even when achieving it reduces best-effort throughput through transformation and polling overhead. Orion avoids much of that transformation cost and can treat an opaque library kernel as a schedulable whole, but it provides weaker tail-latency protection when kernels are long or resource classification is inaccurate. Tally is therefore the stronger comparison for software preemption and P99 isolation, whereas Orion is the leaner baseline for interference-aware whole-kernel scheduling.
 
 ### Assessment
 
-LithOS is highly relevant to kernel scheduling, but architecturally more ambitious than an interposition-only scheduler. It presents a unified GPU OS abstraction and uses transparent kernel atomization to enable sub-kernel scheduling. Its strength is the integration of isolation, work conservation, capacity right-sizing, and energy management. Its risks are implementation complexity, dependence on GPU-specific low-level mechanisms, and the cost of maintaining compatibility with proprietary drivers and rapidly changing architectures. It is a particularly useful comparison point for any new work claiming that a CUDA interception layer should evolve into a general resource-management substrate.
+Tally is one of the closest papers to the target direction. Its defining contribution is not merely interception but semantics-preserving PTX transformation that exposes thread-block-level yield points. Compared with Orion's one-kernel-at-a-time scheduling, Tally can interrupt the effective execution of a long best-effort kernel at much finer granularity. Its limitations include transformation complexity, unsupported CUDA/PTX features, overhead on low-priority kernels, shared cache and bandwidth interference that remains while kernels overlap, and the maintenance burden of tracking proprietary CUDA toolchain changes.
 
 ## 4. MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications
 
@@ -198,11 +220,70 @@ The evaluation compares the hybrid design against standalone MIG, MPS, and exist
 
 The broader contribution is not a new hardware primitive but an orchestration framework for composing existing and software-defined controls. MMK demonstrates that coarse isolation and fine scheduling are complementary: isolation reduces the scheduler's burden, and kernel scheduling recovers utilization lost by isolation.
 
+### Comparison with Orion
+
+Orion uses a single fine-grained software layer: it intercepts launches, predicts kernel resource behavior, and schedules compatible kernels across application queues. MMK places a similar kernel-level control plane at the bottom of a **three-level hierarchy**. MIG first separates workloads requiring stronger isolation, MPS assigns SM shares within each partition, and the kernel scheduler handles transient contention inside those envelopes. MMK thus restricts the interference domain before applying Orion-like launch scheduling.
+
+The hierarchy addresses a limitation that Orion cannot fully solve in software: two kernels may use different execution units yet still interfere through L2 cache, HBM bandwidth, or faults. MIG can isolate several of those resources, making performance more predictable. The tradeoff is substantially greater operational complexity and less agility: MIG layouts are coarse and slow to change, MPS quotas add another control loop, and profiling must inform decisions at all three levels. Orion is simpler and can react directly at every launch, while MMK is preferable when strong isolation and predictable service quality justify a more static outer partitioning layer.
+
 ### Assessment
 
 MMK belongs to the target category because kernel interception and scheduling are part of its essential mechanism. However, its novelty is broader than the interception layer: it is a policy for deciding when to use MIG, MPS, or software scheduling. For related-work positioning, MMK is best described as a **hybrid hierarchical GPU-sharing framework**, whereas Orion and Tally focus more directly on fine-grained runtime execution control. A limitation is the operational complexity of coordinating MIG configuration, MPS processes, profiling, and kernel scheduling. The design also inherits MIG's generation-specific constraints and MPS's incomplete isolation of shared caches, memory bandwidth, and interconnect resources.
 
-## 5. SMore: Enhancing GPU Utilization in Deep Learning Clusters by Serverless-Based Co-Location Scheduling
+## 5. LithOS: An Operating System for Efficient Machine Learning on GPUs
+
+> **In brief:** LithOS is a GPU operating-system layer that schedules individual TPCs and atomized kernel fragments rather than whole kernels or processes. By integrating TPC stealing, hardware right-sizing, and power management, it provides work-conserving isolation and substantially improves colocated ML latency and throughput.
+
+### Problem and motivation
+
+LithOS argues that GPU resource management needs an operating-system-like layer rather than isolated mechanisms for priority, sharing, or power control. Existing software typically schedules whole kernels, streams, processes, or inference requests. These units are too coarse: a kernel can occupy the GPU long after a latency-critical request arrives, static SM partitioning strands capacity, and allocating a fixed hardware width ignores the fact that different kernels saturate at different numbers of SMs/TPCs.
+
+LithOS treats the GPU's Texture Processing Clusters (TPCs) as schedulable compute units. Its goal is to provide transparent spatial scheduling, work conservation, fine-grained preemption-like behavior, performance isolation, hardware right-sizing, and power management within one runtime.
+
+![LithOS motivation: MPS concurrency still produces head-of-line blocking and idle GPU capacity.](assets/paper_figures/lithos_motivation.png)
+
+*Motivation (Figure 3): even when MPS admits two workloads concurrently, long kernels and fixed resource use can delay later requests and leave capacity unused. LithOS seeks finer control than stream- or process-level multiplexing.*
+
+### Architecture
+
+LithOS introduces four mechanisms:
+
+![LithOS mechanism: a GPU OS layer exposing TPC scheduling, kernel atomization, right-sizing, and power management.](assets/paper_figures/lithos_mechanism.png)
+
+*Main mechanism (Figure 7): unmodified frameworks send work through LibLithOS to a unified device driver. The runtime jointly controls TPC placement, atomized kernel execution, hardware width, and power instead of treating them as separate policies.*
+
+- **TPC scheduler.** Each workload receives a logical allocation of TPCs. The scheduler maps ready work onto physical TPCs and can steal idle TPCs from a workload that cannot currently use its allocation. This separates reservation from instantaneous use: quotas provide isolation, while stealing makes the system work-conserving.
+- **Kernel atomizer.** A kernel is transformed into smaller atoms, each containing a subset of the original thread blocks. Atoms are scheduled independently, so LithOS can change a workload's physical width between atoms instead of waiting for a full kernel to finish. This reduces head-of-line blocking and provides a software analogue of fine-grained preemption.
+- **Hardware right-sizing.** More TPCs do not always reduce kernel latency proportionally. LithOS predicts each kernel's scaling curve and allocates the smallest width that stays within an acceptable performance loss, leaving the remaining TPCs for other workloads.
+- **Transparent power management.** The runtime chooses frequency/power settings using the characteristics of in-flight work. It can reduce frequency for kernels that are insensitive to compute frequency while maintaining latency or throughput targets.
+
+Applications interact with a userspace layer that submits work to LithOS queues. The GPU-side execution engine decouples logical kernel work from physical thread-block execution. Kernel atomization makes the original grid schedulable in pieces, and the TPC scheduler dynamically maps those pieces to resources.
+
+### Scheduling behavior
+
+LithOS combines reservations, priorities, and TPC stealing. Latency-sensitive work receives enough dedicated capacity to meet its target. Best-effort work consumes otherwise idle TPCs but yields as atom boundaries permit. Right-sizing prevents a single workload from receiving resources beyond its saturation point. Because decisions occur below the model/request layer, LithOS can support inference-inference and inference-training colocation without requiring each ML framework to implement a custom scheduler.
+
+Its performance models operate online and are kernel-dependent. The system learns how execution time scales with TPC count and uses this information for subsequent atoms. This is more adaptive than a fixed per-process MPS percentage, although early invocations and shape changes can cause prediction errors.
+
+### Implementation and evaluation
+
+LithOS is implemented in Rust and evaluated against NVIDIA mechanisms and research systems including MPS, MIG, time slicing, REEF, TGS, priority-based execution, and Orion. Workloads include Llama 3, GPT-J, BERT, RetinaNet, YOLO, MobileNet, DLRM, and training/inference combinations.
+
+For inference stacking, LithOS reports up to **13x lower tail latency than MPS**. Relative to the best-performing prior system, it reduces tail latency by about **4x** while improving aggregate goodput by approximately **1.3x**. For inference-training stacking, it reduces tail latency by **4.7x** relative to MPS; against the strongest prior baseline, it reduces tail latency by about **1.18x** while improving aggregate throughput by roughly **1.35x**.
+
+Right-sizing saves approximately one quarter of GPU capacity on average for less than 4% performance loss. The transparent power-management mechanism reduces total GPU energy by approximately one quarter at around 7% performance cost. The evaluation also studies atom size, prediction errors, kernel-dependent scaling, scheduler overhead, and the contribution of TPC stealing.
+
+### Comparison with Orion
+
+Orion is principally a host-side kernel scheduler: it intercepts launches, selects whole kernels from application queues, and relies on the existing GPU scheduler for block placement and concurrent execution. LithOS moves the control boundary deeper by presenting an operating-system abstraction over GPU **TPCs**. Its atomizer breaks kernels into smaller pieces, and its TPC scheduler explicitly controls their physical width, reservations, and borrowing. LithOS can therefore reclaim idle spatial capacity or reduce head-of-line blocking even within a kernel, whereas Orion must wait for an admitted kernel to complete and cannot directly assign its blocks to a chosen TPC subset.
+
+LithOS also covers a broader resource-management scope. Kernel-dependent right-sizing avoids allocating TPCs beyond a kernel's saturation point, and power management incorporates energy into the scheduling policy; neither is a central Orion mechanism. In exchange, LithOS requires a more invasive and architecture-specific GPU-OS substrate, kernel atomization support, and online scaling models. Orion is easier to deploy as an interception-based scheduler and is useful when whole-kernel pairing is sufficient. LithOS is the more complex design, but it offers finer spatial control and a path toward a unified GPU resource manager rather than a dedicated colocation scheduler.
+
+### Assessment
+
+LithOS is highly relevant to kernel scheduling, but architecturally more ambitious than an interposition-only scheduler. It presents a unified GPU OS abstraction and uses transparent kernel atomization to enable sub-kernel scheduling. Its strength is the integration of isolation, work conservation, capacity right-sizing, and energy management. Its risks are implementation complexity, dependence on GPU-specific low-level mechanisms, and the cost of maintaining compatibility with proprietary drivers and rapidly changing architectures. It is a particularly useful comparison point for any new work claiming that a CUDA interception layer should evolve into a general resource-management substrate.
+
+## 6. SMore: Enhancing GPU Utilization in Deep Learning Clusters by Serverless-Based Co-Location Scheduling
 
 > **In brief:** SMore colocates short serverless inference functions with long-running training jobs using learned interference predictions, deadline-aware admission and placement, and proactive model warming. It improves cluster utilization at the workload level, but does not intercept or schedule individual CUDA kernels.
 
@@ -252,57 +333,6 @@ Across multi-GPU configurations, average GPU utilization improves by **3%-34%**.
 ### Assessment
 
 SMore is not an Orion-style kernel scheduler. It schedules functions and chooses GPUs; the underlying GPU-sharing mechanism performs actual concurrent execution. It does not intercept CUDA launches, transform PTX, preempt kernels, or schedule thread blocks. The paper is relevant as an upper-level policy that could feed a kernel scheduler: SMore could decide which workloads should colocate, while Orion, Tally, Bless, or Hummingbird could enforce the resulting priorities inside each GPU. Its limitations include the additive multi-way interference model, mostly non-LLM workloads, reliance on scaled rather than native GPU-serverless production traces, and evaluation centered on RTX 3090 with only a limited A100/MIG extension.
-
-## 6. Tally: Non-Intrusive Performance Isolation for Concurrent Deep Learning Workloads
-
-> **In brief:** Tally virtualizes CUDA execution and transforms best-effort PTX kernels into sliced or cooperatively preemptible forms, exposing thread-block-level yield points without application changes. A centralized priority scheduler uses these primitives to protect high-priority tail latency while retaining most of the throughput from colocated work.
-
-### Problem and motivation
-
-Tally focuses on transparent colocation of a latency-sensitive high-priority workload with a throughput-oriented best-effort workload. Existing systems face a three-way tradeoff: native time slicing and MPS are compatible but provide weak tail-latency isolation; research schedulers often require framework or application changes; and systems based on whole-kernel priority cannot promptly stop a long-running best-effort kernel.
-
-Tally's objective is to preserve the high-priority task's performance while harvesting idle GPU cycles, without requiring application, framework, or kernel-source modifications.
-
-![Tally motivation: CUDA kernels consist of independently schedulable thread blocks and warps.](assets/paper_figures/tally_motivation.png)
-
-*Motivation (Figure 1): whole-kernel scheduling is unnecessarily coarse because a grid is already decomposed into thread blocks. Tally exploits this structure to create safe yield points below the application-visible kernel boundary.*
-
-### Virtualization and interception
-
-Tally inserts a client/server virtualization layer between applications and CUDA. A preload/interposition library captures CUDA API calls from unmodified processes and forwards them to a centralized server that owns the GPU context and scheduling policy. The server maintains separate streams and queues for high- and low-priority work, controls memory and synchronization operations, and observes kernel launches before they reach the GPU.
-
-![Tally mechanism: client interception and a centralized virtualization server for transformation, profiling, and scheduling.](assets/paper_figures/tally_mechanism.png)
-
-*Main mechanism (Figure 2): unmodified frameworks are intercepted on the client side. The server transforms kernels into sliced or preemptible forms, profiles their turnaround behavior, and chooses dispatch configurations using a priority-aware scheduler.*
-
-This architecture provides a global scheduling point across otherwise independent applications. It also lets Tally transform kernels before launch while keeping the original application binaries and ML frameworks unchanged.
-
-### Thread-block-level scheduling primitives
-
-Tally implements two software primitives through PTX transformation:
-
-- **Kernel slicing.** The original grid is divided into multiple smaller kernel launches. Each slice receives a block offset, and transformed uses of `blockIdx` recover the original logical index. Smaller slices shorten the maximum time before high-priority work can run, but repeated launches add host and launch overhead.
-- **Kernel preemption.** The kernel is converted into a persistent-worker style execution. Physical thread blocks repeatedly obtain logical block indices from a global counter. Between logical blocks they inspect a preemption flag. When high-priority work arrives, no new logical blocks are claimed, so the best-effort kernel drains quickly without a second launch for every slice.
-
-The transformation must preserve synchronization semantics. A naive early return can deadlock if some threads exit before a block-wide barrier. Tally rewrites control flow so that threads reach required synchronization points consistently and only stop at safe logical boundaries.
-
-Slicing and preemption have different overheads. Slicing is mechanically simpler but incurs repeated launches. Persistent preemption uses fewer launches but adds counter accesses, flag checks, and synchronization logic. Tally profiles each best-effort kernel online under candidate configurations and selects the primitive and granularity that keep high-priority turnaround below a bound while maximizing low-priority throughput. The default turnaround target used in the paper is approximately 0.0316 ms.
-
-### Priority-aware scheduler
-
-High-priority kernels are launched as soon as possible. Best-effort work runs opportunistically when the high-priority queue is empty and is provisioned in sufficiently small units that it can yield quickly. The scheduler accounts for kernel transformation overhead, expected segment duration, and the fact that aggressive slicing may improve isolation while reducing useful throughput.
-
-Tally also virtualizes CUDA synchronization and memory-related calls so that application-visible ordering remains correct despite centralized execution. Its compatibility goal covers common DL frameworks and closed-source libraries; kernels for which transformable PTX is unavailable or that use unsupported features require conservative handling.
-
-### Evaluation
-
-The benchmark suite combines high-priority inference with best-effort training across vision, language, and generative workloads. The principal metric is P99 latency overhead of the high-priority task relative to exclusive execution, together with throughput retained by the best-effort task.
-
-Tally reports an average high-priority P99 overhead of **7.2%**, compared with **252.3%** for GPU time slicing, **345%** for MPS, **195.5%** for MPS priority, and **188.9%** for TGS. At the same time, Tally retains more than **80% of TGS's aggregate throughput**. Kernel transformation adds roughly 25% overhead to best-effort execution in the reported decomposition, illustrating the deliberate tradeoff between isolation and harvested work.
-
-### Assessment
-
-Tally is one of the closest papers to the target direction. Its defining contribution is not merely interception but semantics-preserving PTX transformation that exposes thread-block-level yield points. Compared with Orion's one-kernel-at-a-time scheduling, Tally can interrupt the effective execution of a long best-effort kernel at much finer granularity. Its limitations include transformation complexity, unsupported CUDA/PTX features, overhead on low-priority kernels, shared cache and bandwidth interference that remains while kernels overlap, and the maintenance burden of tracking proprietary CUDA toolchain changes.
 
 ## 7. Usher: Holistic Interference Avoidance for Resource-Optimized ML Inference
 
@@ -358,10 +388,10 @@ Despite using kernel-level graphs for estimation, Usher is not a runtime kernel 
 |---|---|---|---|---|---|---|
 | Bless | Kernel squads and SM configurations | Host runtime + multiple GPU contexts | Yes, CUDA runtime wrapping | No general PTX rewrite; controls launches/configured contexts | Reclaim bubbles while enforcing quotas | Very high |
 | Hummingbird | Split low-priority kernels/thread-block chunks | CUDA Driver interposition runtime | Yes | Yes, PTX splitting and offset injection | Microsecond preemption and SLO protection | Very high |
-| LithOS | Kernel atoms and TPC allocations | GPU OS/runtime layer | Transparent low-level submission control | Yes, kernel atomization | Isolation, work conservation, right-sizing, energy | Very high |
-| MMK | MIG groups, MPS shares, and kernels | Hierarchical cluster/GPU runtime | Yes at fine-grained layer | Limited/implementation-dependent | Combine isolation and utilization across three mechanisms | High |
-| SMore | Serverless function admission and GPU placement | Cluster/serverless scheduler | No | No | Harvest idle training capacity | Low; complementary upper layer |
 | Tally | Kernels and logical thread blocks | CUDA virtualization server | Yes | Yes, slicing and persistent preemption | Non-intrusive performance isolation | Very high |
+| MMK | MIG groups, MPS shares, and kernels | Hierarchical cluster/GPU runtime | Yes at fine-grained layer | Limited/implementation-dependent | Combine isolation and utilization across three mechanisms | High |
+| LithOS | Kernel atoms and TPC allocations | GPU OS/runtime layer | Transparent low-level submission control | Yes, kernel atomization | Isolation, work conservation, right-sizing, energy | Very high |
+| SMore | Serverless function admission and GPU placement | Cluster/serverless scheduler | No | No | Harvest idle training capacity | Low; complementary upper layer |
 | Usher | Models, batches, replicas, and GPU placement | Inference-serving control plane | No runtime launch scheduling | Operator-graph merging, not scheduling transformation | Multi-model goodput and cost efficiency | Low; complementary upper layer |
 
 ## 9. Synthesis and Research Opportunities
