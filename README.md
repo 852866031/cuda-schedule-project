@@ -1,7 +1,7 @@
 # Colocation — Orion-style GPU Kernel Colocator Prototype
 
 A minimal prototype ("**colocator**") of the core mechanism of
-[Orion (EuroSys '24)](orion_eurosys24.pdf): transparently intercept the GPU operations
+[Orion (EuroSys '24)](https://dl.acm.org/doi/10.1145/3627703.3629578): transparently intercept the GPU operations
 of unmodified PyTorch programs, buffer them in per-client software queues, and re-submit
 them on colocator-owned CUDA streams under a pluggable scheduling policy (FCFS in v1).
 An independent CUPTI-based **observer** records when each kernel was intercepted,
@@ -9,7 +9,114 @@ issued, and actually ran on the GPU, so we can measure real concurrency and
 interference between two colocated clients.
 
 Design and rationale: [PROPOSAL.md](PROPOSAL.md).
-Reference system: [orion/](orion/) — **read-only reference, never modified or imported**.
+Reference system: [eth-easl/orion](https://github.com/eth-easl/orion) — read-only
+reference (cloned locally at `orion/`), never modified or imported.
+
+## Background: how Orion works
+
+[Orion](https://dl.acm.org/doi/10.1145/3627703.3629578) colocates multiple DNN
+jobs (e.g. a latency-sensitive inference job and a best-effort training job) on
+one GPU. The problem it solves: normally an application's kernels go straight
+from PyTorch through the CUDA Runtime and Driver to the hardware — there is no
+point where an outside policy can decide *when* a kernel runs or *what* it runs
+alongside. Orion creates that point in pure user space, with **zero changes to
+the application**: it injects a shared library via `LD_PRELOAD` that shadows
+the CUDA Runtime entry points (`cudaLaunchKernel`, cuDNN/cuBLAS calls).
+Everything below the Runtime — `libcuda.so`, `nvidia.ko`, the GPU's on-chip
+scheduler — is untouched.
+
+### Normal pipeline (no Orion)
+
+```mermaid
+flowchart TB
+  subgraph L0["1 · Application framework"]
+    A["PyTorch op<br/>conv2d, matmul, ..."]
+  end
+  subgraph L1["2 · CUDA Runtime API — libcudart.so, cuDNN, cuBLAS"]
+    B["cuDNN / cuBLAS math call<br/>cudnnConvolutionForward, cublasSgemm"]
+    C["cudaLaunchKernel<br/>enqueue on default stream"]
+  end
+  subgraph L2["3 · CUDA Driver API — libcuda.so, user-mode driver"]
+    D["cuLaunchKernel<br/>build launch, push to channel"]
+  end
+  subgraph L3["4 · Kernel-mode GPU driver — nvidia.ko"]
+    E["ioctl — submit work to GPU<br/>ring buffer / pushbuffer"]
+  end
+  subgraph L4["5 · GPU hardware"]
+    F["On-chip hardware scheduler<br/>runs kernels in stream order"]
+  end
+  A --> B --> C --> D --> E --> F
+```
+
+### Orion pipeline (LD_PRELOAD interception)
+
+```mermaid
+flowchart TB
+  subgraph L0["1 · Application framework"]
+    A["PyTorch op<br/>conv2d, matmul, ..."]
+  end
+  subgraph LX["★ Orion — libinttemp.so, injected via LD_PRELOAD"]
+    B["Orion wrappers shadow<br/>cudaLaunchKernel, cudnn*, cublas*"]
+    C{"get_idx — which thread?"}
+    E["Capture args into func_record<br/>push to per-client queue (kqueues)"]
+    F["block — spin until served"]
+    G["Orion scheduler thread<br/>poll queues + interference policy<br/>SM_THRESHOLD, DUR_THRESHOLD, profiles"]
+    H["schedule_kernel<br/>pick priority stream, re-issue"]
+  end
+  subgraph L1["2 · CUDA Runtime API — libcudart.so, cuDNN, cuBLAS"]
+    I["real cudaLaunchKernel<br/>via dlsym RTLD_NEXT"]
+  end
+  subgraph L2["3 · CUDA Driver API — libcuda.so, user-mode driver"]
+    J["cuLaunchKernel<br/>build launch, push to channel"]
+  end
+  subgraph L3["4 · Kernel-mode GPU driver — nvidia.ko"]
+    K["ioctl — submit work to GPU<br/>ring buffer / pushbuffer"]
+  end
+  subgraph L4["5 · GPU hardware"]
+    L["On-chip hardware scheduler<br/>multiple priority streams"]
+  end
+
+  A --> B --> C
+  C -->|"application thread"| E --> F
+  C -->|"scheduler thread — passthrough"| I
+  F -.->|"shared in-process queue"| G
+  G --> H
+  H -.->|"re-issues cudaLaunchKernel<br/>on chosen stream"| C
+  I --> J --> K --> L
+```
+
+The interception, step by step:
+
+1. **Shadow the symbol.** Orion's wrappers are compiled into `libinttemp.so`
+   and injected with `LD_PRELOAD`, so its `cudaLaunchKernel` (and cuDNN/cuBLAS
+   entry points) resolve before the real ones. PyTorch's call by name lands in
+   Orion's function instead of the CUDA Runtime's.
+2. **Identify the caller.** The wrapper reads the OS thread id (`gettid`) and
+   looks it up in a shared table: which client does this launch belong to —
+   or is the caller the scheduler itself?
+3. **Capture, don't execute.** For an application thread, every launch
+   argument (function pointer, grid/block dims, args, shared mem, stream) is
+   packed into a `func_record` and pushed onto that client's software queue.
+   The kernel is *not* sent to the GPU. The wrapper then spins until the entry
+   is served, so PyTorch sees ordinary synchronous behavior and `cudaSuccess`.
+4. **Scheduler decides.** A scheduler thread in the same process polls the
+   queues and applies Orion's interference-aware policy — each kernel's SM
+   footprint and compute-vs-memory profile against `SM_THRESHOLD` /
+   `DUR_THRESHOLD` — to decide when a best-effort kernel may run alongside the
+   high-priority job.
+5. **Re-issue on a chosen stream.** The scheduler re-issues the captured
+   launch as a *real* `cudaLaunchKernel` on a stream whose priority it picked.
+   That call re-enters the same shadowed wrapper, but `get_idx` now recognizes
+   the scheduler thread and takes the **passthrough** branch straight to the
+   real runtime (`dlsym(RTLD_NEXT)`). From there down, everything is
+   byte-for-byte the normal path — the driver just sees a normal application
+   using multiple prioritized streams.
+
+This prototype reimplements exactly that mechanism (interpose → queue → spin →
+scheduler re-issues on its own streams → passthrough for the scheduler's own
+calls), and adds what Orion doesn't have: a passive CUPTI observer measuring
+what actually ran, an analysis pipeline joining interception/issue/GPU
+timestamps, and a browser replay visualizer.
 
 ## Status
 
