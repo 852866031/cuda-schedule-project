@@ -1,0 +1,19 @@
+flowchart TB
+  A["PyTorch op (unmodified)"]:::base
+  subgraph ORION["Orion — libinttemp.so, injected via LD_PRELOAD"]
+    direction LR
+    W["wrappers shadow<br/>cudaLaunchKernel,<br/>cublas*, cudnn*"]:::orion --> Q["capture args →<br/>per-client queue<br/>(app thread spins)"]:::orion
+    Q --> S["scheduler thread<br/>interference policy"]:::orion --> R["re-issue on chosen<br/>priority stream"]:::orion
+  end
+  subgraph STACK["unchanged CUDA stack — identical to the normal pipeline"]
+    direction LR
+    B["real cuBLAS / cuDNN"]:::base --> C["real cudaLaunchKernel<br/>(CUDA Runtime)"]:::base --> D["CUDA Driver"]:::base --> E["nvidia.ko"]:::base --> F["GPU hardware<br/>scheduler"]:::base
+  end
+  A -->|"cublas*/cudnn*<br/>library call"| ORION
+  A -->|"direct<br/>cudaLaunchKernel"| ORION
+  ORION -->|"replay library call<br/>on chosen stream"| STACK
+  ORION -->|"passthrough launch<br/>dlsym(RTLD_NEXT)"| STACK
+  classDef base fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
+  classDef orion fill:#fef3c7,stroke:#f59e0b,color:#7c2d12;
+  style ORION fill:#fffbeb,stroke:#f59e0b,color:#b45309;
+  style STACK fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a;
