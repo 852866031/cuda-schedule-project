@@ -14,6 +14,8 @@ The papers are reviewed with an emphasis on five questions:
 
 ## 1. Bless: Improving GPU Sharing Performance through Adaptive Bubbleless Spatial-Temporal Sharing
 
+> **In brief:** Bless intercepts CUDA kernel launches and schedules short cross-application kernel squads across preconfigured MPS contexts, reclaiming transient SM bubbles while preserving each tenant's GPU quota. Its key contribution is adaptive spatial-temporal sharing that improves request latency without sacrificing quota-based fairness.
+
 ### Problem and motivation
 
 Bless addresses a limitation shared by conventional temporal and spatial GPU multiplexing. Temporal sharing controls how frequently each application's kernels may be launched, but non-preemptive and heterogeneous kernels make time-based quotas imprecise. Spatial sharing, such as NVIDIA MPS, allocates a fraction of the GPU's SMs to each application, but statically reserved SMs become bubbles whenever an application temporarily lacks enough parallel work. MIG provides stronger isolation, but at coarse, inflexible partition sizes. In all three cases, nominal allocation is not equivalent to useful execution: a tenant can own a quota while leaving part of it idle, yet other tenants cannot safely and fairly reclaim the unused capacity.
@@ -59,6 +61,8 @@ Bless belongs strongly in the kernel-scheduling category. It wraps CUDA launch A
 
 ## 2. Hummingbird: SLO-Oriented GPU Preemption at Microsecond Scale
 
+> **In brief:** Hummingbird transparently splits low-priority GPU kernels into microsecond-scale execution units and preempts them when latency-critical work arrives. It combines CUDA interception, PTX transformation, bubble detection, and priority scheduling to preserve inference SLOs while harvesting idle GPU cycles.
+
 ### Problem and motivation
 
 Hummingbird targets the conflict between strict latency SLOs and work conservation. Spatial partitioning isolates high-priority work but strands resources when that workload is idle. Temporal sharing can reclaim idle periods, but a long low-priority kernel may block newly arrived high-priority work because commodity NVIDIA GPUs lack a public, low-overhead kernel-preemption interface.
@@ -102,6 +106,8 @@ The results also separate the gains from splitting, scheduling, and bubble harve
 Hummingbird is directly aligned with the target research direction: it intercepts CUDA Driver APIs, transforms kernels at PTX level, and schedules at microsecond-scale boundaries. Compared with Tally, it places greater emphasis on bubble detection across modern LLM and distributed-training stacks and on SLO-oriented preemption. The major limitations are PTX availability, transformation correctness for unusual kernels, runtime complexity across CUDA versions, and shared-resource interference that cannot be eliminated merely by stopping thread blocks quickly.
 
 ## 3. LithOS: An Operating System for Efficient Machine Learning on GPUs
+
+> **In brief:** LithOS is a GPU operating-system layer that schedules individual TPCs and atomized kernel fragments rather than whole kernels or processes. By integrating TPC stealing, hardware right-sizing, and power management, it provides work-conserving isolation and substantially improves colocated ML latency and throughput.
 
 ### Problem and motivation
 
@@ -147,6 +153,8 @@ Right-sizing saves approximately one quarter of GPU capacity on average for less
 LithOS is highly relevant to kernel scheduling, but architecturally more ambitious than an interposition-only scheduler. It presents a unified GPU OS abstraction and uses transparent kernel atomization to enable sub-kernel scheduling. Its strength is the integration of isolation, work conservation, capacity right-sizing, and energy management. Its risks are implementation complexity, dependence on GPU-specific low-level mechanisms, and the cost of maintaining compatibility with proprietary drivers and rapidly changing architectures. It is a particularly useful comparison point for any new work claiming that a CUDA interception layer should evolve into a general resource-management substrate.
 
 ## 4. MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications
+
+> **In brief:** MMK composes MIG, MPS, and intercepted kernel scheduling into a three-level hierarchy: MIG supplies coarse isolation, MPS controls intra-partition SM shares, and the kernel scheduler handles short-term contention. The framework shows that hardware partitioning and fine-grained software scheduling are complementary rather than competing approaches.
 
 ### Problem and motivation
 
@@ -195,6 +203,8 @@ The broader contribution is not a new hardware primitive but an orchestration fr
 MMK belongs to the target category because kernel interception and scheduling are part of its essential mechanism. However, its novelty is broader than the interception layer: it is a policy for deciding when to use MIG, MPS, or software scheduling. For related-work positioning, MMK is best described as a **hybrid hierarchical GPU-sharing framework**, whereas Orion and Tally focus more directly on fine-grained runtime execution control. A limitation is the operational complexity of coordinating MIG configuration, MPS processes, profiling, and kernel scheduling. The design also inherits MIG's generation-specific constraints and MPS's incomplete isolation of shared caches, memory bandwidth, and interconnect resources.
 
 ## 5. SMore: Enhancing GPU Utilization in Deep Learning Clusters by Serverless-Based Co-Location Scheduling
+
+> **In brief:** SMore colocates short serverless inference functions with long-running training jobs using learned interference predictions, deadline-aware admission and placement, and proactive model warming. It improves cluster utilization at the workload level, but does not intercept or schedule individual CUDA kernels.
 
 ### Problem and motivation
 
@@ -245,6 +255,8 @@ SMore is not an Orion-style kernel scheduler. It schedules functions and chooses
 
 ## 6. Tally: Non-Intrusive Performance Isolation for Concurrent Deep Learning Workloads
 
+> **In brief:** Tally virtualizes CUDA execution and transforms best-effort PTX kernels into sliced or cooperatively preemptible forms, exposing thread-block-level yield points without application changes. A centralized priority scheduler uses these primitives to protect high-priority tail latency while retaining most of the throughput from colocated work.
+
 ### Problem and motivation
 
 Tally focuses on transparent colocation of a latency-sensitive high-priority workload with a throughput-oriented best-effort workload. Existing systems face a three-way tradeoff: native time slicing and MPS are compatible but provide weak tail-latency isolation; research schedulers often require framework or application changes; and systems based on whole-kernel priority cannot promptly stop a long-running best-effort kernel.
@@ -293,6 +305,10 @@ Tally reports an average high-priority P99 overhead of **7.2%**, compared with *
 Tally is one of the closest papers to the target direction. Its defining contribution is not merely interception but semantics-preserving PTX transformation that exposes thread-block-level yield points. Compared with Orion's one-kernel-at-a-time scheduling, Tally can interrupt the effective execution of a long best-effort kernel at much finer granularity. Its limitations include transformation complexity, unsupported CUDA/PTX features, overhead on low-priority kernels, shared cache and bandwidth interference that remains while kernels overlap, and the maintenance burden of tracking proprietary CUDA toolchain changes.
 
 ## 7. Usher: Holistic Interference Avoidance for Resource-Optimized ML Inference
+
+> **In brief:** Usher jointly chooses model batch sizes, replication, GPU types, and placements using kernel-based compute/memory estimation, then merges compatible operator graphs to reduce cache interference. It is an upper-layer multi-model inference optimizer rather than a runtime kernel scheduler.
+
+> **Filename note:** the directory file is named `Harli SLO-Aware Co-location of LLM Inference and PEFT Finetuning.pdf`, but its contents are the OSDI 2024 Usher paper. It should not be cited as Harli.
 
 ### Problem and motivation
 
