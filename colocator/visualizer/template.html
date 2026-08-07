@@ -1,0 +1,755 @@
+<!-- Colocator replay template. export.py replaces __VIZ_TITLE__ and __VIZ_DATA__
+     and (for the standalone file) wraps this fragment in <!doctype html>…<body>.
+     Pure vanilla JS/CSS — self-contained, no external requests. -->
+<style>
+:root {
+  color-scheme: dark;
+  --page:#0d0d0d; --surface:#1a1a19; --ink1:#fff; --ink2:#c3c2b7; --ink3:#898781;
+  --ring:rgba(255,255,255,.10); --grid:#2c2c2a; --axis:#383835;
+  /* kernel classes (match analysis/analyze.py kernel_class) */
+  --sgemm:#d62728; --elementwise:#1f77b4; --reduce:#2ca02c; --copy:#ff7f0e; --other:#7f7f7f;
+  --sleep:#17becf; --streamcopy:#9467bd; --blockcopy:#bcbd22; --fma32:#e377c2; --fma64:#8c564b;
+  --gemm:#e04646; --attention:#66c2a5;
+  /* provenance sources */
+  --src-i:#3987e5; --src-s:#9085e9; --src-o:#199e70;
+  /* clients */
+  --c0:#7fd1ff; --c1:#ffd37f;
+}
+* { box-sizing:border-box; margin:0; }
+body { background:var(--page); color:var(--ink1);
+       font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; padding:14px; }
+.wrap { max-width:1380px; margin:0 auto; display:flex; flex-direction:column; gap:10px; }
+h1 { font-size:15px; font-weight:600; }
+.sub { color:var(--ink3); font-size:11px; }
+.panel { background:var(--surface); border:1px solid var(--ring); border-radius:8px; padding:8px 10px; }
+.row { display:flex; gap:8px; align-items:stretch; }
+.row > .panel { min-width:0; }
+.arrow { align-self:center; color:var(--ink3); flex:0 0 auto; }
+.ptitle { font-size:11px; font-weight:600; color:var(--ink2); text-transform:uppercase;
+          letter-spacing:.04em; margin-bottom:6px; display:flex; gap:6px; align-items:center;
+          white-space:nowrap; height:18px; overflow:hidden; }
+.note { color:var(--ink3); font-size:10px; font-weight:400; text-transform:none; letter-spacing:0; }
+.srcbadge { font-size:9px; font-weight:700; padding:1px 5px; border-radius:4px; color:#0d0d0d; }
+.src-i { background:var(--src-i); } .src-s { background:var(--src-s); } .src-o { background:var(--src-o); }
+
+/* workload description boxes */
+.desc p { margin:0 0 5px; font-size:12px; color:var(--ink2); }
+.desc ul { margin:0; padding-left:16px; font-size:11px; color:var(--ink3); }
+.desc li { margin:1.5px 0; }
+.desc b { color:var(--ink1); }
+
+/* app boxes */
+.appbox { border:1px solid var(--axis); border-radius:8px; padding:6px 8px; margin-bottom:6px; }
+.appbox .an { font-weight:600; font-size:12px; }
+.appbox .ai { color:var(--ink3); font-size:10px; font-variant-numeric:tabular-nums; }
+.appbox.pulse { box-shadow:0 0 0 2px var(--src-i); }
+.appbox.b0 { border-left:4px solid var(--c0); } .appbox.b1 { border-left:4px solid var(--c1); }
+
+/* chips = ops.
+   Lane rows have FIXED heights so the per-client rows line up horizontally
+   across the queues / streams / running panels (stream i's row sits level
+   with client i's GPU row); chips overflow-hide instead of wrapping. */
+.lane { border:1px dashed var(--axis); border-radius:6px; height:28px; padding:3px 4px;
+        display:flex; gap:3px; flex-wrap:nowrap; align-items:center; margin-bottom:5px;
+        overflow:hidden; }
+.lanelabel { color:var(--ink3); font-size:10px; margin-bottom:2px; height:14px;
+             display:flex; justify-content:space-between; white-space:nowrap; overflow:hidden; }
+.chip { position:relative; height:18px; min-width:22px; border-radius:4px; font-size:9px; font-weight:700;
+        color:#fff; display:inline-flex; align-items:center; justify-content:center; padding:0 5px;
+        cursor:default; overflow:hidden; }
+.chip.c0 { outline:1.5px solid var(--c0); } .chip.c1 { outline:1.5px solid var(--c1); }
+.chip .prog { position:absolute; left:0; top:0; bottom:0; background:rgba(255,255,255,.28); }
+.chip span { position:relative; }
+.empty { color:var(--ink3); font-size:10px; }
+.k-sgemm{background:var(--sgemm);} .k-elementwise{background:var(--elementwise);}
+.k-reduce{background:var(--reduce);} .k-copy{background:var(--copy);} .k-other{background:var(--other);}
+.k-sleep{background:var(--sleep);} .k-streamcopy{background:var(--streamcopy);}
+.k-blockcopy{background:var(--blockcopy);} .k-fma32{background:var(--fma32);}
+.k-fma64{background:var(--fma64);}
+.k-gemm{background:var(--gemm);} .k-attention{background:var(--attention);}
+
+/* scheduler ticker */
+.tick { font-size:10px; font-variant-numeric:tabular-nums; color:var(--ink2);
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tick b { color:var(--ink1); }
+.tick.latest { color:var(--ink1); }
+.roundnum { font-size:18px; font-weight:700; font-variant-numeric:tabular-nums; }
+
+/* running panel */
+.concur { font-size:9px; font-weight:700; padding:1px 6px; border-radius:4px;
+          background:var(--reduce); color:#0d0d0d; display:none; }
+.concur.on { display:inline-block; }
+
+/* done */
+.donec { font-size:11px; color:var(--ink2); font-variant-numeric:tabular-nums; }
+
+/* provenance strip under the pipeline */
+.provrow { margin-top:-4px; }
+.provcell { font-size:10px; color:var(--ink3); display:flex; gap:5px; align-items:center;
+            flex-wrap:wrap; min-width:0; padding:0 11px; }
+.arrow.hid { visibility:hidden; }
+
+/* provenance legend */
+.provgrid { display:grid; grid-template-columns:auto 1fr; gap:3px 10px; font-size:11px; }
+.provgrid .what { color:var(--ink2); }
+
+/* controls */
+.controls { display:flex; gap:10px; align-items:center; }
+button, select { background:var(--surface); color:var(--ink1); border:1px solid var(--axis);
+                 border-radius:6px; padding:4px 10px; font:inherit; cursor:pointer; }
+input[type=range] { flex:1; accent-color:var(--src-i); }
+#tlabel { font-variant-numeric:tabular-nums; color:var(--ink2); min-width:150px; text-align:right; }
+label.ck { color:var(--ink3); font-size:11px; display:flex; gap:4px; align-items:center; }
+
+/* gantt */
+#gantt { width:100%; height:150px; display:block; cursor:crosshair; }
+
+/* overhead plots */
+.perfbox { flex:1; min-width:0; }
+.perfhead { font-size:11px; color:var(--ink2); margin-bottom:3px; display:flex; gap:12px;
+            align-items:baseline; flex-wrap:wrap; }
+.perfhead b { font-size:12px; }
+.perfhead .stat { font-variant-numeric:tabular-nums; color:var(--ink3); }
+.perfhead .stat b { color:var(--ink1); }
+.perfcv { width:100%; height:170px; display:block; }
+
+/* concurrency periods */
+#conclist { max-height:96px; overflow-y:auto; }
+.cper { display:inline-block; margin:2px 6px 2px 0; padding:1px 7px; font-size:11px;
+        font-variant-numeric:tabular-nums; color:var(--c0); cursor:pointer;
+        border:1px solid var(--axis); border-radius:5px; }
+.cper .dur { color:var(--ink3); margin-left:5px; }
+.cper:hover { border-color:var(--ink2); }
+.cper.active { background:var(--reduce); color:#0d0d0d; }
+.cper.active .dur { color:#0d0d0d; }
+
+/* tooltip */
+#tip { position:fixed; z-index:10; background:#000; border:1px solid var(--axis); border-radius:6px;
+       padding:8px 10px; font-size:11px; pointer-events:none; display:none; max-width:340px; }
+#tip table { border-collapse:collapse; }
+#tip td { padding:1px 6px 1px 0; font-variant-numeric:tabular-nums; }
+#tip .src { font-size:9px; font-weight:700; padding:0 4px; border-radius:3px; color:#0d0d0d; }
+</style>
+
+<div class="wrap">
+  <div style="display:flex; justify-content:space-between; align-items:baseline;">
+    <h1>Colocator replay <span class="sub" id="subtitle"></span></h1>
+    <span class="sub" id="legendnote">boxes = intercepted GPU ops · colors = kernel class · outline = client</span>
+  </div>
+
+  <!-- pair selector: navigate between the exported pair runs -->
+  <div class="panel" id="comparebar" style="display:flex; gap:10px; align-items:center;">
+    <span class="ptitle" style="margin:0; height:auto;">Compare</span>
+    <select id="selw0"></select>
+    <span class="sub">vs</span>
+    <select id="selw1"></select>
+    <span class="sub" id="selcfglabel" style="margin-left:14px">throttle</span>
+    <select id="selcfg" title="scheduler in-flight cap for this run"></select>
+    <span class="sub" id="selsmlabel" style="margin-left:14px">stream limit</span>
+    <select id="selsm" title="green-context SM cap for cuBLAS ops (off = one full stream per client)"></select>
+    <span class="sub" id="selhint"></span>
+  </div>
+
+  <!-- what each selected workload does (describe() from the workload file) -->
+  <div class="row">
+    <div class="panel" style="flex:1; min-width:0;">
+      <div class="ptitle" id="deschead0"></div>
+      <div class="desc" id="descbody0"></div>
+    </div>
+    <div class="panel" id="descpanel1" style="flex:1; min-width:0;">
+      <div class="ptitle" id="deschead1"></div>
+      <div class="desc" id="descbody1"></div>
+    </div>
+  </div>
+
+  <!-- pipeline -->
+  <div class="row" id="pipepanel">
+    <div class="panel" style="flex:0 0 170px">
+      <div class="ptitle">Apps <span class="note">(PyTorch threads)</span></div>
+      <div id="apps"></div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="panel" style="flex:1.1">
+      <div class="ptitle">Interceptor · queues</div>
+      <div id="queues"></div>
+      <div class="note">op waits here from t_intercept until the scheduler issues it (lockstep: ≤1/client)</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="panel" style="flex:0 0 210px">
+      <div class="ptitle">Scheduler <span class="note" id="polname"></span></div>
+      <div>round <span class="roundnum" id="round">0</span> <span class="note">of <span id="rounds-total"></span></span></div>
+      <div id="ticker"></div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="panel" style="flex:1.2">
+      <div class="ptitle">Streams · issued, awaiting GPU</div>
+      <div id="streams"></div>
+      <div class="note">chips enter when the scheduler launches them (t_issue) and leave when the
+        observer sees them start executing (t_gpu_start)</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="panel" style="flex:1.2">
+      <div class="ptitle">Running on GPU <span class="concur" id="concur">CONCURRENT</span></div>
+      <div id="running"></div>
+      <div class="note">box fill = execution progress (t_gpu_start → t_gpu_end)</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="panel" style="flex:0 0 150px">
+      <div class="ptitle">Done</div>
+      <div id="done"></div>
+    </div>
+  </div>
+
+  <!-- provenance strip: which component measured what, cell-aligned under
+       the pipeline box it describes (same flex layout as the row above) -->
+  <div class="row provrow" id="provstrip">
+    <div class="provcell" style="flex:0 0 170px"><span class="note">unmodified PyTorch code</span></div>
+    <div class="arrow hid">→</div>
+    <div class="provcell" style="flex:1.1"><span class="srcbadge src-i">INTERCEPTOR</span>
+      <span>t_intercept · op + grid/block/bytes · client</span></div>
+    <div class="arrow hid">→</div>
+    <div class="provcell" style="flex:0 0 210px"><span class="srcbadge src-s">SCHEDULER</span>
+      <span>t_issue · round · stream</span></div>
+    <div class="arrow hid">→</div>
+    <div class="provcell" style="flex:1.2"><span class="srcbadge src-s">SCHEDULER</span>
+      <span>in: t_issue</span><span class="srcbadge src-o">OBSERVER</span>
+      <span>out: t_gpu_start</span></div>
+    <div class="arrow hid">→</div>
+    <div class="provcell" style="flex:1.2"><span class="srcbadge src-o">OBSERVER</span>
+      <span>t_gpu_start → t_gpu_end</span></div>
+    <div class="arrow hid">→</div>
+    <div class="provcell" style="flex:0 0 150px"><span class="srcbadge src-o">OBSERVER</span>
+      <span>t_gpu_end</span></div>
+  </div>
+
+  <!-- controls -->
+  <div class="panel controls">
+    <button id="play">▶ Play</button>
+    <select id="speed" title="trace-time per wall-second">
+      <option value="100">0.1 ms/s</option>
+      <option value="1000">1 ms/s</option>
+      <option value="5000" selected>5 ms/s</option>
+      <option value="20000">20 ms/s</option>
+      <option value="100000">100 ms/s</option>
+      <option value="1000000">real time</option>
+    </select>
+    <label class="ck"><input type="checkbox" id="skipidle" checked> skip idle gaps</label>
+    <button id="jumpbar" title="jump to the start barrier (timed iterations begin)">⇥ barrier</button>
+    <span id="tlabel" style="margin-left:auto"></span>
+  </div>
+
+  <!-- gantt minimap; the scrubber sits directly above the canvas at the same
+       width, so the slider thumb tracks the white playhead line -->
+  <div class="panel">
+    <div class="ptitle">GPU timeline <span class="srcbadge src-o">OBSERVER</span> <span class="note">click to seek · playhead in white</span></div>
+    <input type="range" id="scrub" min="0" max="1000000" step="1" value="0"
+           style="display:block; width:calc(100% - 64px); margin:0 0 4px 64px;">
+    <canvas id="gantt"></canvas>
+  </div>
+
+  <!-- concurrency periods -->
+  <div class="panel" id="concpanel">
+    <div class="ptitle">Concurrency periods
+      <span class="srcbadge src-o">OBSERVER</span>
+      <span class="note">kernels from both clients resident on the GPU simultaneously · green bands on the timeline · click a period to jump there</span></div>
+    <div id="concsum" class="donec" style="margin-bottom:5px"></div>
+    <div id="conclist"></div>
+  </div>
+
+  <!-- overhead: solo vs colocated, per client -->
+  <div class="panel">
+    <div class="ptitle" id="perftitle">Overhead · running alone vs colocated
+      <span class="note">per-iteration wall time, client-measured; solo series from the seq baseline run</span></div>
+    <div class="row" id="perfrow" style="gap:16px"></div>
+  </div>
+
+  <!-- provenance -->
+  <div class="panel" id="provlegend">
+    <div class="ptitle">Who knows what (measurement provenance)</div>
+    <div class="provgrid">
+      <span class="srcbadge src-i">INTERCEPTOR</span><span class="what">libcolocator.so (LD_PRELOAD, client's thread): <b>t_intercept</b>, op kind + args, which client submitted it. Cannot know when anything runs.</span>
+      <span class="srcbadge src-s">SCHEDULER</span><span class="what">libsched.so issue log (scheduler thread): <b>t_issue</b>, chosen stream, FCFS round order. Launching is async — it cannot know when the GPU starts the op.</span>
+      <span class="srcbadge src-o">OBSERVER</span><span class="what">libobserver.so (CUPTI activity, passive): <b>t_gpu_start / t_gpu_end</b>, real stream + duration. Joined to the issue log by launch order + correlation id, clocks calibrated.</span>
+    </div>
+    <div class="note" style="margin-top:6px">Not shown: cudaMalloc / cudaStreamSynchronize records (no GPU activity to draw); the sub-µs scheduler round-trip is invisible at most speeds — pick 0.1 ms/s and step near a burst to see queue → stream → running transitions.</div>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+const DATA = __VIZ_DATA__;
+/* DATA = { title, clients:[{name,prio,stream}], t_end_us,
+            ops:[{i,c,cls,k,ti,tis,tgs,tge,st,g,b,rnd}] }   times in µs from t0 */
+
+const $ = id => document.getElementById(id);
+const ops = DATA.ops;
+const NC = DATA.clients.length;
+const T_END = DATA.t_end_us;
+/* SEQ = observer-only solo replay (no colocator in the loop): hide the
+   interceptor/scheduler pipeline, provenance and concurrency panels — the
+   page is the GPU timeline + per-iteration latency of one workload. */
+const SEQ = DATA.mode === "seq";
+document.getElementById("subtitle").textContent = "— " + DATA.title;
+$("rounds-total").textContent = ops.length;
+$("polname").textContent = "(" + (DATA.policy || "fcfs") + ")";
+if (SEQ) {
+  ["comparebar", "pipepanel", "provstrip", "concpanel", "provlegend"]
+    .forEach(id => { $(id).style.display = "none"; });
+  $("legendnote").textContent = "boxes = GPU ops measured by CUPTI · colors = kernel class";
+  $("perftitle").innerHTML = `Per-iteration wall time
+    <span class="note">client-measured admission time per timed iteration (pipelined)</span>`;
+}
+if (NC < 2) $("descpanel1").style.display = "none";
+
+/* ---- static DOM ---- */
+/* SM-limit runs (sm_limit > 0): each client owns TWO streams — the normal
+   full-SM stream and a green-context stream capped to sm_limit% of the SMs
+   where the scheduler routes cuBLAS ops (event-chained, so they stay in
+   program order). The streams panel shows both lanes per client. */
+const SM_LIMIT = DATA.sm_limit || 0;
+const appdivs = [], queuedivs = [], streamdivs = [], gemmdivs = [], rundivs = [], donedivs = [];
+DATA.clients.forEach((c, i) => {
+  $("apps").insertAdjacentHTML("beforeend",
+    `<div class="appbox b${i}" id="app${i}"><div class="an">client ${i} · ${c.name}</div>
+     <div class="ai" id="appi${i}"></div></div>`);
+  $("queues").insertAdjacentHTML("beforeend",
+    `<div class="lanelabel"><span>client ${i} queue</span><span id="qd${i}"></span></div><div class="lane" id="q${i}"></div>`);
+  if (SM_LIMIT > 0) {
+    $("streams").insertAdjacentHTML("beforeend",
+      `<div class="lanelabel"><span>c${i} · <b>main</b> stream (100% SMs, prio ${c.prio})</span><span id="sd${i}"></span></div><div class="lane" id="s${i}"></div>
+       <div class="lanelabel"><span>c${i} · <b>gemm</b> stream (green ctx, ${SM_LIMIT}% SMs)</span><span id="sdg${i}"></span></div><div class="lane" id="sg${i}"></div>`);
+    gemmdivs.push($(`sg${i}`));
+  } else {
+    $("streams").insertAdjacentHTML("beforeend",
+      `<div class="lanelabel"><span>stream ${i} (prio ${c.prio})</span><span id="sd${i}"></span></div><div class="lane" id="s${i}"></div>`);
+    gemmdivs.push(null);
+  }
+  $("running").insertAdjacentHTML("beforeend",
+    `<div class="lanelabel"><span>client ${i}</span></div><div class="lane" id="r${i}"></div>`);
+  $("done").insertAdjacentHTML("beforeend",
+    `<div class="donec">client ${i}: <b id="d${i}">0</b> ops</div>`);
+  appdivs.push($(`app${i}`)); queuedivs.push($(`q${i}`));
+  streamdivs.push($(`s${i}`)); rundivs.push($(`r${i}`)); donedivs.push($(`d${i}`));
+});
+$("done").insertAdjacentHTML("beforeend", `<div class="donec" style="margin-top:6px" id="lastdone"></div>`);
+
+/* ---- helpers ---- */
+const fmt = us => us >= 1000 ? (us / 1000).toFixed(2) + " ms" : us.toFixed(1) + " µs";
+const CHIP_LABELS = { sgemm: "GEMM", elementwise: "elw", reduce: "red", sleep: "slp",
+                      streamcopy: "kcpy", blockcopy: "l1cp", fma32: "fma", fma64: "f64",
+                      gemm: "GEMM", attention: "attn" };
+const chipLabel = o => o.cls === "copy" ? (o.b >= 1 << 20 ? (o.b >> 20) + "M" : "cp")
+                     : (CHIP_LABELS[o.cls] || "?");
+function chipHTML(o, prog) {
+  const p = prog == null ? "" : `<div class="prog" style="width:${(prog * 100).toFixed(1)}%"></div>`;
+  return `<div class="chip c${o.c} k-${o.cls}" data-i="${o.i}">${p}<span>${chipLabel(o)}</span></div>`;
+}
+
+/* ---- concurrency periods: intersect the two clients' merged kernel-busy
+   interval sets (observer GPU timestamps; same math as analyze.py) ---- */
+function mergeIntervals(iv) {
+  iv.sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (const [s, e] of iv) {
+    if (out.length && s <= out[out.length - 1][1]) out[out.length - 1][1] = Math.max(out[out.length - 1][1], e);
+    else out.push([s, e]);
+  }
+  return out;
+}
+function intersectIntervals(a, b) {
+  const out = []; let i = 0, j = 0;
+  while (i < a.length && j < b.length) {
+    const s = Math.max(a[i][0], b[j][0]), e = Math.min(a[i][1], b[j][1]);
+    if (s < e) out.push([s, e]);
+    if (a[i][1] < b[j][1]) i++; else j++;
+  }
+  return out;
+}
+const kernIv = c => mergeIntervals(ops.filter(o => o.k === "K" && o.c === c && o.tgs != null)
+                                      .map(o => [o.tgs, o.tge]));
+const busyIv = [kernIv(0), kernIv(1)];
+const concPeriods = NC >= 2 ? intersectIntervals(busyIv[0], busyIv[1]) : [];
+const concTotal = concPeriods.reduce((t, [s, e]) => t + (e - s), 0);
+
+function initConcurrency() {
+  if (SEQ) return;  // panel hidden — one client, nothing to intersect
+  const sumBusy = iv => iv.reduce((t, [s, e]) => t + (e - s), 0);
+  if (NC < 2 || !concPeriods.length) {
+    $("concsum").textContent = NC < 2 ? "needs two clients" : "none — the two clients' kernels never overlapped on the GPU";
+    return;
+  }
+  const b0 = sumBusy(busyIv[0]), b1 = sumBusy(busyIv[1]);
+  $("concsum").innerHTML =
+    `total <b>${(concTotal / 1000).toFixed(2)} ms</b> concurrent across ${concPeriods.length} periods — ` +
+    `${(100 * concTotal / b0).toFixed(1)}% of client 0's kernel-busy time (${(b0 / 1000).toFixed(1)} ms), ` +
+    `${(100 * concTotal / b1).toFixed(1)}% of client 1's (${(b1 / 1000).toFixed(1)} ms)`;
+  $("conclist").innerHTML = concPeriods.map(([s, e], i) =>
+    `<span class="cper" data-p="${i}">${(s / 1000).toFixed(2)} – ${(e / 1000).toFixed(2)} ms` +
+    `<span class="dur">${fmt(e - s)}</span></span>`).join("");
+  $("conclist").addEventListener("click", ev => {
+    const p = ev.target.closest(".cper");
+    if (!p) return;
+    playing = false; $("play").textContent = "▶ Play";
+    seek(concPeriods[+p.dataset.p][0]);
+  });
+}
+
+/* all event timestamps, for idle skipping */
+const events = [];
+ops.forEach(o => { events.push(o.ti, o.tis); if (o.tgs != null) events.push(o.tgs, o.tge); });
+events.sort((a, b) => a - b);
+function nextEventAfter(t) {
+  let lo = 0, hi = events.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (events[m] <= t) lo = m + 1; else hi = m; }
+  return lo < events.length ? events[lo] : null;
+}
+
+/* ---- render one frame at trace-time T (µs) ---- */
+let lastRound = -1;
+function render(T) {
+  const inQ = Array.from({length: NC}, () => []);
+  const onS = Array.from({length: NC}, () => []);
+  const run = Array.from({length: NC}, () => []);
+  const doneCnt = new Array(NC).fill(0), subCnt = new Array(NC).fill(0);
+  let round = 0, lastDone = null;
+  for (const o of ops) {
+    if (o.ti <= T) subCnt[o.c]++;
+    if (o.tis <= T) round = Math.max(round, o.rnd + 1);
+    if (o.ti <= T && T < o.tis) inQ[o.c].push(o);
+    else if (o.tis <= T && (o.tgs == null || T < o.tgs)) onS[o.c].push(o);
+    else if (o.tgs != null && o.tgs <= T && T < o.tge) run[o.c].push(o);
+    else if (o.tgs != null && T >= o.tge) { doneCnt[o.c]++; if (!lastDone || o.tge > lastDone.tge) lastDone = o; }
+  }
+  for (let c = 0; c < NC; c++) {
+    appdivs[c].classList.toggle("pulse", inQ[c].length > 0);
+    $(`appi${c}`).textContent = `${subCnt[c]} submitted`;
+    queuedivs[c].innerHTML = inQ[c].map(o => chipHTML(o)).join("") || `<span class="empty">empty</span>`;
+    $(`qd${c}`).textContent = inQ[c].length ? "waiting " + fmt(T - inQ[c][0].ti) : "";
+    let mainS = onS[c], gemmS = [];
+    if (SM_LIMIT > 0) {
+      const cap = (DATA.clients[c].streams || {}).capped;
+      gemmS = onS[c].filter(o => o.st === cap && cap != null);
+      mainS = onS[c].filter(o => !(o.st === cap && cap != null));
+    }
+    const sChips = mainS.slice(0, 24);
+    streamdivs[c].innerHTML = sChips.map(o => chipHTML(o)).join("")
+      + (mainS.length > 24 ? `<span class="empty">+${mainS.length - 24}</span>` : "")
+      || `<span class="empty">empty</span>`;
+    $(`sd${c}`).textContent = mainS.length ? `${mainS.length} pending` : "";
+    if (gemmdivs[c]) {
+      const gChips = gemmS.slice(0, 24);
+      gemmdivs[c].innerHTML = gChips.map(o => chipHTML(o)).join("")
+        + (gemmS.length > 24 ? `<span class="empty">+${gemmS.length - 24}</span>` : "")
+        || `<span class="empty">empty</span>`;
+      $(`sdg${c}`).textContent = gemmS.length ? `${gemmS.length} pending` : "";
+    }
+    rundivs[c].innerHTML = run[c].map(o => chipHTML(o, (T - o.tgs) / (o.tge - o.tgs))).join("")
+      || `<span class="empty">idle</span>`;
+    donedivs[c].textContent = doneCnt[c];
+  }
+  $("concur").classList.toggle("on", run[0].length > 0 && run[1] && run[1].length > 0);
+  $("round").textContent = round;
+  $("lastdone").textContent = lastDone
+    ? `last: c${lastDone.c} ${lastDone.cls} (${fmt(lastDone.tge - lastDone.tgs)})` : "";
+
+  /* scheduler ticker: last 6 issue decisions */
+  if (round !== lastRound) {
+    lastRound = round;
+    const recent = [];
+    for (let r = round - 1; r >= 0 && recent.length < 6; r--) recent.push(ops[r]);
+    $("ticker").innerHTML = recent.map((o, j) =>
+      `<div class="tick${j === 0 ? " latest" : ""}">#${o.rnd} → <b>c${o.c} ${o.cls}</b> → stream ${o.c}</div>`).join("");
+  }
+  $("tlabel").textContent = `t = ${(T / 1000).toFixed(3)} ms / ${(T_END / 1000).toFixed(0)} ms`;
+
+  /* highlight the concurrency period the playhead is inside (if any) */
+  const cur = concPeriods.findIndex(([s, e]) => s <= T && T < e);
+  document.querySelectorAll(".cper").forEach((el, i) => {
+    const on = i === cur;
+    if (el.classList.contains("active") !== on) {
+      el.classList.toggle("active", on);
+      if (on) el.scrollIntoView({ block: "nearest" });
+    }
+  });
+
+  drawPlayhead(T);
+}
+
+/* ---- gantt minimap ---- */
+const canvas = $("gantt"), ctx = canvas.getContext("2d");
+let gw = 0, gh = 0, base = null;
+const GUT = 64;  // left gutter for lane labels — bars never overdraw them
+const gx = t => GUT + t / T_END * (gw - GUT);
+const CLS = { sgemm: "#d62728", elementwise: "#1f77b4", reduce: "#2ca02c", copy: "#ff7f0e",
+              sleep: "#17becf", streamcopy: "#9467bd", blockcopy: "#bcbd22",
+              fma32: "#e377c2", fma64: "#8c564b", gemm: "#e04646",
+              attention: "#66c2a5", other: "#7f7f7f" };
+function drawGantt() {
+  gw = canvas.clientWidth; gh = 150;
+  canvas.width = gw * devicePixelRatio; canvas.height = gh * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.fillStyle = "#111"; ctx.fillRect(0, 0, gw, gh);
+  ctx.fillStyle = "rgba(44,160,44,0.20)";  // concurrency bands
+  for (const [s, e] of concPeriods)
+    ctx.fillRect(gx(s), 0, Math.max((e - s) / T_END * (gw - GUT), 1), gh);
+  // barrier marker: everything left of it is setup/check/warmup preamble;
+  // at the dashed line both clients crossed the start barrier together and
+  // the timed iterations begin.
+  if (DATA.barrier_us != null) {
+    const bx = gx(DATA.barrier_us);
+    ctx.fillStyle = "rgba(255,255,255,0.045)";
+    ctx.fillRect(GUT, 0, bx - GUT, gh);
+    ctx.strokeStyle = "#c3c2b7"; ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(bx, 0); ctx.lineTo(bx, gh); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#c3c2b7"; ctx.font = "9px system-ui";
+    if (bx - GUT > 130) ctx.fillText("setup · check · warmup", GUT + 4, 9);
+    ctx.fillText(SEQ ? "⇥ timed iterations →"
+                     : "⇥ barrier — both clients aligned, timed iterations →", bx + 5, 9);
+  }
+  const laneTop = 13;
+  const laneH = (gh - laneTop - 5) / (NC * 2);
+  ctx.font = "9px system-ui";
+  for (let l = 0; l < NC * 2; l++) {
+    const c = l >> 1, isCopy = l & 1;
+    const y0 = laneTop + l * laneH;
+    ctx.fillStyle = "#898781"; ctx.textAlign = "right";
+    ctx.fillText(`c${c} ${isCopy ? "copy" : "kern"}`, GUT - 8, y0 + laneH / 2 + 3);
+    ctx.textAlign = "left";
+    ctx.strokeStyle = "#232322";
+    ctx.beginPath(); ctx.moveTo(GUT, y0); ctx.lineTo(gw, y0); ctx.stroke();
+  }
+  for (const o of ops) {
+    if (o.tgs == null) continue;
+    const lane = o.c * 2 + (o.cls === "copy" ? 1 : 0);
+    const x = gx(o.tgs), w = Math.max((o.tge - o.tgs) / T_END * (gw - GUT), 0.7);
+    ctx.fillStyle = CLS[o.cls] || CLS.other;
+    ctx.fillRect(x, laneTop + lane * laneH + 2, w, laneH - 4);
+  }
+  base = ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+function drawPlayhead(T) {
+  if (!base) return;
+  ctx.putImageData(base, 0, 0);
+  const x = gx(T);
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, gh); ctx.stroke();
+}
+canvas.addEventListener("click", e => {
+  const r = canvas.getBoundingClientRect();
+  seek(Math.max(0, (e.clientX - r.left - GUT)) / Math.max(1, r.width - GUT) * T_END);
+});
+
+/* ---- playback ---- */
+let T = 0, playing = false, lastWall = null;
+function seek(t) { T = Math.max(0, Math.min(T_END, t)); $("scrub").value = T / T_END * 1e6; render(T); }
+function tick(wall) {
+  if (!playing) return;
+  if (lastWall != null) {
+    const speed = +$("speed").value;             // µs of trace per second
+    let nt = T + (wall - lastWall) / 1000 * speed;
+    if ($("skipidle").checked) {
+      const ne = nextEventAfter(T);
+      if (ne != null && ne > nt && ne - T > 50000) nt = ne - 100;  // jump long gaps
+    }
+    if (nt >= T_END) { nt = T_END; playing = false; $("play").textContent = "▶ Play"; }
+    seek(nt);
+  }
+  lastWall = wall;
+  requestAnimationFrame(tick);
+}
+$("play").onclick = () => {
+  playing = !playing;
+  $("play").textContent = playing ? "❚❚ Pause" : "▶ Play";
+  if (T >= T_END) T = 0;
+  lastWall = null;
+  if (playing) requestAnimationFrame(tick);
+};
+$("scrub").oninput = e => { playing = false; $("play").textContent = "▶ Play"; seek(+e.target.value / 1e6 * T_END); };
+if (DATA.barrier_us != null)
+  $("jumpbar").onclick = () => { playing = false; $("play").textContent = "▶ Play"; seek(DATA.barrier_us); };
+else
+  $("jumpbar").style.display = "none";
+
+/* ---- tooltip ---- */
+const tip = $("tip");
+const byI = new Map(ops.map(o => [String(o.i), o]));
+document.addEventListener("mouseover", e => {
+  const c = e.target.closest(".chip");
+  if (!c) { tip.style.display = "none"; return; }
+  const o = byI.get(c.dataset.i);
+  if (!o) return;
+  const row = (label, val, src, cls) => val == null ? "" :
+    `<tr><td><span class="src ${cls}">${src}</span></td><td>${label}</td><td>${fmt(val)}</td></tr>`;
+  tip.innerHTML = `<b>client ${o.c} · ${o.k === "K" ? "kernel" : "memcpy"} · ${o.cls}</b>` +
+    (o.g ? ` <span class="sub">grid ${o.g}</span>` : "") +
+    (o.b ? ` <span class="sub">${(o.b / 1048576).toFixed(1)} MiB</span>` : "") +
+    `<table>` +
+    (SEQ ? "" : row("intercepted", o.ti, "I", "src-i")) +
+    row(SEQ ? "launched (host)" : "issued (+queue delay)", o.tis, SEQ ? "O" : "S", SEQ ? "src-o" : "src-s") +
+    row("gpu start (+pend)", o.tgs, "O", "src-o") +
+    row("gpu end", o.tge, "O", "src-o") +
+    `</table>` +
+    (SEQ
+      ? `<div class="sub">launch→start ${o.tgs != null ? fmt(o.tgs - o.tis) : "?"} · run ${o.tgs != null ? fmt(o.tge - o.tgs) : "?"}</div>`
+      : `<div class="sub">queue ${fmt(o.tis - o.ti)} · pend ${o.tgs != null ? fmt(o.tgs - o.tis) : "?"} · run ${o.tgs != null ? fmt(o.tge - o.tgs) : "?"}</div>`);
+  tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - 360) + "px";
+  tip.style.top = (e.clientY + 14) + "px";
+});
+document.addEventListener("mouseout", e => { if (e.target.closest && e.target.closest(".chip")) tip.style.display = "none"; });
+
+/* ---- overhead panel: per-iteration latency, solo vs colocated ---- */
+const CLIENT_COL = ["#7fd1ff", "#ffd37f"];
+const median = a => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
+
+function drawPerfChart(cv, perf, color) {
+  const cx = cv.getContext("2d");
+  const w = cv.clientWidth, h = 170, dpr = devicePixelRatio;
+  cv.width = w * dpr; cv.height = h * dpr; cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.fillStyle = "#111"; cx.fillRect(0, 0, w, h);
+
+  const series = [];
+  if (perf.solo_ms) series.push({ d: perf.solo_ms, col: "#898781", label: "alone" });
+  series.push({ d: perf.coloc_ms, col: color, label: "colocated" });
+  const all = series.flatMap(s => s.d);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (hi <= lo) hi = lo * 1.1 + 1e-6;
+  const useLog = hi / lo > 6;                 // 0.4 ms solo vs 60 ms tails needs log
+  const PADL = 44, PADB = 14, PADT = 6;
+  const Y = v => useLog
+      ? h - PADB - (Math.log(v / lo) / Math.log(hi / lo)) * (h - PADT - PADB)
+      : h - PADB - ((v - lo) / (hi - lo)) * (h - PADT - PADB);
+
+  // gridlines: powers of 10 (and 3x) for log, 4 even steps for linear
+  cx.strokeStyle = "#2c2c2a"; cx.fillStyle = "#898781"; cx.font = "9px system-ui";
+  const gridvals = [];
+  if (useLog) {
+    for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++)
+      for (const m of [1, 3]) {
+        const v = m * 10 ** e;
+        if (v >= lo && v <= hi) gridvals.push(v);
+      }
+  } else {
+    for (let i = 0; i <= 4; i++) gridvals.push(lo + (hi - lo) * i / 4);
+  }
+  for (const v of gridvals) {
+    const y = Y(v);
+    cx.beginPath(); cx.moveTo(PADL, y); cx.lineTo(w - 4, y); cx.stroke();
+    cx.fillText(v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2), 4, y + 3);
+  }
+  cx.fillText("ms/iter", 4, 10);
+
+  for (const s of series) {
+    const n = s.d.length;
+    const X = i => PADL + (n > 1 ? i / (n - 1) : 0.5) * (w - PADL - 8);
+    cx.strokeStyle = s.col; cx.lineWidth = 1.4; cx.beginPath();
+    s.d.forEach((v, i) => { const x = X(i), y = Y(Math.max(v, lo)); i ? cx.lineTo(x, y) : cx.moveTo(x, y); });
+    cx.stroke();
+    cx.fillStyle = s.col;
+    s.d.forEach((v, i) => cx.fillRect(X(i) - 1, Y(Math.max(v, lo)) - 1, 2.5, 2.5));
+  }
+  cx.fillStyle = "#898781"; cx.fillText("iteration →", w - 60, h - 4);
+}
+
+function initPerf() {
+  if (!DATA.perf) return;
+  DATA.perf.forEach((p, i) => {
+    const col = CLIENT_COL[i % CLIENT_COL.length];
+    const p50c = median(p.coloc_ms);
+    let stats = `<span class="stat" style="color:${col}">— ${SEQ ? "" : "colocated "}p50 <b>${p50c.toFixed(2)} ms</b></span>`;
+    if (p.solo_ms) {
+      const p50s = median(p.solo_ms);
+      stats = `<span class="stat" style="color:#898781">— alone p50 <b>${p50s.toFixed(2)} ms</b></span> ` + stats +
+              ` <span class="stat">overhead <b>${(p50c / p50s).toFixed(2)}×</b></span>`;
+    } else if (!SEQ) {
+      stats += ` <span class="stat">(no seq baseline found — run with --mode all)</span>`;
+    }
+    $("perfrow").insertAdjacentHTML("beforeend",
+      `<div class="perfbox"><div class="perfhead"><b>client ${i} · ${p.name}</b>${stats}</div>
+       <canvas class="perfcv" id="perfcv${i}"></canvas></div>`);
+  });
+  DATA.perf.forEach((p, i) => drawPerfChart($(`perfcv${i}`), p, CLIENT_COL[i % CLIENT_COL.length]));
+}
+
+/* ---- compare selectors + workload description boxes ---- */
+function initCompare() {
+  const nav = DATA.nav || { workloads: DATA.clients.map(c => c.name), pairs: {} };
+  const sels = [$("selw0"), $("selw1")];
+  const cfgSel = $("selcfg");
+  const cfgs = nav.cfgs || [];
+  const cfgLabel = c => c === "throttle_none" ? "none" : c.replace("throttle_", "cap ");
+  /* the current page's cfg may be combined: "throttle_8+smlimit_50" */
+  const curParts = (nav.cur_cfg || "").split("+");
+  const curThr = curParts.find(p => p.startsWith("throttle_")) || "throttle_none";
+  const curSm = curParts.find(p => p.startsWith("smlimit_")) || "off";
+  if (cfgs.length) {
+    cfgSel.innerHTML = cfgs.map(c =>
+      `<option value="${c}"${c === curThr ? " selected" : ""}>${cfgLabel(c)}</option>`).join("");
+  } else {
+    cfgSel.style.display = "none";
+    $("selcfglabel").style.display = "none";
+  }
+  /* second config axis: green-context SM limit (smlimit_<pct>) */
+  const smSel = $("selsm");
+  const smcfgs = nav.smcfgs || [];
+  if (smcfgs.length) {
+    smSel.innerHTML = `<option value="off"${curSm === "off" ? " selected" : ""}>off</option>` +
+      smcfgs.map(c =>
+        `<option value="${c}"${c === curSm ? " selected" : ""}>${c.replace("smlimit_", "")}%</option>`).join("");
+  } else {
+    smSel.style.display = "none";
+    $("selsmlabel").style.display = "none";
+  }
+  const ALONE = "__alone__";  // selector B: single-client colocated runs
+  const navigate = () => {
+    const a = sels[0].value, b = sels[1].value;  // a === b is valid: self-pair
+    const alone = b === ALONE;
+    const label = alone ? `${a} alone` : `${a} + ${b}`;
+    const entry = (nav.pairs || {})[alone ? a : [a, b].sort().join("|")];
+    if (!entry) {
+      $("selhint").textContent = `no exported run for ${label} — run ` +
+        (alone ? `run_demo.py --mode colocated --clients ${a} --observer on` : `run_pairs.py`) +
+        ` + export_all.py`;
+      return;
+    }
+    const smOn = smcfgs.length && smSel.value !== "off";
+    const cfgKey = !smOn ? cfgSel.value
+                 : cfgSel.value === "throttle_none" ? smSel.value
+                 : cfgSel.value + "+" + smSel.value;
+    const file = typeof entry === "string" ? entry : entry[cfgKey];
+    if (file) location.href = file;
+    else if (smOn) $("selhint").textContent =
+      `no run for ${label} at ${cfgLabel(cfgSel.value)} throttle + ` +
+      `${smSel.value.replace("smlimit_", "")}% stream limit — rerun with ` +
+      `--sm-limit ${smSel.value.replace("smlimit_", "")} --out runs/${cfgKey}/…`;
+    else $("selhint").textContent =
+      `no ${cfgLabel(cfgSel.value)}-throttle run for ${label} — rerun with` +
+      (cfgSel.value === "throttle_none" ? "out --policy" : " --policy throttle --throttle " + cfgSel.value.replace("throttle_", ""));
+  };
+  smSel.onchange = navigate;
+  sels.forEach((sel, i) => {
+    sel.innerHTML = nav.workloads.map(n =>
+      `<option value="${n}"${n === (DATA.clients[i] || {}).name ? " selected" : ""}>${n}</option>`).join("");
+    sel.onchange = navigate;
+  });
+  sels[1].insertAdjacentHTML("beforeend",
+    `<option value="${ALONE}"${DATA.clients[1] ? "" : " selected"}>(alone)</option>`);
+  cfgSel.onchange = navigate;
+  DATA.clients.forEach((c, i) => {
+    $(`deschead${i}`).textContent =
+      `client ${i} · ${c.name} · stream prio ${c.prio}` + (c.iters ? ` · ${c.iters} timed iters` : "");
+    $(`descbody${i}`).innerHTML =
+      c.desc || "<span class='sub'>(no description recorded in this run's results.json)</span>";
+  });
+}
+
+/* ---- boot ---- */
+addEventListener("resize", () => { drawGantt(); render(T); DATA.perf && DATA.perf.forEach((p, i) => drawPerfChart($(`perfcv${i}`), p, CLIENT_COL[i % CLIENT_COL.length])); });
+initCompare();
+initConcurrency();
+initPerf();
+drawGantt();
+seek(events[0] || 0);
+</script>

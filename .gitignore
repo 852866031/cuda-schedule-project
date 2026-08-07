@@ -1,0 +1,21 @@
+# Reference implementation (separate upstream clone, read-only)
+orion/
+
+# Generated experiment data and replay pages (regenerate via run_pairs.py / export_all.py)
+runs/
+replays/
+
+# Build artifacts
+colocator/build/
+colocator/ext/build/
+*.so
+*.o
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Local tooling state
+.claude/
+orion_eurosys24.pdf
