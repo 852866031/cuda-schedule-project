@@ -28,34 +28,47 @@ scheduler — is untouched.
 In both diagrams below, **blue = the unchanged CUDA stack**, **amber = what
 Orion adds**. Note the amber band sits entirely *above* the real CUDA Runtime.
 
-**Normal pipeline** — every launch goes straight through; nothing can reorder
-or delay it:
+**Normal pipeline** — a PyTorch op reaches the GPU one of two ways: library
+ops (matmul, conv) call into cuBLAS/cuDNN, which launches kernels internally;
+custom/eager kernels call `cudaLaunchKernel` directly. Both funnel through the
+CUDA Runtime, and nothing can reorder or delay them:
 
 ```mermaid
 flowchart LR
-  A["PyTorch op<br/>(conv2d, matmul)"]:::base --> B["cuDNN / cuBLAS"]:::base
-  B --> C["cudaLaunchKernel<br/>(CUDA Runtime)"]:::base --> D["CUDA Driver<br/>libcuda.so"]:::base
-  D --> E["nvidia.ko<br/>(ioctl submit)"]:::base --> F["GPU hardware<br/>scheduler"]:::base
+  A["PyTorch op"]:::base -->|"library op<br/>(matmul, conv)"| B["cuBLAS / cuDNN"]:::base
+  A -->|"custom / eager kernel"| C
+  B --> C["cudaLaunchKernel<br/>(CUDA Runtime)"]:::base
+  C --> D["CUDA Driver<br/>libcuda.so"]:::base --> E["nvidia.ko"]:::base --> F["GPU hardware<br/>scheduler"]:::base
   classDef base fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
 ```
 
-**With Orion** — the `LD_PRELOAD` wrapper captures each launch instead of
-executing it; a scheduler thread decides when to re-issue it and on which
-priority stream, then hands it to the *real* runtime:
+**With Orion** — the preloaded wrappers catch *both* paths before the real
+runtime: direct launches at the `cudaLaunchKernel` symbol, and library ops at
+the `cublas*`/`cudnn*` API boundary (the library's internal launches can't be
+seen individually, so the whole library call is captured). Either way the call
+is queued instead of executed; the scheduler decides when to re-issue it and
+on which priority stream, then hands it to the unchanged stack below:
 
 ```mermaid
-flowchart LR
-  A["PyTorch op<br/>(unmodified)"]:::base --> W
+flowchart TB
+  A["PyTorch op (unmodified)"]:::base
   subgraph ORION["Orion — libinttemp.so, injected via LD_PRELOAD"]
     direction LR
-    W["wrapper shadows<br/>cudaLaunchKernel,<br/>cudnn*, cublas*"]:::orion --> Q["capture args →<br/>per-client queue<br/>(app thread spins)"]:::orion
-    Q --> S["scheduler thread<br/>interference policy<br/>(SM / duration profiles)"]:::orion --> R["re-issue on chosen<br/>priority stream"]:::orion
+    W["wrappers shadow<br/>cudaLaunchKernel,<br/>cublas*, cudnn*"]:::orion --> Q["capture args →<br/>per-client queue<br/>(app thread spins)"]:::orion
+    Q --> S["scheduler thread<br/>interference policy"]:::orion --> R["re-issue on chosen<br/>priority stream"]:::orion
   end
-  R -->|"passthrough<br/>dlsym(RTLD_NEXT)"| RT["real CUDA Runtime"]:::base
-  RT --> D2["CUDA Driver"]:::base --> K["nvidia.ko"]:::base --> G["GPU hardware<br/>scheduler"]:::base
+  subgraph STACK["unchanged CUDA stack — identical to the normal pipeline"]
+    direction LR
+    B["real cuBLAS / cuDNN"]:::base --> C["real cudaLaunchKernel<br/>(CUDA Runtime)"]:::base --> D["CUDA Driver"]:::base --> E["nvidia.ko"]:::base --> F["GPU hardware<br/>scheduler"]:::base
+  end
+  A -->|"cublas*/cudnn*<br/>library call"| ORION
+  A -->|"direct<br/>cudaLaunchKernel"| ORION
+  ORION -->|"replay library call<br/>on chosen stream"| STACK
+  ORION -->|"passthrough launch<br/>dlsym(RTLD_NEXT)"| STACK
   classDef base fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
   classDef orion fill:#fef3c7,stroke:#f59e0b,color:#7c2d12;
   style ORION fill:#fffbeb,stroke:#f59e0b,color:#b45309;
+  style STACK fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a;
 ```
 
 The interception, step by step:
