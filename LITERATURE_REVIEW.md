@@ -4,7 +4,7 @@
 
 This review covers the seven PDF files stored directly in the main `orion-citation` directory. The collection spans several layers of the GPU-sharing stack. Bless, Hummingbird, Tally, MMK, and LithOS directly manipulate GPU execution at kernel, thread-block, stream, context, or SM/TPC granularity. SMore performs cluster-level admission and placement for serverless inference functions. The file named `Harli SLO-Aware Co-location of LLM Inference and PEFT Finetuning.pdf` contains the OSDI 2024 paper *Usher: Holistic Interference Avoidance for Resource Optimized ML Inference*, not Harli; this review follows the paper content and records the filename mismatch.
 
-The review first presents direct kernel schedulers from focused launch-time mechanisms to broader hierarchical and GPU-OS designs, then covers complementary workload-level systems. The papers are reviewed with an emphasis on five questions:
+The review begins with fine-grained temporal sharing for HP/BE workloads, then extends the bubble-reclamation perspective to quota-aware spatial sharing before moving to broader hierarchical and GPU-OS designs. It concludes with complementary workload-level systems. The papers are reviewed with an emphasis on five questions:
 
 1. What resource-underutilization or interference problem does the paper target?
 2. At what layer and granularity does it make scheduling decisions?
@@ -12,60 +12,7 @@ The review first presents direct kernel schedulers from focused launch-time mech
 4. What guarantees and performance improvements does it provide?
 5. How closely does it match the Orion-style research direction of transparent kernel interception and scheduling?
 
-## 1. Bless: Improving GPU Sharing Performance through Adaptive Bubbleless Spatial-Temporal Sharing
-
-> **In brief:** Bless intercepts CUDA kernel launches and schedules short cross-application kernel squads across preconfigured MPS contexts, reclaiming transient SM bubbles while preserving each tenant's GPU quota. Its key contribution is adaptive spatial-temporal sharing that improves request latency without sacrificing quota-based fairness.
-
-### Problem and motivation
-
-Bless addresses a limitation shared by conventional temporal and spatial GPU multiplexing. Temporal sharing controls how frequently each application's kernels may be launched, but non-preemptive and heterogeneous kernels make time-based quotas imprecise. Spatial sharing, such as NVIDIA MPS, allocates a fraction of the GPU's SMs to each application, but statically reserved SMs become bubbles whenever an application temporarily lacks enough parallel work. MIG provides stronger isolation, but at coarse, inflexible partition sizes. In all three cases, nominal allocation is not equivalent to useful execution: a tenant can own a quota while leaving part of it idle, yet other tenants cannot safely and fairly reclaim the unused capacity.
-
-Bless defines a bubble as GPU capacity that is temporarily unused under an application's assigned quota. Its objective is to squeeze these bubbles without violating any application's promised quota. This is more subtle than maximizing aggregate throughput. The system must improve latency fairly across tenants, avoid making a quota-compliant tenant slower than isolated execution at that quota, and react within a request rather than waiting for request boundaries.
-
-![Bless motivation: temporal and static spatial sharing both leave bubbles that ideal sharing could reclaim.](assets/paper_figures/bless_motivation.png)
-
-*Motivation (Figure 1): temporal sharing creates gaps between non-preemptive kernels, while static spatial sharing leaves reserved SMs idle. Bless targets the bubble-free schedule in the bottom timeline while retaining quota guarantees.*
-
-### System design
-
-Bless combines temporal and spatial sharing at the granularity of a **kernel squad**. A kernel squad is a short group of kernels drawn from different applications and scheduled together. Because a squad lasts much less time than an end-to-end inference request, Bless can reconfigure GPU allocation multiple times during a request and reclaim transient bubbles.
-
-![Bless mechanism: runtime components for forming kernel squads and selecting execution configurations.](assets/paper_figures/bless_mechanism.png)
-
-*Main mechanism (Figure 5): wrapped application requests enter the multi-task scheduler; the execution-configuration determiner selects a profiled allocation, and the concurrent-kernel manager dispatches the resulting kernel squad to resource-configured GPU contexts.*
-
-The system contains four main components:
-
-- **Offline profiler.** Bless profiles each long-running application under multiple SM configurations using MPS. It records kernel sequences, execution progress, and latency/resource behavior under different allocations. The resulting profiles let the runtime estimate request progress and the performance of possible concurrent kernel configurations without exhaustively measuring every online combination.
-- **Multi-task scheduler.** The scheduler tracks the progress of every active request and decides which kernels should form the next squad. It attempts to preserve quota-derived progress while giving temporarily unused capacity to applications that can use it. This makes the policy work-conserving while maintaining fairness.
-- **Execution-configuration determiner.** For each candidate squad, Bless estimates how kernels will perform under alternative concurrent configurations. It chooses a configuration that reduces bubbles and latency without violating quota guarantees.
-- **Concurrent kernel manager.** Bless enforces the chosen configuration using multiple pre-established GPU contexts with different resource allocations. Applications submit through wrapped CUDA runtime APIs, including `cudaLaunchKernel`, and Bless redirects kernel execution to an appropriate context. Contexts encode heterogeneous SM configurations, allowing the runtime to change effective allocation without paying the full cost of creating or reconfiguring a context for every squad.
-
-The important distinction is that Bless does not merely set a static MPS percentage. It performs host-side scheduling of kernel squads and selects among resource-configured contexts during execution. This allows it to approximate a continuously adjustable allocation using a finite set of contexts.
-
-### Scheduling policy and guarantees
-
-Bless uses request progress as a fairness signal. A tenant with quota \(q\) should make at least as much progress as it would make in isolation with that quota. When one application falls behind its expected progress, the scheduler prioritizes its kernels. When an application has no useful work or cannot consume its full allocation, another application can borrow the bubble.
-
-The performance estimator predicts a squad's duration under possible concurrent kernel allocations. Bless thereby avoids relying on the hardware scheduler to colocate arbitrary kernels blindly; uncontrolled concurrency could create cache, bandwidth, or compute contention that increases latency even when idle SM capacity exists.
-
-### Implementation and evaluation
-
-Bless is implemented in more than 5,000 lines of C++ and supports applications built with TVM and PyTorch. It is evaluated primarily on NVIDIA A100 GPUs using synthetic and real-world query-arrival traces, multiple applications, quota ratios, and model combinations.
-
-The main reported result is a **21.1%-37.3% average latency reduction** over state-of-the-art sharing approaches while preserving promised quotas. In homogeneous cases, colocating two BERT inference instances reduces average latency by 39.1%; with four BERT instances, the reduction reaches 41.2%. The paper also evaluates beyond pairwise sharing, quota combinations, kernel-squad granularity, prediction accuracy, and scheduling overhead. Kernel squads in the evaluation generally last approximately 0.7-10 ms, enabling allocation changes substantially faster than request-level schedulers.
-
-### Comparison with Orion
-
-Bless and Orion share the same basic control opportunity: both transparently observe CUDA launches, profile kernel behavior, and decide which kernels from independent applications should execute concurrently. Orion is primarily **interference-aware**: it classifies kernels by resource behavior and attempts to overlap complementary kernels, especially compute-intensive and memory-intensive work, while respecting application priorities. Bless is primarily **quota- and bubble-aware**: it asks whether each application is making the progress promised by its SM quota and lets another application reclaim capacity that the quota owner cannot currently use.
-
-Their scheduling units and enforcement mechanisms also differ. Orion schedules individual, non-preemptive kernels through intercepted queues and relies on the GPU's concurrent-kernel execution; once admitted, a kernel normally runs to completion. Bless groups several kernels into short **kernel squads** and dispatches them through pre-created MPS contexts representing different SM allocations. This gives Bless more explicit spatial control and a clearer quota guarantee, but requires offline profiles and a discrete context/configuration space. Orion is conceptually simpler and more directly targets beneficial kernel pairing; Bless is better suited when proportional allocation and fair bubble reclamation are first-class requirements.
-
-### Assessment
-
-Bless belongs strongly in the kernel-scheduling category. It wraps CUDA launch APIs, observes individual kernels, creates cross-application kernel squads, and enforces spatial configurations through multiple contexts. Relative to Orion, Bless focuses more directly on accurate quota enforcement and bubble reclamation. Its key limitation is dependence on offline profiling and a discrete set of pre-created contexts. Its ability to generalize to dynamic-shape workloads, unseen kernels, rapidly changing LLM batches, and GPUs with different resource-partitioning behavior depends on the quality and coverage of those profiles.
-
-## 2. Hummingbird and Tally: Transparent Fine-Grained Temporal Sharing
+## 1. Hummingbird and Tally: Transparent Fine-Grained Temporal Sharing
 
 > **In brief:** Both systems turn best-effort (BE) kernels into **bounded execution units**, place them in high-priority (HP) **GPU bubbles**, and stop admitting BE work when HP work returns. **Hummingbird** emphasizes bubble detection and split-kernel launch control; **Tally** chooses per kernel between slicing and persistent-worker preemption.
 
@@ -154,6 +101,81 @@ Orion can still achieve higher utilization by exploiting complementary resources
 The shared recipe is **intercept, divide, harvest, yield, and resume**. Hummingbird contributes workload-aware bubble detection, paced split launches, consolidation, and memory management; Tally contributes a profile-guided choice between slicing and semantics-safe persistent workers.
 
 A natural combined design would use Hummingbird to decide **when and for how long BE may run**, Tally to decide **how the current kernel should yield**, and Orion to decide **when controlled spatial overlap is preferable to temporal withdrawal**.
+
+## 2. Bless: Quota-Aware Reclamation of Spatial GPU Bubbles
+
+> **In brief:** Bless targets multiple GPU tenants with explicit SM quotas. It transparently groups their kernels into short **kernel squads**, selects a profiled MPS allocation for each squad, and lets one tenant reclaim capacity that another tenant cannot currently use - while preserving every tenant's quota-equivalent progress.
+
+### Target problem: allocation is not utilization
+
+The first section treated an HP-idle interval as reclaimable time. Bless starts from a related but broader observation: **a tenant may leave GPU capacity idle even while it is actively running**. The setting is no longer restricted to one HP workload and one BE workload. Multiple inference applications share a GPU, and each tenant is assigned a quota representing the SM capacity it should receive.
+
+Static spatial sharing appears to provide a clean guarantee: for example, two tenants may receive 60% and 40% of the SMs. In practice, a kernel may lack enough thread blocks to fill its partition, may saturate memory bandwidth before using all assigned SMs, or may temporarily have no launch ready. The tenant still owns its quota, but part of that quota becomes a **spatial bubble**. Static MPS cannot give that unused capacity to another tenant without changing the partition, while coarse mechanisms such as MIG expose only a small set of rigid configurations.
+
+Bless therefore asks a different high-level question:
+
+> How can the system make GPU sharing work-conserving while ensuring that every tenant progresses at least as fast as it would under its promised quota?
+
+For tenant *i*, the desired guarantee can be summarized as:
+
+$$
+P_i(t) \geq P_i^{\mathrm{quota}}(t),
+$$
+
+Here, **actual progress** should not fall behind the progress the application would have made in isolation with its quota. The optimization objective is then to reduce request latency and reclaim idle capacity subject to this per-tenant progress constraint. Bless is therefore not simply maximizing aggregate throughput; its target problem is **fair bubble reclamation under proportional resource guarantees**.
+
+![Bless motivation: temporal and static spatial sharing both leave bubbles that ideal sharing could reclaim.](assets/paper_figures/bless_motivation.png)
+
+*Motivation (Figure 1): a nominal spatial allocation can contain unused capacity because kernels do not continuously consume their full quota. Bless seeks the bubble-free schedule while retaining quota-derived progress guarantees.*
+
+### System abstraction: short spatial scheduling epochs
+
+The key design decision is to avoid treating either a whole request or a static MPS allocation as the control unit. Bless introduces a **kernel squad**: a short group of kernels selected from several tenants and dispatched under one resource configuration. A squad typically lasts roughly **0.7-10 ms**, so the runtime can reconsider both kernel composition and SM allocation many times within a request.
+
+This produces a control loop that is analogous to reclaiming bubbles, but its bounded unit is a **spatial configuration epoch** rather than a preemptible kernel fragment:
+
+1. **PROFILE** how each application's kernels behave under different SM allocations.
+2. **TRACK** each tenant's actual progress against its quota-derived baseline.
+3. **GROUP** ready kernels from several tenants into the next kernel squad.
+4. **CONFIGURE** the squad by selecting a profiled MPS/SM allocation.
+5. **RECLAIM** unused quota with tenants that can make useful progress, then repeat for the next squad.
+
+Bless does not interrupt a running thread block or split a kernel into resumable sub-grids. Its responsiveness comes from keeping squads short and changing the resource configuration between squads. Once a kernel is admitted, it remains non-preemptive; the next scheduling opportunity arrives when the current squad completes.
+
+### Main innovation: adaptive spatial-temporal sharing
+
+![Bless mechanism: runtime components for forming kernel squads and selecting execution configurations.](assets/paper_figures/bless_mechanism.png)
+
+*Main mechanism (Figure 5): wrapped CUDA requests enter the multi-task scheduler; the configuration determiner chooses a profiled allocation; and the concurrent-kernel manager dispatches the resulting squad through resource-configured GPU contexts.*
+
+Bless combines four components into an adaptive spatial-temporal scheduler:
+
+- The **offline profiler** runs each long-lived application under multiple MPS allocations. It records kernel sequences, execution progress, and performance as the available SM fraction changes.
+- The **multi-task scheduler** intercepts CUDA launches, observes ready kernels, and tracks whether each active tenant is ahead of or behind its quota-equivalent progress.
+- The **execution-configuration determiner** predicts how a candidate squad will perform under alternative concurrent allocations. It selects a configuration that reclaims bubbles without violating the progress constraint.
+- The **concurrent-kernel manager** dispatches the squad through pre-created GPU contexts that encode different MPS allocations. Pre-creation avoids constructing or reconfiguring a context on every scheduling decision.
+
+The paper's central innovation is the combination of **progress-aware fairness** and **intra-request configuration changes**. A tenant that cannot currently consume its full allocation does not lose its long-term guarantee: another tenant may borrow the bubble only while the quota owner remains on schedule. If a tenant falls behind its baseline, subsequent squads prioritize its kernels or choose a more favorable allocation.
+
+This is also why kernel-level profiling matters. Free SM capacity does not imply that arbitrary overlap is beneficial: concurrent kernels may contend for compute pipelines, cache, or memory bandwidth. Bless uses measured configurations to choose both **which kernels should overlap** and **how SM capacity should be divided**, instead of relying on the GPU's default concurrent-kernel scheduler.
+
+### Evaluation and limitations
+
+Bless is implemented in more than 5,000 lines of C++ and wraps CUDA runtime operations such as `cudaLaunchKernel`. It supports TVM- and PyTorch-based applications and is evaluated primarily on NVIDIA A100 GPUs with different model combinations, quota ratios, and request traces.
+
+The paper reports a **21.1%-37.3% average latency reduction** over prior sharing approaches while preserving tenant quotas. Homogeneous experiments report a 39.1% reduction for two colocated BERT instances and 41.2% for four instances. These gains show that spatial bubbles occur frequently enough within requests for millisecond-scale reconfiguration to be useful.
+
+The main limitation is that Bless relies on **offline profiles** and a **finite set of pre-created MPS configurations**. Dynamic shapes, previously unseen kernels, rapidly changing LLM batches, or architecture-dependent interference may reduce prediction accuracy. Moreover, short squads improve adaptivity but cannot bound the residual time of an unusually long kernel already launched inside the squad.
+
+### Comparison with Orion
+
+Both systems transparently observe CUDA launches and schedule kernels from independent applications, but they optimize different contracts. Orion is primarily **interference-aware**: it classifies whole kernels by resource behavior and overlaps compatible kernels to improve utilization and throughput. Bless is primarily **quota- and progress-aware**: it asks whether each tenant is receiving the execution progress promised by its SM allocation and uses safe overlap to reclaim unused quota.
+
+Their enforcement mechanisms also differ. Orion schedules individual non-preemptive kernels through intercepted queues and relies on concurrent CUDA streams. Bless schedules short **kernel squads** through pre-created MPS contexts representing different SM allocations. This gives Bless a more explicit proportional-allocation guarantee, at the cost of offline profiling and a discrete configuration space. Orion is the leaner mechanism for beneficial kernel pairing; Bless's innovation is turning such overlap into a work-conserving policy with per-tenant quota guarantees.
+
+### Summary
+
+Bless can be summarized as **PROFILE → TRACK → GROUP → CONFIGURE → RECLAIM**. Its target problem is not merely an idle GPU, but the gap between **allocated SM quota** and **useful kernel execution**. Its main innovation is to make that stranded capacity reclaimable at millisecond-scale kernel-squad boundaries without allowing any tenant to fall behind its quota-equivalent progress.
 
 ## 3. MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications
 
@@ -367,9 +389,9 @@ Despite using kernel-level graphs for estimation, Usher is not a runtime kernel 
 
 | Paper | Primary scheduling object | Control layer | CUDA/kernel interception | Kernel transformation | Main objective | Fit to Orion-style kernel scheduling |
 |---|---|---|---|---|---|---|
-| Bless | Kernel squads and SM configurations | Host runtime + multiple GPU contexts | Yes, CUDA runtime wrapping | No general PTX rewrite; controls launches/configured contexts | Reclaim bubbles while enforcing quotas | Very high |
 | Hummingbird | Split-kernel sub-grids | CUDA Driver interposition runtime | Yes | Yes, PTX splitting and offset injection | Bubble-aware microsecond preemption and SLO protection | Very high |
 | Tally | Kernels and logical thread blocks | CUDA virtualization server | Yes | Yes, slicing and persistent preemption | Non-intrusive performance isolation | Very high |
+| Bless | Kernel squads and SM configurations | Host runtime + multiple GPU contexts | Yes, CUDA runtime wrapping | No general PTX rewrite; controls launches/configured contexts | Reclaim bubbles while enforcing quotas | Very high |
 | MMK | MIG groups, MPS shares, and kernels | Hierarchical cluster/GPU runtime | Yes at fine-grained layer | Limited/implementation-dependent | Combine isolation and utilization across three mechanisms | High |
 | LithOS | Kernel atoms and TPC allocations | GPU OS/runtime layer | Transparent low-level submission control | Yes, kernel atomization | Isolation, work conservation, right-sizing, energy | Very high |
 | SMore | Serverless function admission and GPU placement | Cluster/serverless scheduler | No | No | Harvest idle training capacity | Low; complementary upper layer |
