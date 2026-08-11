@@ -67,27 +67,25 @@ Bless belongs strongly in the kernel-scheduling category. It wraps CUDA launch A
 
 ## 2. Hummingbird and Tally: Transparent Fine-Grained Temporal Sharing
 
-> **In brief:** Hummingbird and Tally implement the same high-level policy: turn best-effort kernels into bounded execution units, run those units only while the high-priority workload is inactive, and stop admitting new best-effort work as soon as high-priority work returns. Hummingbird specializes this policy around explicit bubble detection and split-kernel launch control, whereas Tally contributes a more general per-kernel choice between slicing and persistent-worker preemption.
+> **In brief:** Both systems turn best-effort (BE) kernels into **bounded execution units**, place them in high-priority (HP) **GPU bubbles**, and stop admitting BE work when HP work returns. **Hummingbird** emphasizes bubble detection and split-kernel launch control; **Tally** chooses per kernel between slicing and persistent-worker preemption.
 
 ### Common motivation and system abstraction
 
-Both systems address the utilization-isolation conflict created by bursty GPU workloads. Reserving a GPU for a latency-critical application provides strong isolation but wastes the intervals in which that application has no GPU work. Conventional temporal sharing can fill those intervals with a best-effort job, but CUDA offers no public mechanism that can cheaply terminate an arbitrary running kernel. If a long best-effort kernel has already been admitted when a high-priority kernel arrives, the high-priority kernel may wait for the best-effort kernel's remaining execution time. Stream priority does not solve this problem because it influences pending work rather than evicting work that is already resident.
+Exclusive execution protects HP latency but wastes idle intervals. Conventional temporal sharing fills those intervals, yet a long BE kernel can block newly arrived HP work because CUDA stream priority orders pending work but cannot evict resident blocks. Hummingbird and Tally therefore treat the application-visible kernel as too coarse and exploit shorter thread-block/sub-grid boundaries.
 
-Hummingbird and Tally reach the same central conclusion: the application-visible kernel is too coarse a scheduling unit, but its thread blocks provide natural, much shorter boundaries. Both transparently intercept CUDA calls from unmodified applications, transform best-effort kernels when necessary, and expose execution units whose residual running time can be bounded. Their common control loop is:
+Both are transparent to applications and follow the same **cooperative software-preemption loop**:
 
-1. Observe high- and low-priority CUDA work below the framework.
-2. Convert a best-effort kernel into smaller schedulable units.
-3. Admit those units only while the high-priority workload is inactive.
-4. When high-priority work arrives, stop the admission of new units and wait only for the current unit to drain.
-5. Resume the remaining best-effort work after the next high-priority idle interval begins.
+1. **Intercept** HP and BE CUDA work below the framework.
+2. **Divide** BE kernels into bounded units.
+3. **Harvest** HP-idle intervals with those units.
+4. **Yield** on HP arrival by stopping new BE admission and draining the current unit.
+5. **Resume** unfinished BE work in a later bubble.
 
-Thus, both systems implement **cooperative software preemption** rather than immediate hardware preemption. Neither can interrupt an instruction, warp, or arbitrary point inside a running thread block. The isolation bound is determined by the remaining duration of the currently admitted best-effort unit plus runtime and launch overhead:
+Neither system can interrupt an instruction, warp, or arbitrary point inside a running thread block. HP waiting is approximately bounded by the current BE unit's residual time plus runtime overhead:
 
 \[
 T_{\mathrm{HP\ wait}} \lesssim T_{\mathrm{residual\ BE\ unit}} + T_{\mathrm{runtime}}.
 \]
-
-The following figure uses this shared vocabulary and then separates the mechanisms that realize the bounded best-effort unit.
 
 ![Unified architecture and execution model for Hummingbird and Tally. Both intercept unmodified applications, convert best-effort kernels into bounded execution units, harvest high-priority idle intervals, and drain before high-priority execution resumes. Hummingbird controls a sequence of split-kernel launches; Tally chooses slicing or persistent-worker preemption.](assets/paper_figures/hummingbird_tally_unified.svg)
 
@@ -95,63 +93,52 @@ The following figure uses this shared vocabulary and then separates the mechanis
 
 ### Hummingbird: bubble-aware split-kernel scheduling
 
-Hummingbird is an application-transparent runtime that intercepts low-level CUDA Driver APIs. Its distinctive contribution is not a different overall sharing objective, but a combination of **explicit bubble discovery**, **PTX-based kernel splitting**, and **low-overhead launch pacing** designed to exploit even microsecond- and millisecond-scale gaps in modern inference and distributed workloads.
+Hummingbird intercepts low-level CUDA Driver APIs and combines three ideas:
 
-For a best-effort kernel, Hummingbird first profiles how execution time changes with grid size. It chooses an efficient split size by considering GPU parallelism and memory-bandwidth saturation: making the sub-grid smaller initially reduces its execution time, but further reduction eventually stops helping and only sacrifices utilization. The PTX transformer then injects offset parameters into uses of `blockIdx`, allowing the original logical grid to be expressed as a sequence of smaller sub-grid launches without changing the application's view of block indices. The remaining work is represented by the not-yet-launched split-kernels.
+- **Split-kernel execution.** It profiles an efficient sub-grid size, then rewrites PTX with `blockIdx` offsets so one logical grid becomes a sequence of smaller launches.
+- **Bubble-aware admission.** It recognizes short synchronization/communication bubbles from CUDA and NCCL API patterns, while longer idle periods are detected by queue inactivity and optionally predicted from request intervals.
+- **Kernel-tick scheduling.** It keeps at most one BE split-kernel in the device queue and launches the next near the previous split's completion. When HP work arrives, a **host-side control flag** stops further launches; the running split drains normally.
 
-Hummingbird divides high-priority idle intervals into two operational categories. **Small bubbles**, typically caused by CPU-GPU synchronization or inter-GPU communication, are identified from repeatable host-side CUDA and NCCL API patterns. For example, iteration boundaries may expose a `cudaMemcpyAsync`/`cudaStreamSynchronize` pattern, while pipeline-parallel gaps may be associated with NCCL send and receive calls. Lightweight CUDA events connect these host-side hints to actual GPU progress. **Large bubbles**, caused by effects such as request fluctuation or network delay, are detected when the high-priority queue remains empty beyond a workload-specific threshold; a request-interval predictor can further estimate how much best-effort work will fit.
+This last point is important: Hummingbird does **not** turn the BE kernel into a persistent worker or terminate its current split early. Its preemption bound comes from making each ordinary launch short and limiting queue depth. For long bubbles, **split consolidation** restores larger grids to reduce launch overhead and improve BE throughput.
 
-During a detected bubble, Hummingbird issues best-effort split-kernels through a **kernel-tick scheduler**. It limits the GPU device queue to at most one such split-kernel, so an arriving high-priority kernel is delayed by no more than the current split rather than an arbitrarily deep queue. Instead of synchronizing after every split, the runtime uses the profiled split duration as a tick and launches the next split as the previous one approaches completion. On high-priority arrival, the scheduler changes its control flag and the asynchronous launch thread stops issuing further splits. Importantly, this flag controls the **host-side launch loop**; Hummingbird does not convert the kernel into Tally's persistent-worker loop and does not make the already-running split exit early.
-
-Very small splits improve responsiveness but impose launch and synchronization costs and may underfill the GPU. Hummingbird therefore consolidates adjacent splits, potentially restoring the original grid size, when it detects or predicts a sufficiently large bubble. This makes its granularity explicitly phase-dependent: conservative units protect short, structured bubbles, while larger units recover best-effort throughput in long idle periods.
-
-Hummingbird also treats memory capacity as part of colocation. Its extended memory manager prioritizes local HBM for the high-priority task and can offload best-effort pages to NVLink-connected remote HBM or, as a fallback, host DRAM. This capability is orthogonal to the common compute-yield loop, but it matters when two models cannot otherwise coexist in local GPU memory.
-
-The evaluation spans inference and training, including LLM and distributed configurations. The paper reports **9.7x** higher high-priority SLO attainment than representative spatial-sharing approaches and **3.5x** higher attainment than temporal-sharing approaches, with less than **1%** loss relative to exclusive high-priority execution. It also reports up to **2.4x** higher best-effort throughput than REEF. These results should be understood as evidence for the complete Hummingbird design - splitting, bubble hints, kernel ticks, consolidation, and memory management - rather than for a new hardware preemption primitive.
+Hummingbird also provides **priority-aware memory management**, retaining local HBM for HP data while offloading BE pages to NVLink-connected HBM or host DRAM. The paper reports **9.7x/3.5x** higher HP SLO attainment than representative spatial/temporal approaches, less than **1%** loss versus exclusive HP execution, and up to **2.4x** higher BE throughput than REEF.
 
 ### Tally: profile-guided slicing or persistent-worker preemption
 
-Tally begins from the same temporal-sharing loop but focuses more heavily on making the yield mechanism general across kernels. It inserts a client/server CUDA virtualization layer beneath unmodified applications. Client-side interception forwards CUDA operations to a centralized server that owns the GPU context, maintains application-visible ordering, profiles kernels, and makes priority-aware dispatch decisions. Best-effort kernels execute only while the high-priority application is inactive; high-priority work is dispatched immediately when it appears.
+Tally uses a centralized **client/server CUDA virtualization** layer to intercept operations, preserve CUDA semantics, profile kernels, and dispatch HP work before BE work. It creates bounded BE units using one of two per-kernel mechanisms:
 
-Tally exposes two alternative ways to create bounded best-effort units. The first, **kernel slicing**, is conceptually the same grid decomposition used by Hummingbird: Tally launches a sequence of small sub-grids and rewrites block indices with an offset. The end of each slice is a yield point. Finer slices reduce high-priority waiting time but increase the number of launches.
+- **Kernel slicing** rewrites block indices and issues small sub-grids one at a time. It is simple but pays repeated launch overhead.
+- **Persistent-worker preemption** launches a fixed set of physical worker blocks. Each worker obtains a logical block ID from a global counter, executes that block, and checks a device-visible **preemption flag** before claiming another. On HP arrival, workers drain at logical-block boundaries and later resume from the saved counter.
 
-The second, **kernel preemption**, converts a kernel into a persistent-worker form. Tally launches a fixed set of physical worker blocks once. Each worker repeatedly obtains a logical block ID from a global counter, executes the original block body for that ID, and then checks a preemption flag before claiming more work. When a high-priority kernel arrives, the scheduler sets the flag. Workers finish their current logical blocks, stop claiming new IDs, and collectively exit; after the high-priority interval, Tally resumes from the counter that records the unfinished logical grid. This mechanism avoids issuing a separate CUDA launch for every small slice, but adds counter operations, flag checks, control flow, and synchronization inside the transformed kernel.
+Persistent conversion can deadlock if some threads return while others wait at a block-wide barrier. Tally's **unified-synchronization transformation** rewrites return and barrier paths so threads exit together at safe boundaries. Tally then profiles both primitives and their parameters, choosing the configuration that maximizes BE performance under a turnaround bound.
 
-Persistent transformation requires more than wrapping the original block body in a loop. Original kernels may contain divergent returns and block-wide barriers. If some threads return because of preemption while others reach an original barrier, the block can deadlock. Tally's unified-synchronization transformation rewrites return and synchronization paths so that threads agree on safe block-level exit. This semantics-preserving transformation is one of Tally's most important technical contributions.
-
-Neither primitive dominates for every kernel. Slicing is lighter-weight but pays repeated launch overhead; persistent preemption uses a single launch but may substantially perturb kernels that are sensitive to additional synchronization and control flow. Tally therefore profiles each best-effort kernel under candidate methods and parameters. It chooses the slicing factor or persistent-worker configuration that maximizes best-effort performance while keeping turnaround below its configured bound. Unlike Hummingbird, Tally does not depend on recognizing semantic LLM, synchronization, or NCCL bubble types: an empty/inactive high-priority side is the generic opportunity signal. Its adaptivity is primarily **per kernel and per preemption primitive**, rather than per predicted bubble length.
-
-Across high-priority inference and best-effort training combinations, Tally reports an average high-priority P99 latency overhead of **7.2%**, substantially below time slicing, MPS, MPS priority, and TGS in its experiments. It retains more than **80%** of TGS's aggregate throughput. The throughput gap under heavy high-priority load reflects a deliberate design choice: Tally avoids priority-class co-execution and sacrifices some best-effort throughput for robust tail-latency isolation.
+Unlike Hummingbird, Tally does not require semantic CUDA/NCCL bubble patterns: generic HP inactivity is sufficient. Its adaptivity concerns **how each kernel yields**, rather than **how long the current bubble will last**. Tally reports **7.2%** average HP P99 latency overhead while retaining more than **80%** of TGS's aggregate throughput.
 
 ### Direct comparison between the two systems
 
-At the policy level, Hummingbird and Tally should be placed in the same family rather than described as fundamentally different systems. Both harvest high-priority gaps with best-effort work, both rely on PTX transformation and sub-kernel/block boundaries, and both react to high-priority arrival by preventing additional best-effort work from starting. Their differences lie in how they define an opportunity and how they realize the yield point:
+The systems belong to the same design family. Their differences are mainly in **opportunity detection** and **yield implementation**:
 
 | Dimension | Hummingbird | Tally |
 |---|---|---|
-| Application contract | Unmodified applications; low-level CUDA interception | Unmodified applications; client/server CUDA virtualization |
-| Opportunity to run BE work | Explicitly detects small CUDA/NCCL bubbles and large idle intervals | Runs BE work whenever the high-priority application is inactive |
-| Execution primitive | Sequence of PTX-rewritten split-kernel launches | Per-kernel choice of slicing or persistent-worker preemption |
-| Response to HP arrival | Host launch thread stops issuing splits; current split drains | Stop issuing slices, or set a device-visible flag so workers drain at logical-block boundaries |
-| Granularity adaptation | Split size is profiled; adjacent splits are consolidated for predicted/detected large bubbles | Method and parameters are profiled per kernel to meet a turnaround bound |
-| Principal specialization | Bubble harvesting for inference/distributed workloads, plus memory-capacity management | General, semantics-safe block-level yield across heterogeneous DL kernels |
-| Main cost | Split launches, tick synchronization/pacing, workload-specific hints, PTX availability | Virtualization, profiling, transformation, counters/checks, and synchronization rewriting |
+| Opportunity | CUDA/NCCL hints plus large-idle detection/prediction | Generic HP inactivity |
+| BE primitive | PTX-rewritten split-kernel launches | Per-kernel slicing or persistent workers |
+| HP arrival | Stop the host launch loop; current split drains | Stop slices, or set a device flag and drain logical blocks |
+| Adaptation | Profile split size; consolidate in long bubbles | Profile primitive and parameters under a turnaround bound |
+| Extra emphasis | Bubble structure and memory offloading | Semantics-safe, general block-level yield |
 
-The distinction is therefore narrower than “bubble scheduling versus preemption.” Both systems schedule bubbles and both provide software preemption. More precisely, **Hummingbird realizes preemption by controlling the sequence of ordinary split-kernel launches**, while **Tally additionally supports an intra-kernel persistent-worker protocol**. Hummingbird invests more in identifying and sizing the high-priority gap; Tally invests more in choosing and safely implementing the best yield mechanism for each kernel.
+In short, **Hummingbird controls a sequence of ordinary short launches**, whereas **Tally can additionally stop inside a persistent kernel at logical-block boundaries**. Hummingbird invests more in finding and sizing bubbles; Tally invests more in selecting a safe yield mechanism.
 
 ### Comparison with Orion
 
-All three systems create a transparent control point below unmodified ML frameworks, but Orion uses that control point differently. Orion primarily performs **interference-aware spatial co-execution**: it schedules whole kernels from different workloads onto CUDA streams and overlaps resource-compatible kernels when doing so is expected to improve utilization without excessive interference. Hummingbird and Tally primarily perform **fine-grained temporal borrowing**: best-effort work occupies an interval in which high-priority work is absent and is withdrawn before the next high-priority phase.
+All three intercept unmodified applications, but **Orion spatially co-executes compatible whole kernels**, whereas Hummingbird and Tally primarily perform **fine-grained temporal borrowing**. Once Orion admits a BE kernel, it normally runs to completion and may interfere with an HP kernel; Hummingbird and Tally pay transformation overhead to bound withdrawal at a split or logical-block boundary. They therefore offer stronger tail-latency isolation when kernels are long or interference is difficult to predict.
 
-This difference produces distinct isolation properties. Once Orion has admitted a best-effort kernel, it normally runs to completion and may execute concurrently with a high-priority kernel. Priority streams can order pending launches but cannot evict the resident best-effort blocks. Orion's high-priority delay and interference therefore depend on the remaining duration and resource behavior of previously admitted whole kernels. Hummingbird and Tally pay transformation and scheduling overhead to bound that residual work at a split or logical-block boundary, and they normally avoid cross-priority co-execution. They consequently provide a clearer tail-latency isolation story, especially when best-effort kernels are long or memory-bandwidth interference is difficult to predict.
-
-Orion retains two potential advantages. First, spatial overlap can use compute and memory resources simultaneously even while the high-priority kernel is active; strict temporal sharing leaves complementary capacity unused during that interval. Second, Orion can schedule an opaque library kernel as a whole even when transformable PTX is unavailable. Hummingbird's and Tally's finer control depends on successful transformation or must fall back to a coarser path. The systems therefore occupy different points in the same design space: Orion favors low-overhead throughput through compatible overlap, whereas Hummingbird and Tally spend additional machinery to obtain bounded withdrawal and stronger performance isolation.
+Orion can still achieve higher utilization by exploiting complementary resources while HP work is active, and it can schedule opaque library kernels without transformable PTX. The tradeoff is therefore **overlap and lower mechanism cost** in Orion versus **bounded yield and stronger isolation** in Hummingbird/Tally.
 
 ### Summary and research implications
 
-Hummingbird and Tally demonstrate a shared recipe for transparent fine-grained GPU sharing: intercept CUDA, replace a monolithic best-effort launch with resumable bounded units, admit those units during high-priority inactivity, and make the remaining unit small enough that high-priority work starts quickly. Hummingbird's main extension is workload-structure-aware bubble detection, launch pacing, dynamic consolidation, and memory offloading. Tally's main extension is a profile-guided choice between conventional slicing and a semantics-safe persistent-worker mechanism.
+The shared recipe is **intercept, divide, harvest, yield, and resume**. Hummingbird contributes workload-aware bubble detection, paced split launches, consolidation, and memory management; Tally contributes a profile-guided choice between slicing and semantics-safe persistent workers.
 
-For a kernel-scheduling research agenda, the papers expose a useful composition opportunity. Hummingbird's estimate of **when a bubble begins and how long it may last** could drive Tally's choice of **how the current kernel should yield**. Orion contributes a complementary third option: when temporal withdrawal would waste substantial resources, an interference model could decide whether controlled spatial overlap is safe. A unified scheduler could therefore choose among full overlap, split-kernel temporal borrowing, and persistent-worker execution according to the current phase, predicted gap length, kernel transformability, and SLO budget.
+A natural combined design would use Hummingbird to decide **when and for how long BE may run**, Tally to decide **how the current kernel should yield**, and Orion to decide **when controlled spatial overlap is preferable to temporal withdrawal**.
 
 ## 3. MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications
 

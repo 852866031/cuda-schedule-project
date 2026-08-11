@@ -56,23 +56,19 @@
   <rect x="85" y="415" width="205" height="34" rx="17" fill="#3d9c78"/>
   <text x="187" y="439" text-anchor="middle" class="label">HUMMINGBIRD PATH</text>
   <text x="100" y="490" class="heading">Bubble-aware split-kernel scheduling</text>
-  <text x="100" y="525" class="body">1. Profile an efficient sub-grid size and inject block-index offsets.</text>
-  <text x="100" y="558" class="body">2. Detect small bubbles from CUDA/NCCL hints; detect or predict large gaps.</text>
-  <text x="100" y="591" class="body">3. Launch at most one split-kernel ahead using kernel ticks.</text>
-  <text x="100" y="624" class="body">4. On HP arrival, stop issuing splits; only the current split drains.</text>
-  <text x="100" y="657" class="body">5. Consolidate splits in long bubbles to recover BE throughput.</text>
-  <text x="100" y="692" class="small">Additional system concern: priority-aware NVLink/DRAM memory offloading.</text>
+  <text x="100" y="530" class="body"><tspan font-weight="700">SPLIT</tspan><tspan dx="8">— profile sub-grid size and inject block-index offsets.</tspan></text>
+  <text x="100" y="575" class="body"><tspan font-weight="700">DETECT</tspan><tspan dx="8">— identify CUDA/NCCL bubbles and predict long gaps.</tspan></text>
+  <text x="100" y="620" class="body"><tspan font-weight="700">PACE &amp; YIELD</tspan><tspan dx="8">— keep one split ahead; stop new launches on HP arrival.</tspan></text>
+  <text x="100" y="665" class="small"><tspan font-weight="700">ADAPT:</tspan><tspan dx="8">consolidate splits in long bubbles; offload BE memory.</tspan></text>
 
   <rect x="825" y="395" width="710" height="325" class="tally"/>
   <rect x="845" y="415" width="145" height="34" rx="17" fill="#d88932"/>
   <text x="917" y="439" text-anchor="middle" class="label">TALLY PATH</text>
   <text x="860" y="490" class="heading">Profile-guided block-level yield</text>
-  <text x="860" y="525" class="body">1. Virtualize CUDA through a centralized client/server runtime.</text>
-  <text x="860" y="558" class="body">2. Profile each BE kernel and choose one execution primitive:</text>
-  <text x="890" y="591" class="body">• slicing: issue small sub-grids one at a time; or</text>
-  <text x="890" y="624" class="body">• preemption: persistent workers execute logical blocks.</text>
-  <text x="860" y="657" class="body">3. On HP arrival, stop the next slice or set the preemption flag.</text>
-  <text x="860" y="690" class="small">Persistent workers drain at logical-block boundaries and later resume.</text>
+  <text x="860" y="530" class="body"><tspan font-weight="700">VIRTUALIZE</tspan><tspan dx="8">— centralize CUDA interception and scheduling.</tspan></text>
+  <text x="860" y="575" class="body"><tspan font-weight="700">CHOOSE</tspan><tspan dx="8">— profile each kernel: slicing or persistent workers.</tspan></text>
+  <text x="860" y="620" class="body"><tspan font-weight="700">YIELD</tspan><tspan dx="8">— stop slices or set a device-visible preemption flag.</tspan></text>
+  <text x="860" y="665" class="small"><tspan font-weight="700">RESUME:</tspan><tspan dx="8">continue persistent work from saved logical-block progress.</tspan></text>
 
   <text x="85" y="765" class="heading">Common GPU timeline</text>
   <text x="85" y="799" class="small">HP active</text>
