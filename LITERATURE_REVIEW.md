@@ -88,13 +88,7 @@ Here, **residual BE unit time** is the remaining execution time of the BE work a
 
 Whole-kernel temporal sharing cannot provide a tight bound because a long BE kernel may already be resident when HP work arrives. CUDA stream priority only prioritizes pending kernels; it cannot evict resident blocks. Neither Hummingbird nor Tally introduces instruction- or warp-level hardware preemption. Instead, both implement **cooperative software preemption** by turning a monolithic BE kernel into smaller units that drain at safe boundaries.
 
-Only after establishing this policy do their lower-level mechanisms enter the picture. Both systems are transparent to the HP and BE applications and implement the following control path:
-
-1. **Intercept** CUDA operations below the application framework to observe HP arrivals and control BE launches.
-2. **Divide** each BE kernel into bounded execution units, using sub-grid slicing or logical thread-block execution.
-3. **Harvest** an HP-idle interval by admitting those BE units opportunistically.
-4. **Yield** when HP work returns: stop admitting new BE units and wait only for the currently admitted unit to drain.
-5. **Resume** the unfinished BE grid in a later HP-idle interval.
+Only after establishing this policy do their lower-level mechanisms enter the picture. Both systems are transparent to the HP and BE applications and implement the five-stage control path visualized below.
 
 The two systems mainly differ below this shared abstraction. Hummingbird discovers and predicts HP bubbles, then controls a sequence of ordinary split-kernel launches. Tally treats HP inactivity as the opportunity signal and chooses per BE kernel between slicing and persistent-worker preemption.
 
