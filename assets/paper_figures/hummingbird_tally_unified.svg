@@ -30,29 +30,24 @@
   <rect x="85" y="140" width="230" height="32" rx="16" fill="#5f83c7"/>
   <text x="200" y="163" text-anchor="middle" class="label">SHARED CONTROL LOOP</text>
 
-  <rect x="85" y="205" width="240" height="78" class="box"/>
-  <text x="205" y="237" text-anchor="middle" class="heading">INTERCEPT</text>
-  <text x="205" y="265" text-anchor="middle" class="small">observe HP and BE launches</text>
-  <path d="M325 244 H380" class="arrow"/>
+  <rect x="105" y="205" width="275" height="78" class="box"/>
+  <text x="242" y="237" text-anchor="middle" class="heading">Unmodified applications</text>
+  <text x="242" y="265" text-anchor="middle" class="small">HP + best-effort workloads</text>
+  <path d="M380 244 H455" class="arrow"/>
 
-  <rect x="380" y="205" width="240" height="78" class="box"/>
-  <text x="500" y="237" text-anchor="middle" class="heading">DIVIDE</text>
-  <text x="500" y="265" text-anchor="middle" class="small">create bounded BE units</text>
-  <path d="M620 244 H675" class="arrow"/>
+  <rect x="455" y="205" width="275" height="78" class="box"/>
+  <text x="592" y="237" text-anchor="middle" class="heading">CUDA interception</text>
+  <text x="592" y="265" text-anchor="middle" class="small">observe and redirect launches</text>
+  <path d="M730 244 H805" class="arrow"/>
 
-  <rect x="675" y="205" width="240" height="78" class="box"/>
-  <text x="795" y="237" text-anchor="middle" class="heading">HARVEST</text>
-  <text x="795" y="265" text-anchor="middle" class="small">fill an HP-idle interval</text>
-  <path d="M915 244 H970" class="arrow"/>
+  <rect x="805" y="205" width="275" height="78" class="box"/>
+  <text x="942" y="237" text-anchor="middle" class="heading">Fine-grain BE units</text>
+  <text x="942" y="265" text-anchor="middle" class="small">bound residual execution time</text>
+  <path d="M1080 244 H1155" class="arrow"/>
 
-  <rect x="970" y="205" width="240" height="78" class="box"/>
-  <text x="1090" y="237" text-anchor="middle" class="heading">YIELD</text>
-  <text x="1090" y="265" text-anchor="middle" class="small">stop admission and drain</text>
-  <path d="M1210 244 H1265" class="arrow"/>
-
-  <rect x="1265" y="205" width="240" height="78" class="box"/>
-  <text x="1385" y="237" text-anchor="middle" class="heading">RESUME</text>
-  <text x="1385" y="265" text-anchor="middle" class="small">continue in the next bubble</text>
+  <rect x="1155" y="205" width="335" height="78" class="box"/>
+  <text x="1322" y="237" text-anchor="middle" class="heading">Priority scheduler</text>
+  <text x="1322" y="265" text-anchor="middle" class="small">run BE only while HP is inactive</text>
 
   <path d="M800 325 V365 H410 V395" class="arrow"/>
   <path d="M800 365 H1190 V395" class="arrow"/>

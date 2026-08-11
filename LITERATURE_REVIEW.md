@@ -90,6 +90,10 @@ Whole-kernel temporal sharing cannot provide a tight bound because a long BE ker
 
 Only after establishing this policy do their lower-level mechanisms enter the picture. Both systems are transparent to the HP and BE applications and implement the five-stage control path visualized below.
 
+![Shared five-stage control path used by Hummingbird and Tally: intercept CUDA work, divide best-effort kernels, harvest high-priority idle intervals, yield when high-priority work returns, and resume unfinished work later.](assets/paper_figures/hummingbird_tally_shared_control_loop.svg)
+
+*Shared control loop. Both systems repeatedly transform available HP-idle time into BE progress while bounding how long BE work takes to drain.*
+
 The two systems mainly differ below this shared abstraction. Hummingbird discovers and predicts HP bubbles, then controls a sequence of ordinary split-kernel launches. Tally treats HP inactivity as the opportunity signal and chooses per BE kernel between slicing and persistent-worker preemption.
 
 Both systems perform important transformations at the **PTX (Parallel Thread Execution)** level. PTX is NVIDIA's virtual GPU instruction-set representation: CUDA, Triton, and other frontends can compile a kernel into PTX, which the CUDA driver later translates into architecture-specific machine instructions (**SASS**) for the target GPU. Rewriting PTX is lower-level and more framework-independent than modifying PyTorch operators or CUDA source, while still retaining concepts such as thread/block indices, branches, and barriers that these systems need to manipulate. However, the approach depends on PTX being available; opaque or precompiled library kernels may require a fallback mechanism.
