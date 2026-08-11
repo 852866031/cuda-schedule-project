@@ -106,15 +106,21 @@ A natural combined design would use Hummingbird to decide **when and for how lon
 
 > **In brief:** Bless targets multiple GPU tenants with explicit SM quotas. It transparently groups their kernels into short **kernel squads**, selects a profiled MPS allocation for each squad, and lets one tenant reclaim capacity that another tenant cannot currently use - while preserving every tenant's quota-equivalent progress.
 
-### Target problem: allocation is not utilization
+### Background and target problem
 
-The first section treated an HP-idle interval as reclaimable time. Bless starts from a related but broader observation: **a tenant may leave GPU capacity idle even while it is actively running**. The setting is no longer restricted to one HP workload and one BE workload. Multiple inference applications share a GPU, and each tenant is assigned a quota representing the SM capacity it should receive.
+Bless is built for a specific multi-tenant deployment model: **many independent workloads share one physical GPU, and every workload is assigned a predefined quota of SM resources**. For example, three inference services may receive 50%, 30%, and 20% of the GPU's SM capacity. The quota is both a resource-allocation contract and a performance guarantee: each workload should make at least as much progress as it would when running alone with that fraction of the GPU.
 
-Static spatial sharing appears to provide a clean guarantee: for example, two tenants may receive 60% and 40% of the SMs. In practice, a kernel may lack enough thread blocks to fill its partition, may saturate memory bandwidth before using all assigned SMs, or may temporarily have no launch ready. The tenant still owns its quota, but part of that quota becomes a **spatial bubble**. Static MPS cannot give that unused capacity to another tenant without changing the partition, while coarse mechanisms such as MIG expose only a small set of rigid configurations.
+Systems such as NVIDIA MPS can enforce this contract through **static spatial sharing**. Each workload is restricted to its configured fraction of SM capacity, allowing their kernels to execute concurrently without one workload taking all SMs. This provides predictable proportional allocation, but it assumes that every workload can continuously use its entire quota.
 
-Bless therefore asks a different high-level question:
+That assumption is often false. A workload's kernels change over time: one kernel may expose too few thread blocks to fill its assigned SMs, another may saturate memory bandwidth before consuming its full compute quota, and the application may temporarily have no kernel ready because of CPU processing, synchronization, or request gaps. Consequently, a workload can be actively executing while still leaving some of its reserved SM capacity unused. Bless calls this unused capacity a **spatial bubble**.
+
+The predefined quota creates the core systems conflict. If the quota remains static, these spatial bubbles are stranded even when another workload has ready kernels. If the system simply lets another workload borrow the idle SMs, it may introduce interference or cause the quota owner to fall behind its promised performance. Coarse partitioning such as MIG does not resolve the issue because it exposes only a small number of rigid configurations and is expensive to reconfigure at short time scales.
+
+The Bless problem statement is therefore:
 
 > How can the system make GPU sharing work-conserving while ensuring that every tenant progresses at least as fast as it would under its promised quota?
+
+More concretely, Bless must **detect unused capacity inside predefined SM quotas, lend that capacity to workloads that can use it, and repeatedly adjust concurrent execution without weakening any workload's quota guarantee**.
 
 For tenant *i*, the desired guarantee can be summarized as:
 
