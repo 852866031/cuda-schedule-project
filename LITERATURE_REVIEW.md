@@ -88,9 +88,22 @@ Here, **residual BE unit time** is the remaining execution time of the BE work a
 
 Whole-kernel temporal sharing cannot provide a tight bound because a long BE kernel may already be resident when HP work arrives. CUDA stream priority only prioritizes pending kernels; it cannot evict resident blocks. Neither Hummingbird nor Tally introduces instruction- or warp-level hardware preemption. Instead, both implement **cooperative software preemption** by turning a monolithic BE kernel into smaller units that drain at safe boundaries.
 
-Only after establishing this policy do their lower-level mechanisms enter the picture. Both systems are transparent to the HP and BE applications and implement the five-stage control path visualized below.
+Only after establishing this policy do their lower-level mechanisms enter the picture. Both systems are transparent to the HP and BE applications and implement the following five-stage control path:
 
-![Shared five-stage control path used by Hummingbird and Tally: intercept CUDA work, divide best-effort kernels, harvest high-priority idle intervals, yield when high-priority work returns, and resume unfinished work later.](assets/paper_figures/hummingbird_tally_shared_control_loop.svg)
+<table>
+<tr>
+<td width="56%" valign="middle">
+<p><strong>INTERCEPT</strong> CUDA operations to observe HP arrivals and control BE launches.</p>
+<p><strong>DIVIDE</strong> each BE kernel into bounded execution units.</p>
+<p><strong>HARVEST</strong> HP-idle intervals by admitting BE units opportunistically.</p>
+<p><strong>YIELD</strong> when HP work returns: stop new BE admission and drain the current unit.</p>
+<p><strong>RESUME</strong> unfinished BE work in a later HP-idle interval.</p>
+</td>
+<td width="44%" valign="middle" align="center">
+<img src="assets/paper_figures/hummingbird_tally_shared_control_loop.svg" width="390" alt="Vertical shared control loop for Hummingbird and Tally, from HP and BE applications through intercept, divide, harvest, yield, and resume." />
+</td>
+</tr>
+</table>
 
 *Shared control loop. Both systems repeatedly transform available HP-idle time into BE progress while bounding how long BE work takes to drain.*
 
