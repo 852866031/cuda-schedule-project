@@ -71,21 +71,34 @@ Bless belongs strongly in the kernel-scheduling category. It wraps CUDA launch A
 
 ### Common motivation and system abstraction
 
-Exclusive execution protects HP latency but wastes idle intervals. Conventional temporal sharing fills those intervals, yet a long BE kernel can block newly arrived HP work because CUDA stream priority orders pending work but cannot evict resident blocks. Hummingbird and Tally therefore treat the application-visible kernel as too coarse and exploit shorter thread-block/sub-grid boundaries.
+Both systems explicitly target the same two-workload setting on a shared GPU:
 
-Both are transparent to applications and follow the same **cooperative software-preemption loop**:
+- A **high-priority (HP) workload**, typically online inference, whose latency or SLO must remain close to exclusive execution.
+- A **best-effort (BE) workload**, typically offline inference or training, whose throughput should be maximized without violating the HP objective.
 
-1. **Intercept** HP and BE CUDA work below the framework.
-2. **Divide** BE kernels into bounded units.
-3. **Harvest** HP-idle intervals with those units.
-4. **Yield** on HP arrival by stopping new BE admission and draining the current unit.
-5. **Resume** unfinished BE work in a later bubble.
+The HP workload is often bursty: GPU kernels are separated by CPU processing, synchronization, communication, or request-arrival gaps. Exclusive execution protects HP latency but leaves these intervals unused. The common goal of Hummingbird and Tally is therefore to **harvest HP-idle intervals with BE execution while bounding the delay imposed on the next HP kernel**.
 
-Neither system can interrupt an instruction, warp, or arbitrary point inside a running thread block. HP waiting is approximately bounded by the current BE unit's residual time plus runtime overhead:
+At the highest level, both systems try to maximize useful BE work subject to a bound on HP waiting time:
 
-\[
+$$
 T_{\mathrm{HP\ wait}} \lesssim T_{\mathrm{residual\ BE\ unit}} + T_{\mathrm{runtime}}.
-\]
+$$
+
+Here, **residual BE unit time** is the remaining execution time of the BE work already admitted when an HP kernel arrives, while **runtime overhead** includes detection, scheduling, and launch costs. The central design problem is therefore to keep the admitted BE unit short enough for rapid HP response, but large enough to avoid excessive fragmentation overhead and preserve BE throughput.
+
+Whole-kernel temporal sharing cannot provide a tight bound because a long BE kernel may already be resident when HP work arrives. CUDA stream priority only prioritizes pending kernels; it cannot evict resident blocks. Neither Hummingbird nor Tally introduces instruction- or warp-level hardware preemption. Instead, both implement **cooperative software preemption** by turning a monolithic BE kernel into smaller units that drain at safe boundaries.
+
+Only after establishing this policy do their lower-level mechanisms enter the picture. Both systems are transparent to the HP and BE applications and implement the following control path:
+
+1. **Intercept** CUDA operations below the application framework to observe HP arrivals and control BE launches.
+2. **Divide** each BE kernel into bounded execution units, using sub-grid slicing or logical thread-block execution.
+3. **Harvest** an HP-idle interval by admitting those BE units opportunistically.
+4. **Yield** when HP work returns: stop admitting new BE units and wait only for the currently admitted unit to drain.
+5. **Resume** the unfinished BE grid in a later HP-idle interval.
+
+The two systems mainly differ below this shared abstraction. Hummingbird discovers and predicts HP bubbles, then controls a sequence of ordinary split-kernel launches. Tally treats HP inactivity as the opportunity signal and chooses per BE kernel between slicing and persistent-worker preemption.
+
+Both systems perform important transformations at the **PTX (Parallel Thread Execution)** level. PTX is NVIDIA's virtual GPU instruction-set representation: CUDA, Triton, and other frontends can compile a kernel into PTX, which the CUDA driver later translates into architecture-specific machine instructions (**SASS**) for the target GPU. Rewriting PTX is lower-level and more framework-independent than modifying PyTorch operators or CUDA source, while still retaining concepts such as thread/block indices, branches, and barriers that these systems need to manipulate. However, the approach depends on PTX being available; opaque or precompiled library kernels may require a fallback mechanism.
 
 ![Unified architecture and execution model for Hummingbird and Tally. Both intercept unmodified applications, convert best-effort kernels into bounded execution units, harvest high-priority idle intervals, and drain before high-priority execution resumes. Hummingbird controls a sequence of split-kernel launches; Tally chooses slicing or persistent-worker preemption.](assets/paper_figures/hummingbird_tally_unified.svg)
 
