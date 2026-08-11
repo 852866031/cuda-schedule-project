@@ -1,13 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900">
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="940" viewBox="0 0 760 940">
   <defs>
     <style>
-      .title { font: 700 25px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
-      .app { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #ffffff; }
-      .step { font: 700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #20304b; }
-      .note { font: 500 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #667389; }
-      .hp { fill: #d94c4c; stroke: #b63838; stroke-width: 2.5; rx: 14; }
-      .be { fill: #537dcb; stroke: #3e61a5; stroke-width: 2.5; rx: 14; }
-      .box { fill: #f2f6ff; stroke: #6687c5; stroke-width: 2.5; rx: 14; }
+      .title { font: 700 27px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+      .app { font: 700 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #ffffff; }
+      .step { font: 700 21px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #20304b; }
+      .desc { font: 500 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #435168; }
+      .note { font: 500 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #667389; }
+      .hp { fill: #d94c4c; stroke: #b63838; stroke-width: 2.5; rx: 13; }
+      .be { fill: #537dcb; stroke: #3e61a5; stroke-width: 2.5; rx: 13; }
+      .box { fill: #f2f6ff; stroke: #6687c5; stroke-width: 2.5; rx: 13; }
       .arrow { stroke: #718096; stroke-width: 3; fill: none; marker-end: url(#arrow); }
       .guide { stroke: #b7c1d2; stroke-width: 2; fill: none; }
     </style>
@@ -16,39 +17,56 @@
     </marker>
   </defs>
 
-  <rect width="600" height="900" fill="#fbfcfe"/>
-  <text x="300" y="42" text-anchor="middle" class="title">Shared Control Loop</text>
+  <rect width="760" height="940" fill="#fbfcfe"/>
+  <text x="380" y="42" text-anchor="middle" class="title">Shared Control Loop</text>
 
-  <rect x="45" y="75" width="220" height="65" class="hp"/>
-  <text x="155" y="115" text-anchor="middle" class="app">HP APPLICATION</text>
-  <rect x="335" y="75" width="220" height="65" class="be"/>
-  <text x="445" y="115" text-anchor="middle" class="app">BE APPLICATION</text>
+  <rect x="45" y="75" width="250" height="62" class="hp"/>
+  <text x="170" y="113" text-anchor="middle" class="app">HP APPLICATION</text>
+  <rect x="345" y="75" width="250" height="62" class="be"/>
+  <text x="470" y="113" text-anchor="middle" class="app">BE APPLICATION</text>
 
-  <path d="M155 140 V175 H300" class="guide"/>
-  <path d="M445 140 V175 H300" class="guide"/>
-  <path d="M300 175 V205" class="arrow"/>
+  <path d="M170 137 V170 H320" class="guide"/>
+  <path d="M470 137 V170 H320" class="guide"/>
+  <path d="M320 170 V200" class="arrow"/>
 
-  <rect x="150" y="205" width="300" height="72" class="box"/>
-  <text x="300" y="249" text-anchor="middle" class="step">INTERCEPT</text>
-  <path d="M300 277 V325" class="arrow"/>
+  <rect x="145" y="200" width="350" height="70" class="box"/>
+  <text x="320" y="243" text-anchor="middle" class="step">INTERCEPT</text>
+  <path d="M320 270 V320" class="arrow"/>
+  <path d="M495 235 H530" class="guide"/>
+  <text x="550" y="226" class="desc">Observe HP arrivals;</text>
+  <text x="550" y="250" class="desc">control BE launches.</text>
 
-  <rect x="150" y="325" width="300" height="72" class="box"/>
-  <text x="300" y="369" text-anchor="middle" class="step">DIVIDE</text>
-  <path d="M300 397 V445" class="arrow"/>
+  <rect x="145" y="320" width="350" height="70" class="box"/>
+  <text x="320" y="363" text-anchor="middle" class="step">DIVIDE</text>
+  <path d="M320 390 V440" class="arrow"/>
+  <path d="M495 355 H530" class="guide"/>
+  <text x="550" y="346" class="desc">Create bounded</text>
+  <text x="550" y="370" class="desc">BE execution units.</text>
 
-  <rect x="150" y="445" width="300" height="72" class="box"/>
-  <text x="300" y="489" text-anchor="middle" class="step">HARVEST</text>
-  <path d="M300 517 V565" class="arrow"/>
+  <rect x="145" y="440" width="350" height="70" class="box"/>
+  <text x="320" y="483" text-anchor="middle" class="step">HARVEST</text>
+  <path d="M320 510 V560" class="arrow"/>
+  <path d="M495 475 H530" class="guide"/>
+  <text x="550" y="466" class="desc">Fill HP-idle intervals</text>
+  <text x="550" y="490" class="desc">with BE execution.</text>
 
-  <rect x="150" y="565" width="300" height="72" class="box"/>
-  <text x="300" y="609" text-anchor="middle" class="step">YIELD</text>
-  <path d="M300 637 V685" class="arrow"/>
+  <rect x="145" y="560" width="350" height="70" class="box"/>
+  <text x="320" y="603" text-anchor="middle" class="step">YIELD</text>
+  <path d="M320 630 V680" class="arrow"/>
+  <path d="M495 595 H530" class="guide"/>
+  <text x="550" y="586" class="desc">Stop new BE work;</text>
+  <text x="550" y="610" class="desc">drain the current unit.</text>
 
-  <rect x="150" y="685" width="300" height="72" class="box"/>
-  <text x="300" y="729" text-anchor="middle" class="step">RESUME</text>
+  <rect x="145" y="680" width="350" height="70" class="box"/>
+  <text x="320" y="723" text-anchor="middle" class="step">RESUME</text>
+  <path d="M495 715 H530" class="guide"/>
+  <text x="550" y="706" class="desc">Continue unfinished BE</text>
+  <text x="550" y="730" class="desc">in the next bubble.</text>
 
-  <path d="M150 721 H85 V481 H140" class="arrow"/>
-  <text x="66" y="605" text-anchor="middle" class="note" transform="rotate(-90 66 605)">next HP bubble</text>
+  <path d="M145 715 H85 V475 H135" class="arrow"/>
+  <text x="66" y="600" text-anchor="middle" class="note" transform="rotate(-90 66 600)">next HP bubble</text>
 
-  <text x="300" y="825" text-anchor="middle" class="note">Maximize BE progress subject to the HP latency/SLO bound</text>
+  <rect x="70" y="820" width="620" height="75" rx="14" fill="#eef4ff" stroke="#9badd0" stroke-width="2"/>
+  <text x="380" y="850" text-anchor="middle" class="desc">Maximize BE progress while keeping HP waiting time</text>
+  <text x="380" y="875" text-anchor="middle" class="desc">within the latency/SLO bound.</text>
 </svg>

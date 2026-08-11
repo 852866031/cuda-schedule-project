@@ -88,28 +88,19 @@ Here, **residual BE unit time** is the remaining execution time of the BE work a
 
 Whole-kernel temporal sharing cannot provide a tight bound because a long BE kernel may already be resident when HP work arrives. CUDA stream priority only prioritizes pending kernels; it cannot evict resident blocks. Neither Hummingbird nor Tally introduces instruction- or warp-level hardware preemption. Instead, both implement **cooperative software preemption** by turning a monolithic BE kernel into smaller units that drain at safe boundaries.
 
-Only after establishing this policy do their lower-level mechanisms enter the picture. Both systems are transparent to the HP and BE applications and implement the following five-stage control path:
+<img src="assets/paper_figures/hummingbird_tally_shared_control_loop.svg" width="440" align="right" alt="Vertical shared control loop for Hummingbird and Tally, with explanations for intercept, divide, harvest, yield, and resume." />
 
-<table>
-<tr>
-<td width="56%" valign="middle">
-<p><strong>INTERCEPT</strong> CUDA operations to observe HP arrivals and control BE launches.</p>
-<p><strong>DIVIDE</strong> each BE kernel into bounded execution units.</p>
-<p><strong>HARVEST</strong> HP-idle intervals by admitting BE units opportunistically.</p>
-<p><strong>YIELD</strong> when HP work returns: stop new BE admission and drain the current unit.</p>
-<p><strong>RESUME</strong> unfinished BE work in a later HP-idle interval.</p>
-</td>
-<td width="44%" valign="middle" align="center">
-<img src="assets/paper_figures/hummingbird_tally_shared_control_loop.svg" width="390" alt="Vertical shared control loop for Hummingbird and Tally, from HP and BE applications through intercept, divide, harvest, yield, and resume." />
-</td>
-</tr>
-</table>
-
-*Shared control loop. Both systems repeatedly transform available HP-idle time into BE progress while bounding how long BE work takes to drain.*
+Only after establishing the HP waiting-time objective do the lower-level mechanisms enter the picture. Both systems transparently control HP and BE applications through a five-stage loop: they observe CUDA work, create bounded BE units, place those units in HP-idle intervals, yield when HP work returns, and resume unfinished BE work later.
 
 The two systems mainly differ below this shared abstraction. Hummingbird discovers and predicts HP bubbles, then controls a sequence of ordinary split-kernel launches. Tally treats HP inactivity as the opportunity signal and chooses per BE kernel between slicing and persistent-worker preemption.
 
 Both systems perform important transformations at the **PTX (Parallel Thread Execution)** level. PTX is NVIDIA's virtual GPU instruction-set representation: CUDA, Triton, and other frontends can compile a kernel into PTX, which the CUDA driver later translates into architecture-specific machine instructions (**SASS**) for the target GPU. Rewriting PTX is lower-level and more framework-independent than modifying PyTorch operators or CUDA source, while still retaining concepts such as thread/block indices, branches, and barriers that these systems need to manipulate. However, the approach depends on PTX being available; opaque or precompiled library kernels may require a fallback mechanism.
+
+The shared loop is **cooperative**, not immediate hardware preemption. When HP work arrives, the currently admitted BE unit must still drain. Kernel division matters because it bounds this residual work, while interception lets the runtime stop further BE admission and prioritize the HP launch.
+
+<br clear="right" />
+
+*Shared control loop. Both systems repeatedly transform available HP-idle time into BE progress while bounding how long BE work takes to drain.*
 
 ![Unified architecture and execution model for Hummingbird and Tally. Both intercept unmodified applications, convert best-effort kernels into bounded execution units, harvest high-priority idle intervals, and drain before high-priority execution resumes. Hummingbird controls a sequence of split-kernel launches; Tally chooses slicing or persistent-worker preemption.](assets/paper_figures/hummingbird_tally_unified.svg)
 
