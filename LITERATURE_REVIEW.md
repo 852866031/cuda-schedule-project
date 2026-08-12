@@ -4,7 +4,7 @@
 
 This review covers the seven PDF files stored directly in the main `orion-citation` directory. The collection spans several layers of the GPU-sharing stack. Bless, Hummingbird, Tally, MMK, and LithOS directly manipulate GPU execution at kernel, thread-block, stream, context, or SM/TPC granularity. SMore performs cluster-level admission and placement for serverless inference functions. The file named `Harli SLO-Aware Co-location of LLM Inference and PEFT Finetuning.pdf` contains the OSDI 2024 paper *Usher: Holistic Interference Avoidance for Resource Optimized ML Inference*, not Harli; this review follows the paper content and records the filename mismatch.
 
-The review begins with fine-grained temporal sharing for HP/BE workloads, then extends the bubble-reclamation perspective to quota-aware spatial sharing before moving to broader hierarchical and GPU-OS designs. It concludes with complementary workload-level systems. The papers are reviewed with an emphasis on five questions:
+The review begins with fine-grained temporal sharing for HP/BE workloads, extends the bubble-reclamation perspective to quota-aware spatial sharing, and then moves to TPC-level GPU-OS control. It next covers hierarchical MIG/MPS allocation and concludes with complementary workload-level systems. The papers are reviewed with an emphasis on five questions:
 
 1. What resource-underutilization or interference problem does the paper target?
 2. At what layer and granularity does it make scheduling decisions?
@@ -149,7 +149,54 @@ Orion classifies and overlaps compatible whole kernels to improve throughput. Bl
 
 Bless turns the gap between **allocated SM quota** and **useful execution** into reclaimable capacity at millisecond-scale squad boundaries while keeping every request on its quota-derived progress trajectory.
 
-## 3. MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications
+## 3. LithOS: TPC-Level Scheduling with Transparent Kernel Atomization
+
+> **In brief:** LithOS targets high-priority (HP) and best-effort (BE) workloads with TPC quotas. It intercepts CUDA Driver APIs, holds kernels in software launch queues, divides long kernels into independently scheduled **atoms**, and assigns each atom a TPC set so idle capacity can be stolen and returned at sub-kernel boundaries.
+
+### Motivation and limitations of existing sharing
+
+LithOS assumes that **HP and BE applications share one GPU**, with HP workloads requiring latency isolation and applications optionally receiving quotas in units of TPCs. A TPC is a physical compute cluster containing a small number of SMs. The goal is to guarantee quota capacity when an application has work while allowing idle TPCs to be used by another workload.
+
+Existing mechanisms provide either coarse isolation or weak control. Static MIG/MPS-style allocations strand resources when a workload cannot use its full share. Priority streams and whole-kernel schedulers can defer future BE launches, but a long BE kernel already resident on the GPU still causes head-of-line blocking. More fundamentally, once a kernel enters the device queue, software cannot change its priority, physical allocation, or scheduling decision.
+
+LithOS therefore targets two coupled problems: **dynamically allocate physical TPCs across HP/BE workloads**, and **make the outstanding execution unit short enough that borrowed TPCs can be returned quickly**.
+
+![LithOS motivation: MPS concurrency still produces head-of-line blocking and idle GPU capacity.](assets/paper_figures/lithos_motivation.png)
+
+*Motivation (Figure 3): whole-kernel execution and fixed spatial shares create both idle capacity and long blocking intervals. LithOS seeks work-conserving TPC allocation with bounded sub-kernel scheduling units.*
+
+### System abstraction and key mechanisms
+
+LithOS interposes on the CUDA Driver API through `LibLithOS`. Unmodified applications submit kernels into per-application **launch queues** rather than directly filling GPU device queues. This separates application submission from physical dispatch and gives the runtime a system-wide view of priorities, quotas, outstanding work, and TPC availability.
+
+![LithOS mechanism: a GPU OS layer exposing TPC scheduling, kernel atomization, right-sizing, and power management.](assets/paper_figures/lithos_mechanism.png)
+
+*Main mechanism (Figure 7): LithOS sits below unmodified ML frameworks and jointly controls when work is dispatched, which TPCs execute it, how a kernel is atomized, and how much hardware capacity it receives.*
+
+Its main execution path is **QUEUE → ATOMIZE → ALLOCATE → STEAL/RETURN → TRACK**:
+
+- **TPC scheduling and stealing.** Each application has a TPC quota. Idle quota may be lent to another application, but work on stolen TPCs uses lower stream priority and is admitted conservatively using predicted durations and per-TPC timers. When the owner returns, LithOS stops assigning subsequent BE atoms to those TPCs; an atom already running must still finish.
+- **Kernel atomization.** A long logical kernel is divided into atoms containing non-overlapping thread-block ranges. LithOS launches a Prelude kernel with the original grid; each block checks whether its flattened `blockIdx` lies inside the atom's range, calls the original kernel entry point if selected, and otherwise exits. This requires neither source nor PTX and therefore supports closed-source libraries. Atom size is selected from predicted kernel duration and adjusted online to balance yield latency against extra launches and early-exit overhead.
+- **Per-atom TPC allocation.** Each atom is dispatched onto a selected TPC set. Later atoms of the same logical kernel may receive a different allocation, enabling TPCs to be returned at atom boundaries. Atomization controls **which logical blocks execute**; the TPC assignment controls **where those blocks may execute**. The paper defers the lowest-level per-launch TPC-control details to a separate technical report.
+- **Right-sizing and power.** LithOS learns how each kernel scales with TPC count and assigns the minimum width that stays within a configurable latency-slip bound. A related online model lowers GPU frequency for insensitive kernel sequences. These mechanisms extend the scheduler from sharing into capacity and energy management but are not required for basic HP/BE isolation.
+
+LithOS is therefore cooperative rather than immediate hardware preemption: HP waiting is bounded by the residual duration of the current atom, not an arbitrary instruction or warp. The implementation uses MPS for concurrency across separate application contexts and preserves process-level address-space and fault isolation.
+
+### Evaluation and limitations
+
+The Rust prototype supports PyTorch, TensorFlow, JAX, TensorRT, Triton, and closed-source cuDNN workloads. In inference-training stacking, HP latency averages **1.19x** isolated execution; aggregate throughput improves by roughly **1.35x** over TGS. Right-sizing saves **26%** GPU capacity on average at about 4% performance cost, while DVFS saves **26%** energy at about 7% P99 cost.
+
+The main limitations are Prelude/extra-launch overhead (about 10% BE throughput in the reported atomization experiment), prediction error for unseen or dynamic operators, inability to interrupt the current atom, and dependence on GPU-specific per-launch TPC control whose implementation is not fully documented in the paper.
+
+### Comparison with Orion
+
+Orion intercepts and pairs compatible whole kernels but leaves thread-block placement to the GPU. LithOS changes both dimensions: it exposes sub-kernel atoms as scheduling units and assigns each atom a physical TPC set. This provides explicit quotas, TPC stealing, and a shorter withdrawal boundary, at the cost of substantially more runtime machinery and architecture-specific enforcement.
+
+### Summary
+
+LithOS can be summarized as **deferred dispatch + kernel atoms + per-atom TPC allocation**. Its central innovation is making physical GPU width and sub-kernel execution jointly schedulable so HP/BE sharing remains work-conserving without waiting for an entire long kernel to finish.
+
+## 4. MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications
 
 > **In brief:** MMK composes MIG, MPS, and intercepted kernel scheduling into a three-level hierarchy: MIG supplies coarse isolation, MPS controls intra-partition SM shares, and the kernel scheduler handles short-term contention. The framework shows that hardware partitioning and fine-grained software scheduling are complementary rather than competing approaches.
 
@@ -204,59 +251,6 @@ The hierarchy addresses a limitation that Orion cannot fully solve in software: 
 ### Assessment
 
 MMK belongs to the target category because kernel interception and scheduling are part of its essential mechanism. However, its novelty is broader than the interception layer: it is a policy for deciding when to use MIG, MPS, or software scheduling. For related-work positioning, MMK is best described as a **hybrid hierarchical GPU-sharing framework**, whereas Orion and Tally focus more directly on fine-grained runtime execution control. A limitation is the operational complexity of coordinating MIG configuration, MPS processes, profiling, and kernel scheduling. The design also inherits MIG's generation-specific constraints and MPS's incomplete isolation of shared caches, memory bandwidth, and interconnect resources.
-
-## 4. LithOS: An Operating System for Efficient Machine Learning on GPUs
-
-> **In brief:** LithOS is a GPU operating-system layer that schedules individual TPCs and atomized kernel fragments rather than whole kernels or processes. By integrating TPC stealing, hardware right-sizing, and power management, it provides work-conserving isolation and substantially improves colocated ML latency and throughput.
-
-### Problem and motivation
-
-LithOS argues that GPU resource management needs an operating-system-like layer rather than isolated mechanisms for priority, sharing, or power control. Existing software typically schedules whole kernels, streams, processes, or inference requests. These units are too coarse: a kernel can occupy the GPU long after a latency-critical request arrives, static SM partitioning strands capacity, and allocating a fixed hardware width ignores the fact that different kernels saturate at different numbers of SMs/TPCs.
-
-LithOS treats the GPU's Texture Processing Clusters (TPCs) as schedulable compute units. Its goal is to provide transparent spatial scheduling, work conservation, fine-grained preemption-like behavior, performance isolation, hardware right-sizing, and power management within one runtime.
-
-![LithOS motivation: MPS concurrency still produces head-of-line blocking and idle GPU capacity.](assets/paper_figures/lithos_motivation.png)
-
-*Motivation (Figure 3): even when MPS admits two workloads concurrently, long kernels and fixed resource use can delay later requests and leave capacity unused. LithOS seeks finer control than stream- or process-level multiplexing.*
-
-### Architecture
-
-LithOS introduces four mechanisms:
-
-![LithOS mechanism: a GPU OS layer exposing TPC scheduling, kernel atomization, right-sizing, and power management.](assets/paper_figures/lithos_mechanism.png)
-
-*Main mechanism (Figure 7): unmodified frameworks send work through LibLithOS to a unified device driver. The runtime jointly controls TPC placement, atomized kernel execution, hardware width, and power instead of treating them as separate policies.*
-
-- **TPC scheduler.** Each workload receives a logical allocation of TPCs. The scheduler maps ready work onto physical TPCs and can steal idle TPCs from a workload that cannot currently use its allocation. This separates reservation from instantaneous use: quotas provide isolation, while stealing makes the system work-conserving.
-- **Kernel atomizer.** A kernel is transformed into smaller atoms, each containing a subset of the original thread blocks. Atoms are scheduled independently, so LithOS can change a workload's physical width between atoms instead of waiting for a full kernel to finish. This reduces head-of-line blocking and provides a software analogue of fine-grained preemption.
-- **Hardware right-sizing.** More TPCs do not always reduce kernel latency proportionally. LithOS predicts each kernel's scaling curve and allocates the smallest width that stays within an acceptable performance loss, leaving the remaining TPCs for other workloads.
-- **Transparent power management.** The runtime chooses frequency/power settings using the characteristics of in-flight work. It can reduce frequency for kernels that are insensitive to compute frequency while maintaining latency or throughput targets.
-
-Applications interact with a userspace layer that submits work to LithOS queues. The GPU-side execution engine decouples logical kernel work from physical thread-block execution. Kernel atomization makes the original grid schedulable in pieces, and the TPC scheduler dynamically maps those pieces to resources.
-
-### Scheduling behavior
-
-LithOS combines reservations, priorities, and TPC stealing. Latency-sensitive work receives enough dedicated capacity to meet its target. Best-effort work consumes otherwise idle TPCs but yields as atom boundaries permit. Right-sizing prevents a single workload from receiving resources beyond its saturation point. Because decisions occur below the model/request layer, LithOS can support inference-inference and inference-training colocation without requiring each ML framework to implement a custom scheduler.
-
-Its performance models operate online and are kernel-dependent. The system learns how execution time scales with TPC count and uses this information for subsequent atoms. This is more adaptive than a fixed per-process MPS percentage, although early invocations and shape changes can cause prediction errors.
-
-### Implementation and evaluation
-
-LithOS is implemented in Rust and evaluated against NVIDIA mechanisms and research systems including MPS, MIG, time slicing, REEF, TGS, priority-based execution, and Orion. Workloads include Llama 3, GPT-J, BERT, RetinaNet, YOLO, MobileNet, DLRM, and training/inference combinations.
-
-For inference stacking, LithOS reports up to **13x lower tail latency than MPS**. Relative to the best-performing prior system, it reduces tail latency by about **4x** while improving aggregate goodput by approximately **1.3x**. For inference-training stacking, it reduces tail latency by **4.7x** relative to MPS; against the strongest prior baseline, it reduces tail latency by about **1.18x** while improving aggregate throughput by roughly **1.35x**.
-
-Right-sizing saves approximately one quarter of GPU capacity on average for less than 4% performance loss. The transparent power-management mechanism reduces total GPU energy by approximately one quarter at around 7% performance cost. The evaluation also studies atom size, prediction errors, kernel-dependent scaling, scheduler overhead, and the contribution of TPC stealing.
-
-### Comparison with Orion
-
-Orion is principally a host-side kernel scheduler: it intercepts launches, selects whole kernels from application queues, and relies on the existing GPU scheduler for block placement and concurrent execution. LithOS moves the control boundary deeper by presenting an operating-system abstraction over GPU **TPCs**. Its atomizer breaks kernels into smaller pieces, and its TPC scheduler explicitly controls their physical width, reservations, and borrowing. LithOS can therefore reclaim idle spatial capacity or reduce head-of-line blocking even within a kernel, whereas Orion must wait for an admitted kernel to complete and cannot directly assign its blocks to a chosen TPC subset.
-
-LithOS also covers a broader resource-management scope. Kernel-dependent right-sizing avoids allocating TPCs beyond a kernel's saturation point, and power management incorporates energy into the scheduling policy; neither is a central Orion mechanism. In exchange, LithOS requires a more invasive and architecture-specific GPU-OS substrate, kernel atomization support, and online scaling models. Orion is easier to deploy as an interception-based scheduler and is useful when whole-kernel pairing is sufficient. LithOS is the more complex design, but it offers finer spatial control and a path toward a unified GPU resource manager rather than a dedicated colocation scheduler.
-
-### Assessment
-
-LithOS is highly relevant to kernel scheduling, but architecturally more ambitious than an interposition-only scheduler. It presents a unified GPU OS abstraction and uses transparent kernel atomization to enable sub-kernel scheduling. Its strength is the integration of isolation, work conservation, capacity right-sizing, and energy management. Its risks are implementation complexity, dependence on GPU-specific low-level mechanisms, and the cost of maintaining compatibility with proprietary drivers and rapidly changing architectures. It is a particularly useful comparison point for any new work claiming that a CUDA interception layer should evolve into a general resource-management substrate.
 
 ## 5. SMore: Enhancing GPU Utilization in Deep Learning Clusters by Serverless-Based Co-Location Scheduling
 
@@ -364,8 +358,8 @@ Despite using kernel-level graphs for estimation, Usher is not a runtime kernel 
 | Hummingbird | Split-kernel sub-grids | CUDA Driver interposition runtime | Yes | Yes, PTX splitting and offset injection | Bubble-aware microsecond preemption and SLO protection | Very high |
 | Tally | Kernels and logical thread blocks | CUDA virtualization server | Yes | Yes, slicing and persistent preemption | Non-intrusive performance isolation | Very high |
 | Bless | Kernel squads and SM configurations | Host runtime + multiple GPU contexts | Yes, CUDA runtime wrapping | No general PTX rewrite; controls launches/configured contexts | Reclaim bubbles while enforcing quotas | Very high |
-| MMK | MIG groups, MPS shares, and kernels | Hierarchical cluster/GPU runtime | Yes at fine-grained layer | Limited/implementation-dependent | Combine isolation and utilization across three mechanisms | High |
 | LithOS | Kernel atoms and TPC allocations | GPU OS/runtime layer | Transparent low-level submission control | Yes, kernel atomization | Isolation, work conservation, right-sizing, energy | Very high |
+| MMK | MIG groups, MPS shares, and kernels | Hierarchical cluster/GPU runtime | Yes at fine-grained layer | Limited/implementation-dependent | Combine isolation and utilization across three mechanisms | High |
 | SMore | Serverless function admission and GPU placement | Cluster/serverless scheduler | No | No | Harvest idle training capacity | Low; complementary upper layer |
 | Usher | Models, batches, replicas, and GPU placement | Inference-serving control plane | No runtime launch scheduling | Operator-graph merging, not scheduling transformation | Multi-model goodput and cost efficiency | Low; complementary upper layer |
 
