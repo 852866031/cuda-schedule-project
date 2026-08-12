@@ -191,11 +191,14 @@ Each atom receives its own TPC mask. Consequently, a logical BE kernel can use b
 
 Although all three systems divide a long BE kernel into shorter scheduling units, they construct those units differently:
 
-| System | How the kernel is divided | How work resumes/yields | Distinctive strength |
+| System | Division mechanism | Grid actually launched for each unit | How the blocks to execute are selected |
 |---|---|---|---|
-| Hummingbird | Rewrites PTX with block-index offsets and launches smaller physical sub-grids | Host kernel-tick loop stops issuing later splits; current split drains | Low-overhead split launches guided by detected/predicted bubbles |
-| Tally | Chooses PTX-based sub-grid slicing or a persistent-worker loop over logical blocks | Stops later slices, or device workers check a flag between logical blocks | Per-kernel choice of yield primitive and semantics-safe persistent preemption |
-| LithOS | Launches a Prelude over the original grid; only blocks inside the atom range execute the original entry point | Stops later atoms; each atom can receive a new TPC mask | No source/PTX requirement and joint control of logical work range plus physical TPC placement |
+| Hummingbird | PTX rewriting + sub-grid slicing | Only the smaller grid required by the current slice | A block-index offset maps the slice-local `blockIdx` back to its position in the original grid |
+| Tally slicing | PTX rewriting + sub-grid slicing | Only the smaller grid required by the current slice | Like Hummingbird, an offset reconstructs the original block coordinates |
+| Tally persistent | Persistent kernel | A fixed number of long-lived worker blocks | Workers dynamically acquire logical blocks and check a yield flag at logical-block boundaries |
+| LithOS atomization | Prelude wrapper + block-range filtering | The complete original grid is launched for every atom | Every block checks whether it belongs to the atom's range; selected blocks call the original kernel, while the others immediately exit |
+
+A **Prelude wrapper** is a small entry function placed in front of the original kernel entry point. LithOS launches this wrapper with the original grid dimensions. Each physical block flattens its original `blockIdx`, compares it with the atom's interval `[begin, end)`, and either invokes the unchanged original kernel body or returns immediately. The wrapper therefore changes **which blocks execute**, without rewriting the kernel's PTX or changing the `blockIdx` and `gridDim` values observed by selected blocks. Its cost is that every atom instantiates the full grid, including blocks that perform only the range check and exit.
 
 Thus, Hummingbird primarily asks **how to fit split kernels into known bubbles**, Tally asks **which yield implementation is best for each kernel**, and LithOS asks **how to jointly schedule a kernel slice and the physical TPCs on which it may execute**.
 
@@ -207,7 +210,7 @@ LithOS also learns per-kernel scaling with TPC count and assigns the smallest wi
 
 The Rust prototype supports PyTorch, TensorFlow, JAX, TensorRT, Triton, and closed-source cuDNN workloads. In inference-training stacking, HP latency averages **1.19x** isolated execution and aggregate throughput improves by roughly **1.35x** over TGS. Right-sizing saves **26%** GPU capacity on average, while DVFS saves **26%** energy.
 
-The main limitations are Prelude/extra-launch overhead (about 10% BE throughput in the reported atomization experiment), prediction error for unseen or dynamic operators, inability to interrupt the current atom, and dependence on GPU-specific per-launch TPC control whose implementation is not fully documented in the paper.
+The main atomization costs are Prelude/extra-launch overhead (about 10% BE throughput in the reported experiment) and prediction error when selecting atom size for unseen or dynamic operators. TPC masking introduces additional limitations. First, ordinary CUDA does not expose an official per-kernel TPC-mask API; LithOS depends on GPU- and driver-specific launch metadata whose lowest-level injection mechanism is not documented in the paper, creating portability and maintenance risks across GPU and CUDA generations. Second, allocation is quantized at TPC granularity, often grouping multiple SMs, and logical TPC IDs do not necessarily reveal their physical GPC placement. Third, changing a mask affects only later atoms: it cannot evict CTAs already resident on a borrowed TPC, so HP still waits for the current atom to drain. Finally, disjoint TPC masks isolate compute placement but not shared resources such as L2 cache, HBM bandwidth, memory controllers, copy engines, or power domains; they therefore provide weaker performance and security isolation than MIG.
 
 ### Comparison with Orion
 
