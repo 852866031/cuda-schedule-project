@@ -151,15 +151,13 @@ Bless turns the gap between **allocated SM quota** and **useful execution** into
 
 ## 3. LithOS: TPC-Level Scheduling with Transparent Kernel Atomization
 
-> **In brief:** LithOS targets high-priority (HP) and best-effort (BE) workloads with TPC quotas. It intercepts CUDA Driver APIs, holds kernels in software launch queues, divides long kernels into independently scheduled **atoms**, and assigns each atom a TPC set so idle capacity can be stolen and returned at sub-kernel boundaries.
+> **In brief:** Like Hummingbird and Tally, LithOS transparently colocates high-priority (HP) and best-effort (BE) workloads by intercepting CUDA launches and making long BE kernels yield at sub-kernel boundaries. Its distinctive contribution is to combine this temporal control with **per-atom TPC allocation**, so BE work can borrow idle physical compute units and return them when HP work arrives.
 
 ### Motivation and limitations of existing sharing
 
-LithOS assumes that **HP and BE applications share one GPU**, with HP workloads requiring latency isolation and applications optionally receiving quotas in units of TPCs. A TPC is a physical compute cluster containing a small number of SMs. The goal is to guarantee quota capacity when an application has work while allowing idle TPCs to be used by another workload.
+LithOS starts from the same HP/BE setting as Hummingbird and Tally. HP inference requires latency close to isolated execution, while BE inference, training, or finetuning should use otherwise idle resources. Whole-kernel temporal sharing leaves GPU bubbles; direct MPS colocation fills those bubbles but can let a long BE kernel delay subsequent HP kernels because stream priority cannot evict work already resident on the GPU.
 
-Existing mechanisms provide either coarse isolation or weak control. Static MIG/MPS-style allocations strand resources when a workload cannot use its full share. Priority streams and whole-kernel schedulers can defer future BE launches, but a long BE kernel already resident on the GPU still causes head-of-line blocking. More fundamentally, once a kernel enters the device queue, software cannot change its priority, physical allocation, or scheduling decision.
-
-LithOS therefore targets two coupled problems: **dynamically allocate physical TPCs across HP/BE workloads**, and **make the outstanding execution unit short enough that borrowed TPCs can be returned quickly**.
+LithOS adds a spatial problem to this familiar temporal one. Applications may receive quotas in **TPCs** - physical compute clusters containing a small number of SMs - but a fixed quota is often underutilized. BE work should be able to borrow those idle TPCs, yet the system must return them promptly when their owner becomes active. Once a kernel is submitted to the hardware device queue, neither its priority nor its physical TPC allocation can be changed. LithOS therefore needs both **short, controllable BE execution units** and **launch-time control over their eligible TPCs**.
 
 ![LithOS motivation: MPS concurrency still produces head-of-line blocking and idle GPU capacity.](assets/paper_figures/lithos_motivation.png)
 
@@ -167,24 +165,49 @@ LithOS therefore targets two coupled problems: **dynamically allocate physical T
 
 ### System abstraction and key mechanisms
 
-LithOS interposes on the CUDA Driver API through `LibLithOS`. Unmodified applications submit kernels into per-application **launch queues** rather than directly filling GPU device queues. This separates application submission from physical dispatch and gives the runtime a system-wide view of priorities, quotas, outstanding work, and TPC availability.
+LithOS interposes on the CUDA Driver API through `LibLithOS`, following the same basic interception pattern as the earlier kernel schedulers. An unmodified application's asynchronous CUDA calls return normally, but its kernels first enter per-stream software **launch queues** rather than immediately filling hardware device queues. Dispatcher threads decide when to forward each kernel or atom to the GPU, while sync queues and a tracker thread bound outstanding work and record completion.
 
 ![LithOS mechanism: a GPU OS layer exposing TPC scheduling, kernel atomization, right-sizing, and power management.](assets/paper_figures/lithos_mechanism.png)
 
 *Main mechanism (Figure 7): LithOS sits below unmodified ML frameworks and jointly controls when work is dispatched, which TPCs execute it, how a kernel is atomized, and how much hardware capacity it receives.*
 
-Its main execution path is **QUEUE → ATOMIZE → ALLOCATE → STEAL/RETURN → TRACK**:
+Its main execution path is **INTERCEPT → ATOMIZE → ASSIGN TPCs → DISPATCH → STEAL/RETURN**.
 
-- **TPC scheduling and stealing.** Each application has a TPC quota. Idle quota may be lent to another application, but work on stolen TPCs uses lower stream priority and is admitted conservatively using predicted durations and per-TPC timers. When the owner returns, LithOS stops assigning subsequent BE atoms to those TPCs; an atom already running must still finish.
-- **Kernel atomization.** A long logical kernel is divided into atoms containing non-overlapping thread-block ranges. LithOS launches a Prelude kernel with the original grid; each block checks whether its flattened `blockIdx` lies inside the atom's range, calls the original kernel entry point if selected, and otherwise exits. This requires neither source nor PTX and therefore supports closed-source libraries. Atom size is selected from predicted kernel duration and adjusted online to balance yield latency against extra launches and early-exit overhead.
-- **Per-atom TPC allocation.** Each atom is dispatched onto a selected TPC set. Later atoms of the same logical kernel may receive a different allocation, enabling TPCs to be returned at atom boundaries. Atomization controls **which logical blocks execute**; the TPC assignment controls **where those blocks may execute**. The paper defers the lowest-level per-launch TPC-control details to a separate technical report.
-- **Right-sizing and power.** LithOS learns how each kernel scales with TPC count and assigns the minimum width that stays within a configurable latency-slip bound. A related online model lowers GPU frequency for insensitive kernel sequences. These mechanisms extend the scheduler from sharing into capacity and energy management but are not required for basic HP/BE isolation.
+#### TPC scheduling and stealing
 
-LithOS is therefore cooperative rather than immediate hardware preemption: HP waiting is bounded by the residual duration of the current atom, not an arbitrary instruction or warp. The implementation uses MPS for concurrency across separate application contexts and preserves process-level address-space and fault isolation.
+The TPC scheduler maintains each application's quota, the set of currently available TPCs, and predicted completion timers for work already assigned to every TPC. Before dispatch, it chooses an allowed TPC set for the kernel or atom. At the scheduling interface, this set acts as a **per-launch TPC mask**: it constrains the GPU's thread-block distributor so blocks from that launch may be assigned only to the selected TPCs. It masks physical dispatch destinations, not `blockIdx`, CUDA threads, or parts of the kernel code.
+
+If a quota owner has no ready work, another application may temporarily use its TPCs through **TPC stealing**. LithOS limits the amount of outstanding stolen work, avoids TPCs predicted to remain busy for too long, and submits stolen work at lower stream priority. When the owner becomes active, the scheduler removes those TPCs from subsequent BE atoms. It cannot change the mask of an atom already running, so the owner still waits for that atom's residual execution time.
+
+The paper clearly exposes per-launch TPC assignment as its enforcement abstraction, but defers the lowest-level mechanism for injecting the TPC mask into NVIDIA launch metadata to a separate technical report. It is not implemented by repeatedly changing an MPS percentage or by Green Context reconfiguration.
+
+#### Kernel atomization: LithOS-style kernel slicing
+
+LithOS's **Kernel Atomizer** is its version of kernel slicing. A long logical kernel is divided into atoms covering non-overlapping ranges of the original grid's thread blocks. Rather than rewriting PTX, LithOS launches a Prelude kernel with the original grid. Every block flattens its `blockIdx`; blocks within the atom's range call the original kernel entry point, while all others return immediately. For a 64-block kernel, two atoms may cover `[0,32)` and `[32,64)`, ensuring each original block body executes exactly once.
+
+Because this mechanism needs neither source nor PTX, it works with arbitrary frameworks and closed-source libraries such as cuDNN. The tradeoff is that every atom launches the original grid shape and pays for range checks and early-exiting blocks. LithOS therefore predicts kernel duration, chooses an `atom_duration`, and disables or coarsens atomization when its overhead exceeds the scheduling benefit.
+
+Each atom receives its own TPC mask. Consequently, a logical BE kernel can use borrowed TPCs in one atom and a smaller guaranteed set in its next atom after HP work arrives. LithOS still provides cooperative software preemption: it stops future atoms but does not interrupt the current one.
+
+#### Auxiliary mechanisms
+
+LithOS also learns per-kernel scaling with TPC count and assigns the smallest width within a configurable latency-slip bound (**right-sizing**). A similar online model lowers frequency for insensitive kernel sequences (**DVFS**). These extend the same OS control plane to capacity and energy, but atomization plus TPC scheduling form the core HP/BE sharing mechanism.
+
+### Comparing the three kernel-division approaches
+
+All three systems reduce HP waiting by replacing a long BE kernel with shorter units, but they construct those units differently:
+
+| System | How the kernel is divided | How work resumes/yields | Distinctive strength |
+|---|---|---|---|
+| Hummingbird | Rewrites PTX with block-index offsets and launches smaller physical sub-grids | Host kernel-tick loop stops issuing later splits; current split drains | Low-overhead split launches guided by detected/predicted bubbles |
+| Tally | Chooses PTX-based sub-grid slicing or a persistent-worker loop over logical blocks | Stops later slices, or device workers check a flag between logical blocks | Per-kernel choice of yield primitive and semantics-safe persistent preemption |
+| LithOS | Launches a Prelude over the original grid; only blocks inside the atom range execute the original entry point | Stops later atoms; each atom can receive a new TPC mask | No source/PTX requirement and joint control of logical work range plus physical TPC placement |
+
+Thus, Hummingbird primarily asks **how to fit split kernels into known bubbles**, Tally asks **which yield implementation is best for each kernel**, and LithOS asks **how to jointly schedule a kernel slice and the physical TPCs on which it may execute**.
 
 ### Evaluation and limitations
 
-The Rust prototype supports PyTorch, TensorFlow, JAX, TensorRT, Triton, and closed-source cuDNN workloads. In inference-training stacking, HP latency averages **1.19x** isolated execution; aggregate throughput improves by roughly **1.35x** over TGS. Right-sizing saves **26%** GPU capacity on average at about 4% performance cost, while DVFS saves **26%** energy at about 7% P99 cost.
+The Rust prototype supports PyTorch, TensorFlow, JAX, TensorRT, Triton, and closed-source cuDNN workloads. In inference-training stacking, HP latency averages **1.19x** isolated execution and aggregate throughput improves by roughly **1.35x** over TGS. Right-sizing saves **26%** GPU capacity on average, while DVFS saves **26%** energy.
 
 The main limitations are Prelude/extra-launch overhead (about 10% BE throughput in the reported atomization experiment), prediction error for unseen or dynamic operators, inability to interrupt the current atom, and dependence on GPU-specific per-launch TPC control whose implementation is not fully documented in the paper.
 
@@ -194,7 +217,7 @@ Orion intercepts and pairs compatible whole kernels but leaves thread-block plac
 
 ### Summary
 
-LithOS can be summarized as **deferred dispatch + kernel atoms + per-atom TPC allocation**. Its central innovation is making physical GPU width and sub-kernel execution jointly schedulable so HP/BE sharing remains work-conserving without waiting for an entire long kernel to finish.
+LithOS can be summarized as **the same transparent HP/BE interception loop, extended with Prelude-based kernel slicing and per-atom TPC masks**. Its central innovation is making logical sub-kernel work and physical GPU width jointly schedulable.
 
 ## 4. MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications
 
