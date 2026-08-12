@@ -36,10 +36,9 @@ on Blackwell possible at all.
 
 ## Changes made (all inside ./Nanoflow, on top of origin/Nanoflow-python)
 
-`./Nanoflow` is a git submodule pinned to upstream `f179a907`; the changes below
-live in [nanoflow_5090_fixes.patch](nanoflow_5090_fixes.patch). After
-`git submodule update --init --recursive`, apply with
-`cd Nanoflow && git apply ../nanoflow_5090_fixes.patch`.
+`./Nanoflow` is a vendored copy of upstream commit `f179a907` (branch
+`Nanoflow-python`, including its 3rdparty submodules) with the changes below
+applied directly in-tree.
 
 1. `pybind/CMakeLists.txt`: `CMAKE_CUDA_ARCHITECTURES` 90 → **120** (RTX 5090);
    added an `-O3` flags branch for 120 (the sm_90a flags don't apply).

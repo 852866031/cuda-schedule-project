@@ -1,7 +1,3 @@
 [submodule "reproduce/tally"]
 	path = reproduce/tally
 	url = https://github.com/tally-project/tally.git
-[submodule "reproduce/nanoflow/Nanoflow"]
-	path = reproduce/nanoflow/Nanoflow
-	url = https://github.com/efeslab/Nanoflow
-	branch = Nanoflow-python
