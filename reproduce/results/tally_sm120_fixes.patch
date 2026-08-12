@@ -1,0 +1,32 @@
+diff --git a/src/tally/cuda_util.cpp b/src/tally/cuda_util.cpp
+index 0bb12cc..bda2d4c 100644
+--- a/src/tally/cuda_util.cpp
++++ b/src/tally/cuda_util.cpp
+@@ -13,7 +13,7 @@
+ 
+ bool CUDA_SPECS_INITIALIZED = false;
+ 
+-std::vector<std::string> CUDA_COMPUTE_CAPABILITIES = {"90", "86", "80"};
++std::vector<std::string> CUDA_COMPUTE_CAPABILITIES = {"120", "90", "89", "86", "80"};
+ std::string CUDA_COMPUTE_CAPABILITY;
+ int CUDA_NUM_SM;
+ int CUDA_MAX_NUM_THREADS_PER_SM;
+diff --git a/src/tally/preload/tally_client.cpp b/src/tally/preload/tally_client.cpp
+index 05020b4..29a5cf6 100644
+--- a/src/tally/preload/tally_client.cpp
++++ b/src/tally/preload/tally_client.cpp
+@@ -7713,9 +7713,11 @@ CUresult cuGetExportTable(const void ** ppExportTable, const CUuuid * pExportTab
+ #if defined(RUN_LOCALLY)
+ 	return lcuGetExportTable(ppExportTable, pExportTableId);
+ #else
+-    TALLY_SPD_WARN("cuGetExportTable is a internal CUDA call. Must override from higher-level API.");
+-	std::cout << boost::stacktrace::stacktrace() << std::endl;
+-	throw std::runtime_error(std::string(__FILE__) + ":" + std::to_string(__LINE__) + ": Unimplemented.");
++    // Newer drivers' libnvidia-ml internally calls cuGetExportTable during nvmlInit
++    // (e.g. from torch.cuda lazy init). These are monitoring queries, not kernel
++    // launches, so pass through to the real driver instead of aborting.
++    TALLY_SPD_WARN("cuGetExportTable is a internal CUDA call. Passing through to the driver.");
++	return lcuGetExportTable(ppExportTable, pExportTableId);
+ #endif
+ }
+ 

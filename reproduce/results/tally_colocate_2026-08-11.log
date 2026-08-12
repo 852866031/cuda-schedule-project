@@ -1,0 +1,18 @@
+=== Phase 0a: HP alone, native (no Tally) ===
+HP RESULTS: iters=200 p50=0.053ms p99=0.142ms avg=0.059ms
+=== Phase 0b: HP + BE co-located, native (hardware scheduler, no Tally) ===
+HP RESULTS: iters=200 p50=0.231ms p99=2.103ms avg=0.780ms
+BE RESULTS: matmuls=6186 elapsed=40.0s throughput=154.65 it/s
+=== Phase 1: HP alone under Tally ===
+[2026-08-12 02:22:40.670] [warning] cuGetExportTable is a internal CUDA call. Passing through to the driver.
+HP RESULTS: iters=200 p50=0.056ms p99=0.099ms avg=0.057ms
+=== Phase 2: HP + BE co-located under Tally (PRIORITY scheduler) ===
+[2026-08-12 02:23:42.753] [warning] cuGetExportTable is a internal CUDA call. Passing through to the driver.
+HP RESULTS: iters=200 p50=0.233ms p99=0.250ms avg=0.229ms
+BE RESULTS: matmuls=9275 elapsed=60.0s throughput=154.57 it/s
+=== server log tail ===
+[2026-08-12 02:23:44.902] [warning] Found library call from low priority job
+[2026-08-12 02:23:44.909] [warning] Found library call from low priority job
+[2026-08-12 02:23:44.915] [warning] Found library call from low priority job
+[2026-08-12 02:23:44.919] [info] Tally worker server has exited ...
+[2026-08-12 02:24:27.880] [info] Tally worker server has exited ...
