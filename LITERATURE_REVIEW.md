@@ -222,59 +222,65 @@ LithOS can be summarized as **the same transparent HP/BE interception loop, exte
 
 ## 4. MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications
 
-> **In brief:** MMK composes MIG, MPS, and intercepted kernel scheduling into a three-level hierarchy: MIG supplies coarse isolation, MPS controls intra-partition SM shares, and the kernel scheduler handles short-term contention. The framework shows that hardware partitioning and fine-grained software scheduling are complementary rather than competing approaches.
+> **In brief:** MMK manages latency-sensitive **online jobs** and throughput-oriented **offline jobs** at three different time scales. MIG creates coarse hardware-isolation domains, MPS multiplexes jobs and oversubscribes compute inside each domain, and an intercepted whole-kernel scheduler uses online-job slack to control short-term contention.
 
-### Problem and motivation
+### Motivation and limitations of single-level GPU sharing
 
-MMK starts from the observation that no single NVIDIA sharing mechanism simultaneously provides strong isolation, fine-grained flexibility, and high utilization. MIG provides hardware-enforced partitions of compute, memory bandwidth, cache, and memory capacity, but supports only a small set of static configurations and is expensive to reconfigure. MPS permits concurrent execution and configurable SM percentages, but offers weaker isolation and leaves important resources shared. Kernel-level scheduling can respond at very fine granularity, but adds runtime overhead and must manage interference explicitly.
+MMK considers a broader problem than the preceding HP/BE kernel schedulers. Hummingbird, Tally, and LithOS begin with applications already sharing an execution domain and ask how quickly BE execution can yield when HP work arrives. MMK must first decide **which jobs should share at all**, **how much hardware each sharing group should receive**, and only then **which kernels may execute concurrently**. This distinction matters because interference occurs at multiple resource scopes and changes at multiple time scales: a job's memory capacity and average compute demand change relatively slowly, its kernel-level SM, L2, and memory-bandwidth demand can change every few microseconds or milliseconds, and online jobs may arrive dynamically with QoS constraints.
 
-MMK therefore proposes a hybrid hierarchy that combines **MIG**, **MPS**, and **kernel scheduling**. Rather than treating them as competing alternatives, it assigns each mechanism a role at a different layer.
+Using **MIG alone** gives the strongest outer isolation. Each MIG instance owns fixed slices of compute, L2 cache, memory controllers, bandwidth, and memory capacity, so strongly interfering jobs can be separated. However, A100 exposes only a small set of legal partition shapes. A job rarely uses its assigned instance uniformly, unused capacity cannot be borrowed flexibly across instances, and changing the MIG layout requires stopping affected execution. Pure MIG therefore converts interference into overprovisioning, fragmentation, and queueing.
+
+Using **MPS alone** solves a different part of the problem. It lets processes execute concurrently and assigns each client an active-thread percentage, making compute sharing more flexible than MIG. Yet an MPS percentage is only a compute-capacity limit: colocated kernels still contend for L2 and memory bandwidth, and equal SM percentages do not imply equal slowdown. The paper shows that a job's response to the same MPS limit also depends on the enclosing MIG size. Moreover, changing an existing client's effective MPS configuration is not a cheap per-kernel operation; MMK's reconfiguration path involves checkpointing, stopping the process, and synchronizing its context.
+
+Using **kernel interception alone** can react at launch granularity, but it cannot create hard memory/cache isolation, enlarge a job beyond its outer physical allocation, or choose a globally efficient MIG layout. A local launch decision also lacks the job-level view needed to trade queueing, fragmentation, and long-term throughput. Conversely, MIG and MPS quotas cannot follow short kernel phases closely enough to prevent transient contention. MMK therefore treats the three mechanisms as complementary rather than interchangeable:
+
+\[
+\text{MIG isolation envelope}
+\;\rightarrow\;
+\text{MPS compute-sharing envelope}
+\;\rightarrow\;
+\text{whole-kernel admission and ordering}.
+\]
 
 ![MMK motivation: SM utilization and execution time vary substantially across MIG and MPS allocations.](assets/paper_figures/mmk_motivation.png)
 
-*Motivation (Figures 3-4): workload mixtures leave different amounts of SM capacity unused, and sensitivity to MPS limits changes across MIG partitions. A fixed choice of either mechanism cannot consistently provide both isolation and efficiency.*
+*Motivation (Figures 3-4): different MIG sizes leave different amounts of stranded capacity, while the slowdown caused by an MPS limit changes with both the job and its enclosing MIG partition. No single fixed spatial configuration consistently provides isolation, utilization, and online QoS.*
 
-### Three-level scheduling architecture
+### Multi-level mechanism: profiling, partitioning, and kernel scheduling
 
-At the outer level, MMK partitions a GPU with MIG. Workloads that strongly interfere or require hard memory/fault isolation can be separated into different MIG instances. This limits cross-group contention and creates coarse resource envelopes.
+MMK first profiles online jobs, offline jobs, and individual kernels under different MIG/MPS configurations. A random-forest predictor combines task type and configuration with SM, memory-bandwidth, and L2 utilization; kernel grid, block, register, and shared-memory features; and the resource demand of colocated jobs. It predicts execution time for online jobs and kernels, and throughput for offline jobs. Thus, MMK uses an **offline-trained model** to support **online resource decisions**; an "offline job" is a background throughput workload and is distinct from the offline profiling phase.
 
-Within each MIG instance, MMK uses MPS to control the share of SM resources available to colocated processes. MPS provides a more flexible spatial division than MIG and allows concurrent kernels from multiple clients.
+At the outer level, the hybrid partition scheduler uses **Partition Entropy** to prune the coupled MIG-placement search space. The metric favors a partition granularity that preserves useful physical partitions while grouping jobs with similar multidimensional resource demand and separating heterogeneous jobs that are likely to interfere. The predictor then estimates throughput for the remaining MIG/MPS candidates. Because MIG reconfiguration is disruptive, MMK changes the layout only in a safe window associated with offline work, such as when the affected partition contains no running online job or its run queue is empty.
 
-At the finest level, MMK intercepts kernel launches and schedules kernels according to priority and interference characteristics. This corrects problems that static MIG/MPS allocations cannot handle, such as short-term phase changes, long blocking kernels, and latency-critical work arriving behind best-effort execution.
+Inside each selected MIG instance, MMK gives every job a baseline MPS quota whose total is 100%, then adds a **kernel-aware oversubscription** allowance derived from the variability of the other jobs' aggregate kernel demand. The resulting percentages may sum to more than 100%: they are opportunistic ceilings rather than simultaneously reserved SMs. If colocated jobs have alternating peaks and troughs, oversubscription lets one consume compute that another is temporarily not using, while the baseline quota prevents starvation. MMK changes these configurations less frequently than kernel launches and avoids reconfiguring online clients.
 
 ![MMK mechanism: hierarchical predictor, MIG partition scheduler, and per-partition kernel scheduler.](assets/paper_figures/mmk_mechanism.png)
 
-*Main mechanism (Figure 7): offline job- and kernel-level profiles train a performance predictor. At runtime, the hybrid partition scheduler assigns jobs and MPS quotas across MIG instances, then a kernel scheduler controls launches inside each partition.*
+*Main mechanism (Figure 7): profiling and prediction connect the two control planes. The macro scheduler selects MIG isolation domains and MPS ceilings; those choices bound the resources available to the micro scheduler, which intercepts CUDA calls and controls when whole kernels enter each partition.*
 
-The central systems idea is hierarchical control:
+At the finest level, an `LD_PRELOAD` library intercepts CUDA API calls and delays their release to the real driver. Unlike Hummingbird, Tally, and LithOS, MMK does **not** divide a long kernel into slices or atoms; its scheduling unit remains a complete kernel. Its policy distinguishes three cases:
 
-1. use MIG to isolate workloads whose interference is difficult to control;
-2. use MPS to create a configurable compute partition inside an instance;
-3. use kernel scheduling to exploit transient idle resources and protect high-priority execution.
+- **Online vs. online:** MMK computes the minimum slack, \(\min_j(QoS_j-T_j)\), among running online jobs. It admits additional online execution through MPS only when predicted execution and contention fit inside that safety margin.
+- **Online vs. offline:** it converts minimum online slack into an offline execution budget, approximately \(S_{\min}\times MPS_{offline}\), and admits predicted offline-kernel durations until that budget is exhausted. Further offline launches wait while online work is at risk.
+- **Offline vs. offline:** without strict QoS constraints, MMK groups kernels from different offline jobs into packages whose estimated aggregate resource use stays within the partition budget, then launches each package concurrently to improve throughput.
 
-### Profiling and scheduling
+This hierarchy is the paper's central idea: **MIG handles resource isolation that launch ordering cannot provide; MPS recovers compute stranded inside a partition; kernel interception handles phase changes too short for MIG or MPS reconfiguration.**
 
-MMK profiles workloads to characterize kernel duration, resource demand, and pairwise interference. The scheduler uses these profiles to decide which workloads should share a MIG instance, what MPS allocation each receives, and how kernels should be ordered inside the shared execution domain.
+### Evaluation and limitations
 
-The runtime distinguishes latency-sensitive and throughput-oriented work. It prioritizes latency-sensitive kernels while allowing best-effort kernels to fill unused capacity. Hybrid placement reduces the search space and the amount of interference the kernel scheduler must handle. Compared with a global kernel scheduler, the MIG layer prevents the most damaging pairs from sharing low-level resources; compared with pure MIG, the inner layers recover capacity that would otherwise remain stranded.
+The prototype contains about 3,000 lines of C++ and Python and supports unmodified PyTorch and TensorFlow applications through CUDA API interception. Experiments use two A100 80 GB GPUs and include CNNs, BERT/Transformer workloads, and several small LLMs. Relative to MIGER, MMK reports 28% lower average JCT, 32% lower makespan, and 35% higher system throughput. Kernel scheduling contributes only about 0.08% average execution-time overhead, although the less frequent MIG and MPS reconfiguration paths account for approximately 1.5% and 3.2% of the workload lifecycle, respectively.
 
-MMK must coordinate changes across very different time scales. MIG configuration is coarse and slow, so it is suitable for stable workload grouping. MPS allocation changes are finer but still not intended for every kernel. Kernel scheduling handles short-term variation. This separation of time scales is one of the paper's most important design choices.
-
-### Evaluation and contributions
-
-The evaluation compares the hybrid design against standalone MIG, MPS, and existing sharing/scheduling mechanisms using diverse DL training and inference workloads. It examines throughput, latency/SLO behavior, utilization, and interference under different workload mixes. The results show that the hybrid design provides better aggregate efficiency than relying on any one mechanism while retaining stronger isolation than unconstrained MPS or stream concurrency.
-
-The broader contribution is not a new hardware primitive but an orchestration framework for composing existing and software-defined controls. MMK demonstrates that coarse isolation and fine scheduling are complementary: isolation reduces the scheduler's burden, and kernel scheduling recovers utilization lost by isolation.
+**What MMK cannot do and its limitations.** MMK cannot preempt or atomize a kernel that has already been released, so an online arrival can still wait for the residual duration of a long offline kernel; its finest control is whole-kernel admission, not the bounded slice/atom boundary provided by Hummingbird, Tally, or LithOS. MPS percentages are capacity ceilings rather than explicit physical placement and do not isolate L2 or memory bandwidth, while MIG provides stronger isolation only through coarse, generation-specific shapes that remain expensive to change. The three-level controller also depends on an offline-trained predictor generalizing to new models, input shapes, kernels, interference patterns, and GPU architectures; prediction error can produce either QoS violations or conservative underutilization. Finally, the evaluation is centered on two A100 GPUs and generic DL jobs: including several LLMs does not make MMK a token-, prefill/decode-, KV-cache-, or communication-aware LLM serving scheduler.
 
 ### Comparison with Orion
 
-Orion uses a single fine-grained software layer: it intercepts launches, predicts kernel resource behavior, and schedules compatible kernels across application queues. MMK places a similar kernel-level control plane at the bottom of a **three-level hierarchy**. MIG first separates workloads requiring stronger isolation, MPS assigns SM shares within each partition, and the kernel scheduler handles transient contention inside those envelopes. MMK thus restricts the interference domain before applying Orion-like launch scheduling.
+Orion operates primarily at one fine-grained software layer: it intercepts launches, predicts kernel resource behavior, and pairs compatible whole kernels. MMK places a related interception layer below a macro allocator. MIG first limits the interference domain, MPS supplies per-process compute ceilings, and MMK then gates whole kernels according to online slack or packages offline kernels according to aggregate resource demand. Both retain whole kernels, but Orion emphasizes kernel compatibility and overlap, whereas MMK emphasizes coordination between job placement, spatial configuration, and QoS-aware admission.
 
-The hierarchy addresses a limitation that Orion cannot fully solve in software: two kernels may use different execution units yet still interfere through L2 cache, HBM bandwidth, or faults. MIG can isolate several of those resources, making performance more predictable. The tradeoff is substantially greater operational complexity and less agility: MIG layouts are coarse and slow to change, MPS quotas add another control loop, and profiling must inform decisions at all three levels. Orion is simpler and can react directly at every launch, while MMK is preferable when strong isolation and predictable service quality justify a more static outer partitioning layer.
+The hierarchy addresses interference that Orion cannot eliminate through launch ordering alone: MIG separates several cache and memory resources before software attempts concurrency. The cost is much greater operational complexity and less agility. Orion can reconsider every launch directly, while MMK must coordinate profiler predictions, legal MIG layouts, MPS process state, safe reconfiguration windows, and kernel queues.
 
-### Assessment
+### Summary
 
-MMK belongs to the target category because kernel interception and scheduling are part of its essential mechanism. However, its novelty is broader than the interception layer: it is a policy for deciding when to use MIG, MPS, or software scheduling. For related-work positioning, MMK is best described as a **hybrid hierarchical GPU-sharing framework**, whereas Orion and Tally focus more directly on fine-grained runtime execution control. A limitation is the operational complexity of coordinating MIG configuration, MPS processes, profiling, and kernel scheduling. The design also inherits MIG's generation-specific constraints and MPS's incomplete isolation of shared caches, memory bandwidth, and interconnect resources.
+MMK can be summarized as **offline-learned performance modeling plus online hierarchical control**. It first chooses who should share through MIG, then how much compute they may opportunistically use through MPS, and finally when their whole kernels may enter the GPU. Its novelty is not a new preemption primitive, but a coordinated policy that assigns existing mechanisms to the resource scope and time scale where each is most useful.
 
 ## 5. SMore: Enhancing GPU Utilization in Deep Learning Clusters by Serverless-Based Co-Location Scheduling
 
