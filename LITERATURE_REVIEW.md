@@ -284,106 +284,31 @@ The hierarchy addresses interference that Orion cannot eliminate through launch 
 
 MMK can be summarized as **offline-learned performance modeling plus online hierarchical control**. It first chooses who should share through MIG, then how much compute they may opportunistically use through MPS, and finally when their whole kernels may enter the GPU. Its novelty is not a new preemption primitive, but a coordinated policy that assigns existing mechanisms to the resource scope and time scale where each is most useful.
 
-## 5. SMore: Enhancing GPU Utilization in Deep Learning Clusters by Serverless-Based Co-Location Scheduling
+## 5. Interference-Aware Workload Co-location: SMore and Usher
 
-> **In brief:** SMore colocates short serverless inference functions with long-running training jobs using learned interference predictions, deadline-aware admission and placement, and proactive model warming. It improves cluster utilization at the workload level, but does not intercept or schedule individual CUDA kernels.
+> **In brief:** After MMK decides a resource envelope and a lower-level runtime decides when kernels may run, a remaining question is **which workloads should share a GPU in the first place**. SMore and Usher address that question through interference prediction and workload-level placement, rather than slicing, intercepting, or physically placing individual CUDA kernels.
 
-### Problem and motivation
+### Common problem and relation to the kernel schedulers
 
-SMore operates at a higher layer than the kernel schedulers in this collection. It observes that long-running DL training jobs often leave GPU capacity unused because of communication, synchronization, input-pipeline stalls, or inherently low SM demand. It proposes filling this capacity with short-lived serverless inference functions.
+Both systems begin from the same observation behind MMK: apparent spare SM capacity is not automatically safe capacity. Two workloads can have complementary average compute demand yet still hurt one another through memory capacity, HBM bandwidth, L2/cache behavior, or transient peaks. Their control unit is consequently above the kernel runtime: a serverless function in SMore, and a model configuration/replica in Usher. They decide **whether and where to colocate**; an Orion-, Hummingbird-, or LithOS-like runtime could subsequently control the actual kernel execution within the selected GPU.
 
-The paper divides workloads into two classes:
+### SMore: admit serverless inference into training slack
 
-- **Serverful workloads:** long-running training jobs that form the stable background allocation.
-- **Serverless workloads:** short inference functions with deadlines and bursty arrivals.
+SMore places short, deadline-constrained **serverless inference functions** alongside long-running **serverful training jobs**. Its target problem is not merely interference: it must harvest training-side slack without violating either the inference SLO or an allowed training-degradation bound, and it must avoid cold starts caused by loading an infrequently invoked function model.
 
-Naive colocation can slow both classes, cause serverless deadlines to be missed, and introduce large cold-start overheads when models must be loaded into GPU memory. SMore addresses all three issues with degradation prediction, admission/placement scheduling, and proactive model warming.
+The system trains a pairwise degradation predictor from model features such as SM/memory use, FLOPs, footprint, depth, and operator composition; an online-updated multi-way model combines pairwise predictions when several functions share one training job. For every arriving function, SMore admits it only if memory is available, its SLO remains feasible, and predicted degradation remains within the configured threshold; it then chooses a low-interference GPU. An LS-LSTM prewarmer predicts upcoming demand to preload or offload function models. Thus SMore's core contribution is **degradation-aware admission and placement of bursty inference into stable training allocations**, not a lower-level GPU sharing mechanism.
 
-![SMore motivation: colocation degradation depends strongly on the training-inference workload pair.](assets/paper_figures/smore_motivation.png)
+### Usher: jointly pack compute and memory for multi-model inference
 
-*Motivation (Figure 2): the heat maps show highly non-uniform slowdowns across training/inference pairs, including extreme outliers. Utilization alone is therefore insufficient for safe serverless admission and placement.*
+Usher targets a different workload mix: many latency-SLO-constrained inference models. Its key observation is that batch size is an inadequate single knob: it changes both compute utilization and memory footprint, while model colocation can introduce severe cache interference. Usher therefore jointly chooses each model's batch size, replica count, GPU type, and placement to maximize goodput in a fixed cluster or minimize cost in an elastic one.
 
-### Co-location degradation predictor
+Its GK-Estimator uses an ONNX-operator-to-GPU-kernel mapping plus learned kernel-time and memory models to estimate a new model's peak compute and memory requirements without exhaustively profiling the full model. The scheduler then packs compute-heavy models with memory-heavy models using a multidimensional heuristic. Finally, for models with similar operator graphs and weight submatrices, an operator-graph merger executes the relevant operations together to improve cache reuse and reduce cache interference. Usher therefore attacks interference through **configuration, complementary packing, and graph-level cache reuse**, not runtime kernel launch control.
 
-SMore uses a two-stage predictor. A pairwise model estimates the degradation when one training workload and one inference function are colocated. Its 24-dimensional input concatenates twelve features from each model, including SM utilization, memory utilization, FLOPs, memory footprint, model depth, and operator composition. Random Forest performs best among the tested regressors.
+### Takeaway and limitations
 
-![SMore mechanism: offline profiling and online degradation-aware serverless scheduling.](assets/paper_figures/smore_mechanism.png)
+SMore is an online admission/placement system for a training-plus-serverless cluster; Usher is a slower control-plane optimizer for multi-model inference. Both predict interference, but neither can react to a newly arrived HP kernel by preempting, slicing, atomizing, or masking an already-running BE kernel. SMore's multi-way degradation model approximates higher-order interference from pairwise observations, while Usher's estimates and graph merging depend on known operator mappings and useful structural/weight similarity. Neither is specifically designed around LLM prefill/decode, KV-cache dynamics, or distributed tensor-parallel communication.
 
-*Main mechanism (Figure 4): offline solo/co-location profiles train pairwise and multi-way degradation models. Online, the gateway, scheduler, and monitor use those predictions plus live cluster state to admit, place, and continually update serverless functions.*
-
-For one training job colocated with multiple functions, SMore avoids profiling the combinatorial space. Its multi-way predictor represents total degradation as an online-updated weighted sum of pairwise degradation estimates. This is inexpensive and data-efficient, but assumes that higher-order cache, bandwidth, and saturation effects can be approximated by additive terms.
-
-The predictor is initially trained offline and updated with observed online outcomes. With 20% of 1,024 collected samples, the Random Forest predictor reaches an RMSLE of approximately 0.3; the reported full comparison gives RMSLE 0.305 and MAE 0.473.
-
-### Degradation-aware scheduling
-
-For each function type, SMore computes a priority proportional to expected utilization gain divided by expected degradation. The scheduler then performs admission control and placement. A request is admitted only when GPU memory is sufficient, the function can meet its latency SLO, and predicted degradation of the serverful workload remains within the configured bound, set to approximately 10% in the paper.
-
-At low load, the scheduler searches broadly for the GPU with minimum predicted interference. At high load, it samples a bounded number of GPUs and chooses the first feasible placement. This hybrid policy keeps decision latency low when request rates are high. The scheduling overhead is about 0.01 ms for eight GPUs and remains below 1 ms in simulations with 1,024 GPUs; under high load at that scale, the reported latency is approximately 0.1 ms per request.
-
-### Cold-start management
-
-The LS-LSTM prewarmer predicts whether and how many requests for a function will arrive in the next interval using both long- and short-term patterns. It preloads models before predicted arrivals and offloads models when continued idleness is expected. In one evaluated trace, it reduces cold-start rate by 15% at the cost of 10% more idle resource time. In a burstier trace, it keeps the cold-start rate nearly unchanged while reducing wasted loaded-model time from 75% to 32%.
-
-### Evaluation
-
-The prototype is implemented in more than 3,000 lines of Python. The primary testbed uses RTX 3090 GPUs; an additional experiment combines SMore with MISO-managed MIG instances on an A100 40 GB GPU. Workloads cover CV, NLP, recommendation, and multi-task models, while arrival patterns are derived from scaled Azure Functions traces.
-
-Across multi-GPU configurations, average GPU utilization improves by **3%-34%**. Gains are smaller when the training workload already has high utilization. Compared with Random, EDF-util, and a modified ElasticFlow baseline, SMore achieves a favorable balance among deadline-satisfaction ratio, utilization improvement, serverful degradation, and serverless degradation. In the MIG experiment, it admits approximately 30% additional serverless functions while maintaining degradation within the configured range.
-
-### Assessment
-
-SMore is not an Orion-style kernel scheduler. It schedules functions and chooses GPUs; the underlying GPU-sharing mechanism performs actual concurrent execution. It does not intercept CUDA launches, transform PTX, preempt kernels, or schedule thread blocks. The paper is relevant as an upper-level policy that could feed a kernel scheduler: SMore could decide which workloads should colocate, while Orion, Tally, Bless, or Hummingbird could enforce the resulting priorities inside each GPU. Its limitations include the additive multi-way interference model, mostly non-LLM workloads, reliance on scaled rather than native GPU-serverless production traces, and evaluation centered on RTX 3090 with only a limited A100/MIG extension.
-
-## 6. Usher: Holistic Interference Avoidance for Resource-Optimized ML Inference
-
-> **In brief:** Usher jointly chooses model batch sizes, replication, GPU types, and placements using kernel-based compute/memory estimation, then merges compatible operator graphs to reduce cache interference. It is an upper-layer multi-model inference optimizer rather than a runtime kernel scheduler.
-
-> **Filename note:** the directory file is named `Harli SLO-Aware Co-location of LLM Inference and PEFT Finetuning.pdf`, but its contents are the OSDI 2024 Usher paper. It should not be cited as Harli.
-
-### Problem and motivation
-
-Usher targets multi-model inference serving. Increasing batch size raises compute utilization but also raises latency and memory demand; it cannot independently tune compute and memory utilization. Spatially colocating multiple models can fill both resources, but existing systems often optimize only compute allocation and suffer severe cache and bandwidth interference. The paper reports that, in representative GPUlet and AlpaServe configurations, most colocated models retain no more than 55% of their standalone goodput.
-
-Usher treats GPU compute capacity and memory capacity as a two-dimensional packing problem. It aims either to maximize goodput in a fixed cluster or to minimize GPU cost in an elastic cluster while satisfying all latency SLOs.
-
-![Usher motivation: existing model-serving systems leave computation or memory capacity underutilized.](assets/paper_figures/usher_motivation.png)
-
-*Motivation (Figure 1): Shepherd, GPUlet, and AlpaServe often fail to fill computation and memory simultaneously. Usher treats both dimensions as first-class placement constraints rather than tuning only batch size or compute allocation.*
-
-![Usher mechanism: resource estimation, interference-aware scheduling, and operator-graph merging.](assets/paper_figures/usher_mechanism.png)
-
-*Main mechanism (Figure 9): the kernel-based estimator predicts each model's compute and memory requirements; the scheduler jointly chooses configuration and placement; the graph merger then mitigates cache interference among colocated models.*
-
-### GK-Estimator
-
-Usher avoids per-model profiling with a GPU-kernel-based estimator. It expands an ONNX operator graph into a kernel-level graph using a pre-profiled mapping from known operators to the GPU kernels they invoke. A time regressor predicts kernel duration, while a memory regressor predicts intermediate-data footprint from batch size, tensor dimensions, FLOPs, weights, and GPU type. Kernels with predicted start times within a small threshold are treated as potentially concurrent; Usher sums their resource demands and takes the maximum over concurrent sets.
-
-The stacked regression design combines Lasso, kernel-ridge, gradient-boosting, and XGBoost models. The reported computation- and memory-requirement accuracy is **99.98%**, with an estimation time of 31.6 ms. The comparison profiling approach is exact but requires about 4.8 hours and $42.7 for the evaluated model/configuration space. Usher therefore moves profiling cost from each new model to a reusable per-operator/per-kernel model.
-
-### Interference-aware scheduler
-
-For each model, Usher jointly chooses batch size, replication degree, GPU type, and placement. It classifies models as compute-heavy or memory-heavy and groups complementary models so that total compute demand is close to total memory demand. Within each group it enumerates candidate batch-size and replica configurations and uses a multidimensional best-fit heuristic to pack replicas.
-
-A notable result is that increasing replication degree can reduce total GPU count even when one replica could satisfy the SLO. Splitting the request stream across more replicas permits smaller batches and footprints; those replicas may then pack more efficiently with complementary models. This illustrates why workload division, batch sizing, and placement must be optimized jointly.
-
-### Operator Graph Merger
-
-Compute and memory packing alone does not eliminate GPU-cache interference. Usher observes weight overlap among models with related CNN or Transformer architectures. The Operator Graph Merger identifies structurally similar operator graphs and common weight submatrices, then creates a merged graph that executes operations sharing cached weight regions together. Weight elements are considered equivalent only within a very small tolerance, approximately \(10^{-7}\), which keeps average accuracy loss near **0.0003% per request batch**.
-
-Graph merging takes approximately 2.3 s; grouping takes 0.1 s, scheduling about 0.51 s, and model loading about 0.63 s. Since the paper reschedules only when request rate changes substantially, typically at intervals of 45-300 s in its traces, these control-plane costs are amortized.
-
-### Evaluation
-
-Usher evaluates twenty models, including CNNs, GNMT, BERT, GPT-2, and Llama-2 13B, on homogeneous and heterogeneous AWS GPU clusters and in large-scale simulation. Baselines include Shepherd, GPUlet, and AlpaServe.
-
-The paper reports up to **2.6x higher goodput** and **3.5x better cost efficiency**. In heterogeneous non-fixed clusters it achieves 2.8x-3.5x lower cost, 19%-24.1% higher compute utilization, and 25.2%-40.3% higher memory utilization. Under varied SLOs, fixed-cluster goodput is 2.2x-2.7x higher, while non-fixed deployments use 3.2x-4.3x fewer GPUs. Ablation shows that compute/memory classification, workload division, model ordering, and graph merging all contribute materially; removing graph merging alone causes a large goodput loss, with the complete system achieving 55.7% higher goodput than that variant.
-
-### Assessment
-
-Despite using kernel-level graphs for estimation, Usher is not a runtime kernel scheduler. It does not intercept and reorder application kernel launches, implement preemption, or schedule thread blocks. Its decisions concern model configuration, replication, and GPU placement on a tens-of-seconds time scale. It is also not specifically an LLM-serving system: Llama-2 and GPT-2 are evaluation workloads, but the design does not center on autoregressive decoding, KV-cache management, continuous batching, or prefill/decode separation. Usher is best classified as interference-aware multi-model inference placement and graph optimization. It could complement a kernel scheduler by selecting good model combinations before a lower-level runtime controls their execution.
-
-## 7. Cross-Paper Comparison
+## 6. Cross-Paper Comparison
 
 | Paper | Primary scheduling object | Control layer | CUDA/kernel interception | Kernel transformation | Main objective | Fit to Orion-style kernel scheduling |
 |---|---|---|---|---|---|---|
@@ -395,7 +320,7 @@ Despite using kernel-level graphs for estimation, Usher is not a runtime kernel 
 | SMore | Serverless function admission and GPU placement | Cluster/serverless scheduler | No | No | Harvest idle training capacity | Low; complementary upper layer |
 | Usher | Models, batches, replicas, and GPU placement | Inference-serving control plane | No runtime launch scheduling | Operator-graph merging, not scheduling transformation | Multi-model goodput and cost efficiency | Low; complementary upper layer |
 
-## 8. Synthesis and Research Opportunities
+## 7. Synthesis and Research Opportunities
 
 The five low-level systems reveal a common architecture: transparent interception creates a global observation and control point; profiling or prediction estimates kernel behavior; a policy selects priorities or resource shares; and a mechanism translates policy into enforceable execution units. Their key difference is the unit of control. Bless uses kernel squads and context configurations. Hummingbird schedules PTX-rewritten sub-grids, while Tally adds slicing and persistent-worker yield at logical-block boundaries. LithOS generalizes fine-grained execution into kernel atoms scheduled onto TPCs. MMK composes kernel scheduling with coarse MIG isolation and intermediate MPS partitioning.
 
@@ -409,7 +334,7 @@ Third, **upper- and lower-layer schedulers are disconnected**. SMore and Usher m
 
 For LLM systems specifically, the most important extension is phase awareness. Prefill, decode, attention, MoE routing, KV-cache movement, and collectives have different compute, bandwidth, and latency behavior. Existing generic kernel schedulers can intercept them, but do not automatically understand TTFT/TPOT semantics or distributed parallelism dependencies. Hummingbird begins to bridge this gap through API-pattern bubble detection across vLLM, SGLang, llama.cpp, DeepSpeed, and Megatron. A strong next step would combine phase-aware request scheduling with portable kernel/thread-block control and explicit modeling of HBM and interconnect contention.
 
-## 9. Overall Classification
+## 8. Overall Classification
 
 For a literature review centered on transparent CUDA interception and fine-grained GPU scheduling, the primary papers are **Tally, Hummingbird, Bless, LithOS, and MMK**. Tally and Hummingbird are the closest methodological matches because both intercept CUDA execution and transform kernels to create software-controlled preemption points. Bless is particularly relevant for quota-aware kernel-squad scheduling and bubble reclamation. LithOS offers the broadest OS-level abstraction, while MMK provides the clearest argument for combining coarse hardware isolation with fine software scheduling.
 
