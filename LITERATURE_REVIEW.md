@@ -226,7 +226,9 @@ LithOS can be summarized as **the same transparent HP/BE interception loop, exte
 
 ### Motivation and limitations of single-level GPU sharing
 
-MMK considers a broader problem than the preceding HP/BE kernel schedulers. Hummingbird, Tally, and LithOS begin with applications already sharing an execution domain and ask how quickly BE execution can yield when HP work arrives. MMK must first decide **which jobs should share at all**, **how much hardware each sharing group should receive**, and only then **which kernels may execute concurrently**. This distinction matters because interference occurs at multiple resource scopes and changes at multiple time scales: a job's memory capacity and average compute demand change relatively slowly, its kernel-level SM, L2, and memory-bandwidth demand can change every few microseconds or milliseconds, and online jobs may arrive dynamically with QoS constraints.
+MMK targets a dynamic mixture of two workload classes. **Online jobs** are latency-sensitive inference services with explicit QoS deadlines; their arrivals may be bursty, and interference can turn an otherwise feasible request into a QoS violation. **Offline jobs** are long-running training or throughput-oriented workloads without strict latency deadlines; they should make progress whenever capacity is available, but should not endanger online QoS. The system objective is therefore to preserve online latency while minimizing offline job completion time, makespan, and stranded GPU capacity.
+
+This problem spans more than deciding when an offline kernel should yield. Hummingbird, Tally, and LithOS begin with HP and BE applications already sharing an execution domain and focus on fast runtime withdrawal. MMK must additionally decide **which online and offline jobs should share at all**, **how much isolated hardware each sharing group should receive**, and only then **which kernels may execute concurrently inside a group**. A single fixed allocation is insufficient because interference occurs at multiple resource scopes and changes at multiple time scales: memory capacity and average job demand evolve relatively slowly, kernel-level SM, L2, and memory-bandwidth demand can change every few microseconds or milliseconds, and online jobs dynamically arrive and depart.
 
 Using **MIG alone** gives the strongest outer isolation. Each MIG instance owns fixed slices of compute, L2 cache, memory controllers, bandwidth, and memory capacity, so strongly interfering jobs can be separated. However, A100 exposes only a small set of legal partition shapes. A job rarely uses its assigned instance uniformly, unused capacity cannot be borrowed flexibly across instances, and changing the MIG layout requires stopping affected execution. Pure MIG therefore converts interference into overprovisioning, fragmentation, and queueing.
 
@@ -234,13 +236,7 @@ Using **MPS alone** solves a different part of the problem. It lets processes ex
 
 Using **kernel interception alone** can react at launch granularity, but it cannot create hard memory/cache isolation, enlarge a job beyond its outer physical allocation, or choose a globally efficient MIG layout. A local launch decision also lacks the job-level view needed to trade queueing, fragmentation, and long-term throughput. Conversely, MIG and MPS quotas cannot follow short kernel phases closely enough to prevent transient contention. MMK therefore treats the three mechanisms as complementary rather than interchangeable:
 
-\[
-\text{MIG isolation envelope}
-\;\rightarrow\;
-\text{MPS compute-sharing envelope}
-\;\rightarrow\;
-\text{whole-kernel admission and ordering}.
-\]
+**MIG isolation envelope → MPS compute-sharing envelope → whole-kernel admission and ordering**
 
 ![MMK motivation: SM utilization and execution time vary substantially across MIG and MPS allocations.](assets/paper_figures/mmk_motivation.png)
 
