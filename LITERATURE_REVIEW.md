@@ -189,13 +189,7 @@ Because this mechanism needs neither source nor PTX, it works with arbitrary fra
 
 Each atom receives its own TPC mask. Consequently, a logical BE kernel can use borrowed TPCs in one atom and a smaller guaranteed set in its next atom after HP work arrives. LithOS still provides cooperative software preemption: it stops future atoms but does not interrupt the current one.
 
-#### Auxiliary mechanisms
-
-LithOS also learns per-kernel scaling with TPC count and assigns the smallest width within a configurable latency-slip bound (**right-sizing**). A similar online model lowers frequency for insensitive kernel sequences (**DVFS**). These extend the same OS control plane to capacity and energy, but atomization plus TPC scheduling form the core HP/BE sharing mechanism.
-
-### Comparing the three kernel-division approaches
-
-All three systems reduce HP waiting by replacing a long BE kernel with shorter units, but they construct those units differently:
+Although all three systems divide a long BE kernel into shorter scheduling units, they construct those units differently:
 
 | System | How the kernel is divided | How work resumes/yields | Distinctive strength |
 |---|---|---|---|
@@ -204,6 +198,10 @@ All three systems reduce HP waiting by replacing a long BE kernel with shorter u
 | LithOS | Launches a Prelude over the original grid; only blocks inside the atom range execute the original entry point | Stops later atoms; each atom can receive a new TPC mask | No source/PTX requirement and joint control of logical work range plus physical TPC placement |
 
 Thus, Hummingbird primarily asks **how to fit split kernels into known bubbles**, Tally asks **which yield implementation is best for each kernel**, and LithOS asks **how to jointly schedule a kernel slice and the physical TPCs on which it may execute**.
+
+#### Auxiliary mechanisms
+
+LithOS also learns per-kernel scaling with TPC count and assigns the smallest width within a configurable latency-slip bound (**right-sizing**). A similar online model lowers frequency for insensitive kernel sequences (**DVFS**). These extend the same OS control plane to capacity and energy, but atomization plus TPC scheduling form the core HP/BE sharing mechanism.
 
 ### Evaluation and limitations
 
