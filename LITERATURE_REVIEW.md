@@ -2,7 +2,7 @@
 
 ## Scope and Reading Guide
 
-This review covers the seven PDF files stored directly in the main `orion-citation` directory. The collection spans several layers of the GPU-sharing stack. Bless, Hummingbird, Tally, MMK, and LithOS directly manipulate GPU execution at kernel, thread-block, stream, context, or SM/TPC granularity. SMore performs cluster-level admission and placement for serverless inference functions. The file named `Harli SLO-Aware Co-location of LLM Inference and PEFT Finetuning.pdf` contains the OSDI 2024 paper *Usher: Holistic Interference Avoidance for Resource Optimized ML Inference*, not Harli; this review follows the paper content and records the filename mismatch.
+This review covers the eight selected PDF files stored directly in the main `orion-citation` directory, including Orion as the reference system. The collection spans several layers of the GPU-sharing stack. Bless, Hummingbird, Tally, MMK, and LithOS directly manipulate GPU execution at kernel, thread-block, stream, context, or SM/TPC granularity. SMore performs cluster-level admission and placement for serverless inference functions, while Usher operates at the multi-model inference-serving control plane.
 
 The review begins with fine-grained temporal sharing for HP/BE workloads, extends the bubble-reclamation perspective to quota-aware spatial sharing, and then moves to TPC-level GPU-OS control. It next covers hierarchical MIG/MPS allocation and concludes with complementary workload-level systems. The papers are reviewed with an emphasis on five questions:
 
@@ -12,7 +12,26 @@ The review begins with fine-grained temporal sharing for HP/BE workloads, extend
 4. What guarantees and performance improvements does it provide?
 5. How closely does it match the Orion-style research direction of transparent kernel interception and scheduling?
 
+## Orion: Reference Point for This Review
+
+> **Paper metadata**
+>
+> | Publication | Code |
+> |---|---|
+> | **2024 — EuroSys '24** | **Available:** [official GitHub repository](https://github.com/eth-easl/orion) |
+
+Orion targets a shared GPU with a latency-critical, high-priority (HP) ML workload and one or more best-effort (BE) workloads. Its key observation is that individual DNN operators alternately stress compute and memory bandwidth, leaving complementary resources idle even when a model is busy. Orion transparently intercepts CUDA, cuDNN, and cuBLAS operations, buffers them in software queues, and schedules at the original **whole-operator/kernel** granularity.
+
+For every profiled operation, Orion uses its compute and memory requirements to select beneficial HP/BE co-execution and avoid pairs predicted to cause harmful interference. This harvests **spatial complementarity while HP is active**, rather than merely filling HP-idle time. The cost of retaining opaque, unmodified kernels is that Orion cannot reclaim a long BE kernel once dispatched; its response and isolation depend on profiling accuracy and on the kernel boundary. The later kernel-slicing systems in this review can therefore be read as adding a bounded-yield mechanism to the same transparent-interception foundation.
+
 ## 1. Hummingbird and Tally: Transparent Fine-Grained Temporal Sharing
+
+> **Paper metadata**
+>
+> | Paper | Publication | Code |
+> |---|---|---|
+> | Hummingbird | **2026 — arXiv preprint** | **No public repository found** as of this review |
+> | Tally | **2025 — ASPLOS '25** | **Available:** [artifact repository](https://github.com/tally-project/tally-bench) |
 
 > **In brief:** Both systems turn best-effort (BE) kernels into **bounded execution units**, place them in high-priority (HP) **GPU bubbles**, and stop admitting BE work when HP work returns. **Hummingbird** emphasizes bubble detection and split-kernel launch control; **Tally** chooses per kernel between slicing and persistent-worker preemption.
 
@@ -104,6 +123,12 @@ A natural combined design would use Hummingbird to decide **when and for how lon
 
 ## 2. Bless: Quota-Aware Reclamation of Spatial GPU Bubbles
 
+> **Paper metadata**
+>
+> | Publication | Code |
+> |---|---|
+> | **2025 — EuroSys '25** | **No public repository found** as of this review |
+
 > **In brief:** Bless targets multiple GPU tenants with explicit SM quotas. It transparently groups their kernels into short **kernel squads**, selects a profiled MPS allocation for each squad, and lets one tenant reclaim capacity that another tenant cannot currently use - while preserving every tenant's quota-equivalent progress.
 
 ### Motivation and background
@@ -150,6 +175,12 @@ Orion classifies and overlaps compatible whole kernels to improve throughput. Bl
 Bless turns the gap between **allocated SM quota** and **useful execution** into reclaimable capacity at millisecond-scale squad boundaries while keeping every request on its quota-derived progress trajectory.
 
 ## 3. LithOS: TPC-Level Scheduling with Transparent Kernel Atomization
+
+> **Paper metadata**
+>
+> | Publication | Code |
+> |---|---|
+> | **2025 — SOSP '25** | **No public repository found** as of this review |
 
 > **In brief:** Like Hummingbird and Tally, LithOS transparently colocates high-priority (HP) and best-effort (BE) workloads by intercepting CUDA launches and making long BE kernels yield at sub-kernel boundaries. Its distinctive contribution is to combine this temporal control with **per-atom TPC allocation**, so BE work can borrow idle physical compute units and return them when HP work arrives.
 
@@ -222,6 +253,12 @@ LithOS can be summarized as **the same transparent HP/BE interception loop, exte
 
 ## 4. MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications
 
+> **Paper metadata**
+>
+> | Publication | Code |
+> |---|---|
+> | **2026 — ACM Transactions on Architecture and Code Optimization** | **No public repository found** as of this review |
+
 > **In brief:** MMK manages latency-sensitive **online jobs** and throughput-oriented **offline jobs** at three different time scales. MIG creates coarse hardware-isolation domains, MPS multiplexes jobs and oversubscribes compute inside each domain, and an intercepted whole-kernel scheduler uses online-job slack to control short-term contention.
 
 ### Motivation and limitations of single-level GPU sharing
@@ -285,6 +322,13 @@ The hierarchy addresses interference that Orion cannot eliminate through launch 
 MMK can be summarized as **offline-learned performance modeling plus online hierarchical control**. It first chooses who should share through MIG, then how much compute they may opportunistically use through MPS, and finally when their whole kernels may enter the GPU. Its novelty is not a new preemption primitive, but a coordinated policy that assigns existing mechanisms to the resource scope and time scale where each is most useful.
 
 ## 5. Interference-Aware Workload Co-location: SMore and Usher
+
+> **Paper metadata**
+>
+> | Paper | Publication | Code |
+> |---|---|---|
+> | SMore | **2025 — IEEE Transactions on Parallel and Distributed Systems** | **Available:** [official GitHub repository](https://github.com/arctanln2/smore) |
+> | Usher | **2024 — USENIX OSDI '24** | **Available:** [author repository](https://github.com/ss7krd/Usher) |
 
 > **In brief:** After MMK decides a resource envelope and a lower-level runtime decides when kernels may run, a remaining question is **which workloads should share a GPU in the first place**. SMore and Usher address that question through interference prediction and workload-level placement, rather than slicing, intercepting, or physically placing individual CUDA kernels.
 
