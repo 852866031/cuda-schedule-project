@@ -16,9 +16,9 @@ The review begins with fine-grained temporal sharing for HP/BE workloads, extend
 
 > **Paper metadata**
 >
-> | Paper | Publication | Code |
-> |---|---|---|
-> | *Orion: Interference-aware, Fine-grained GPU Sharing for ML Applications* | **April 2024 — EuroSys '24** | **Available:** [official GitHub repository](https://github.com/eth-easl/orion) |
+> | Paper | Publication | First / corresponding author | Code |
+> |---|---|---|---|
+> | *Orion: Interference-aware, Fine-grained GPU Sharing for ML Applications* | **April 2024 — EuroSys '24** | **Institution:** ETH Zurich. **First:** Foteini Strati (ETH Zurich). **Corresponding:** not designated in the paper. | **Available:** [official GitHub repository](https://github.com/eth-easl/orion) |
 
 Orion targets a shared GPU with a latency-critical, high-priority (HP) ML workload and one or more best-effort (BE) workloads. Its key observation is that individual DNN operators alternately stress compute and memory bandwidth, leaving complementary resources idle even when a model is busy. Orion transparently intercepts CUDA, cuDNN, and cuBLAS operations, buffers them in software queues, and schedules at the original **whole-operator/kernel** granularity.
 
@@ -28,10 +28,10 @@ For every profiled operation, Orion uses its compute and memory requirements to 
 
 > **Paper metadata**
 >
-> | Paper | Publication | Code |
-> |---|---|---|
-> | *Hummingbird: SLO-Oriented GPU Preemption at Microsecond-scale* | **February 2026 — arXiv preprint (v2)** | **No public repository found** as of this review |
-> | *Tally: Non-Intrusive Performance Isolation for Concurrent Deep Learning Workloads* | **March–April 2025 — ASPLOS '25** | **Available:** [artifact repository](https://github.com/tally-project/tally-bench) |
+> | Paper | Publication | First / corresponding author | Code |
+> |---|---|---|---|
+> | *Hummingbird: SLO-Oriented GPU Preemption at Microsecond-scale* | **February 2026 — arXiv preprint (v2)** | **Institutions:** Peking University; University of Chinese Academy of Sciences; Tsinghua University; Huazhong University of Science and Technology; Ant Group; Shanghai Jiao Tong University. **First:** Tiancheng Hu (SCS and Key Lab of HCST, Peking University). **Corresponding:** Chenxi Wang (University of Chinese Academy of Sciences) and Tao Xie (Peking University). | **No public repository found** as of this review |
+> | *Tally: Non-Intrusive Performance Isolation for Concurrent Deep Learning Workloads* | **March–April 2025 — ASPLOS '25** | **Institutions:** Stanford University; University of Toronto; CentML; Vector Institute. **First:** Wei Zhao (Stanford University; CentML). **Corresponding:** not designated in the paper. | **Available:** [artifact repository](https://github.com/tally-project/tally-bench) |
 
 > **In brief:** Both systems turn best-effort (BE) kernels into **bounded execution units**, place them in high-priority (HP) **GPU bubbles**, and stop admitting BE work when HP work returns. **Hummingbird** emphasizes bubble detection and split-kernel launch control; **Tally** chooses per kernel between slicing and persistent-worker preemption.
 
@@ -125,9 +125,9 @@ A natural combined design would use Hummingbird to decide **when and for how lon
 
 > **Paper metadata**
 >
-> | Paper | Publication | Code |
-> |---|---|---|
-> | *Improving GPU Sharing Performance through Adaptive Bubbleless Spatial-Temporal Sharing* | **March–April 2025 — EuroSys '25** | **No public repository found** as of this review |
+> | Paper | Publication | First / corresponding author | Code |
+> |---|---|---|---|
+> | *Improving GPU Sharing Performance through Adaptive Bubbleless Spatial-Temporal Sharing* | **March–April 2025 — EuroSys '25** | **Institutions:** Shanghai Jiao Tong University; Microsoft; Alibaba Group. **First:** Shulai Zhang (Shanghai Jiao Tong University). **Corresponding:** not designated in the paper. | **No public repository found** as of this review |
 
 > **In brief:** Bless targets multiple GPU tenants with explicit SM quotas. It transparently groups their kernels into short **kernel squads**, selects a profiled MPS allocation for each squad, and lets one tenant reclaim capacity that another tenant cannot currently use - while preserving every tenant's quota-equivalent progress.
 
@@ -178,9 +178,9 @@ Bless turns the gap between **allocated SM quota** and **useful execution** into
 
 > **Paper metadata**
 >
-> | Paper | Publication | Code |
-> |---|---|---|
-> | *LithOS: An Operating System for Efficient Machine Learning on GPUs* | **October 2025 — SOSP '25** | **No public repository found** as of this review |
+> | Paper | Publication | First / corresponding author | Code |
+> |---|---|---|---|
+> | *LithOS: An Operating System for Efficient Machine Learning on GPUs* | **October 2025 — SOSP '25** | **Institutions:** Carnegie Mellon University; Meta. **First:** Patrick H. Coppock (Carnegie Mellon University). **Contact:** Dimitrios Skarlatos (Carnegie Mellon University). | **No public repository found** as of this review |
 
 > **In brief:** Like Hummingbird and Tally, LithOS transparently colocates high-priority (HP) and best-effort (BE) workloads by intercepting CUDA launches and making long BE kernels yield at sub-kernel boundaries. Its distinctive contribution is to combine this temporal control with **per-atom TPC allocation**, so BE work can borrow idle physical compute units and return them when HP work arrives.
 
@@ -255,9 +255,9 @@ LithOS can be summarized as **the same transparent HP/BE interception loop, exte
 
 > **Paper metadata**
 >
-> | Paper | Publication | Code |
-> |---|---|---|
-> | *MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications* | **July 2026 — ACM Transactions on Architecture and Code Optimization** | **No public repository found** as of this review |
+> | Paper | Publication | First / corresponding author | Code |
+> |---|---|---|---|
+> | *MMK: A Hybrid Scheduling Framework for Fine-Grained GPU Sharing for Deep Learning Applications* | **July 2026 — ACM Transactions on Architecture and Code Optimization** | **Institutions:** Shanghai Jiao Tong University; Beijing Simulation Center; China Petrochemical Corporation; University of Melbourne. **First:** Zhuolong Jiang (Shanghai Jiao Tong University). **Corresponding:** Ruhui Ma (Shanghai Jiao Tong University). | **No public repository found** as of this review |
 
 > **In brief:** MMK manages latency-sensitive **online jobs** and throughput-oriented **offline jobs** at three different time scales. MIG creates coarse hardware-isolation domains, MPS multiplexes jobs and oversubscribes compute inside each domain, and an intercepted whole-kernel scheduler uses online-job slack to control short-term contention.
 
@@ -325,10 +325,10 @@ MMK can be summarized as **offline-learned performance modeling plus online hier
 
 > **Paper metadata**
 >
-> | Paper | Publication | Code |
-> |---|---|---|
-> | *SMORE: Enhancing GPU Utilization in Deep Learning Clusters by Serverless-Based Co-Location Scheduling* | **May 2025 — IEEE Transactions on Parallel and Distributed Systems** | **Available:** [official GitHub repository](https://github.com/arctanln2/smore) |
-> | *Usher: Holistic Interference Avoidance for Resource Optimized ML Inference* | **July 2024 — USENIX OSDI '24** | **Available:** [author repository](https://github.com/ss7krd/Usher) |
+> | Paper | Publication | First / corresponding author | Code |
+> |---|---|---|---|
+> | *SMORE: Enhancing GPU Utilization in Deep Learning Clusters by Serverless-Based Co-Location Scheduling* | **May 2025 — IEEE Transactions on Parallel and Distributed Systems** | **Institutions:** Shanghai Jiao Tong University; University of Melbourne. **First:** Junhan Liu (Shanghai Jiao Tong University). **Corresponding:** Ruhui Ma (Shanghai Jiao Tong University). | **Available:** [official GitHub repository](https://github.com/arctanln2/smore) |
+> | *Usher: Holistic Interference Avoidance for Resource Optimized ML Inference* | **July 2024 — USENIX OSDI '24** | **Institutions:** University of Virginia; Georgia Institute of Technology. **First:** Sudipta Saha Shubha (University of Virginia). **Corresponding:** not designated in the paper. | **Available:** [author repository](https://github.com/ss7krd/Usher) |
 
 > **In brief:** After MMK decides a resource envelope and a lower-level runtime decides when kernels may run, a remaining question is **which workloads should share a GPU in the first place**. SMore and Usher address that question through interference prediction and workload-level placement, rather than slicing, intercepting, or physically placing individual CUDA kernels.
 
