@@ -1,6 +1,0 @@
-flowchart LR
-  A["PyTorch op"]:::base -->|"library op<br/>(matmul, conv)"| B["cuBLAS / cuDNN"]:::base
-  A -->|"custom / eager kernel"| C
-  B --> C["cudaLaunchKernel<br/>(CUDA Runtime)"]:::base
-  C --> D["CUDA Driver<br/>libcuda.so"]:::base --> E["nvidia.ko"]:::base --> F["GPU hardware<br/>scheduler"]:::base
-  classDef base fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
