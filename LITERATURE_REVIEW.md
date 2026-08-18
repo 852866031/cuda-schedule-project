@@ -24,6 +24,15 @@ Orion targets a shared GPU with a latency-critical, high-priority (HP) ML worklo
 
 For every profiled operation, Orion uses its compute and memory requirements to select beneficial HP/BE co-execution and avoid pairs predicted to cause harmful interference. This harvests **spatial complementarity while HP is active**, rather than merely filling HP-idle time. The cost of retaining opaque, unmodified kernels is that Orion cannot reclaim a long BE kernel once dispatched; its response and isolation depend on profiling accuracy and on the kernel boundary. The later kernel-slicing systems in this review can therefore be read as adding a bounded-yield mechanism to the same transparent-interception foundation.
 
+### Problem formulation and workload context
+
+| Element | Orion |
+|---|---|
+| **Workload target and paper examples** | One latency-sensitive **HP** DNN client shares a GPU with one or more **BE** inference or training clients. The evaluation uses vision models **ResNet50, ResNet101, and MobileNet-v2**, and NLP models **BERT** and **Transformer**, across inf-inf, inf-train, and train-train co-location. Inference arrivals use uniform/Poisson rates plus an Apollo autonomous-driving trace. **LLM context:** no generative LLM serving is evaluated; the paper only discusses it as a possible extension, noting KV-cache memory pressure. |
+| **Problem inputs / parameters** | Per-client priority and ordered CUDA-operation queues; each operation's profiled execution time, SM/compute demand, memory-bandwidth demand, and memory footprint; inference arrival rate/SLO; and dependency/stream order. |
+| **How the solution handles them** | It intercepts CUDA, cuDNN, and cuBLAS calls, retains the original whole operations in software queues, and admits an HP/BE kernel pair only when their profiled compute and memory demands are compatible and the HP latency guard permits it. |
+| **Output / decision parameters** | The next operation(s) to launch, whether a BE operation may overlap the current HP operation, and which queued BE work is deferred. It does **not** output a slice size, SM quota, or physical placement mask. |
+
 ## 1. Hummingbird and Tally: Transparent Fine-Grained Temporal Sharing
 
 > **Paper metadata**
@@ -34,6 +43,26 @@ For every profiled operation, Orion uses its compute and memory requirements to 
 > | *Tally: Non-Intrusive Performance Isolation for Concurrent Deep Learning Workloads* | **March–April 2025 — ASPLOS '25** | **Institutions:** Stanford University; University of Toronto; CentML; Vector Institute. **First:** Wei Zhao (Stanford University; CentML). **Corresponding:** Gennady Pekhimenko (University of Toronto; Vector Institute; CentML). | **Available:** [artifact repository](https://github.com/tally-project/tally-bench) |
 
 > **In brief:** Both systems turn best-effort (BE) kernels into **bounded execution units**, place them in high-priority (HP) **GPU bubbles**, and stop admitting BE work when HP work returns. **Hummingbird** emphasizes bubble detection and split-kernel launch control; **Tally** chooses per kernel between slicing and persistent-worker preemption.
+
+### Problem formulation and workload context
+
+#### Hummingbird
+
+| Element | Hummingbird |
+|---|---|
+| **Workload target and paper examples** | A bursty, SLO-bound **HP inference** service shares with **LP/BE inference or training**. The main evaluation includes HP **Llama-8B** and **Yi-34B**; BE **Mistral-7B**, **DeepSeekMoE-16B**, **ResNet101 training**, and **GPT-2 (124M) training**. It also studies Llama-70B under tensor parallelism. **LLM context:** directly evaluated on real LLM serving traces (BurstGPT) and llama.cpp, but the scheduler is still generic kernel/bubble control rather than a prefill/decode scheduler. |
+| **Problem inputs / parameters** | HP/LP priority; observed CUDA/NCCL/API bubble signals and queue inactivity; profiled split-kernel duration, launch overhead, and throughput; PTX availability; and a target bound on LP residual execution after an HP arrival. |
+| **How the solution handles them** | It detects/predicts HP-idle bubbles, rewrites BE PTX so a logical grid can run as offset sub-grids, and keeps at most one BE split in the device queue. It consolidates splits for long bubbles and stops the host launch loop as soon as HP work returns. |
+| **Output / decision parameters** | Split/sub-grid size, consolidation choice, next LP split launch time, and whether to defer BE work. The resulting isolation bound is the residual time of one admitted split plus runtime overhead. |
+
+#### Tally
+
+| Element | Tally |
+|---|---|
+| **Workload target and paper examples** | A latency-critical **HP inference** task shares a GPU with **BE training**. Its benchmark has training **ResNet50, PointNet, BERT, GPT2-Large, PEGASUS, and Whisper-v3**, and inference **ResNet50, BERT, YOLOv6m, Llama-2-7B, Stable Diffusion, and GPT-Neo-2.7B**. **LLM context:** it evaluates Llama-2/GPT-Neo inference and GPT2 training, but does not expose LLM phases, KV cache, or token-level decisions. |
+| **Problem inputs / parameters** | HP/BE priority and HP turnaround-latency threshold; BE kernel/control-flow properties; profiled throughput and turnaround under alternative slice sizes or persistent-worker configurations; and current HP activity/load. |
+| **How the solution handles them** | A transparent client/server virtualization layer intercepts CUDA work, profiles both transformation primitives, and selects the BE mechanism/configuration that maximizes BE throughput while fitting the turnaround bound. Slicing uses small sub-grids; persistent workers claim logical blocks and stop at a device-visible yield flag. |
+| **Output / decision parameters** | Per-BE-kernel primitive (**slice** or **persistent**), its slice degree or worker configuration, next launch/admission decision, and yield/preemption state. |
 
 ### Common motivation and system abstraction
 
@@ -131,6 +160,15 @@ A natural combined design would use Hummingbird to decide **when and for how lon
 
 > **In brief:** Bless targets multiple GPU tenants with explicit SM quotas. It transparently groups their kernels into short **kernel squads**, selects a profiled MPS allocation for each squad, and lets one tenant reclaim capacity that another tenant cannot currently use - while preserving every tenant's quota-equivalent progress.
 
+### Problem formulation and workload context
+
+| Element | Bless |
+|---|---|
+| **Workload target and paper examples** | Multiple independent applications have predefined but unequal GPU/SM quotas; the paper evaluates both inference and training of **VGG11, ResNet50, ResNet101, NasNet, and BERT**. Its motivating trace colocates VGG11 and ResNet50; other experiments include two/four BERT inference instances. **LLM context:** BERT is the only transformer-style model; no autoregressive LLM serving, KV cache, or prefill/decode workload is evaluated. |
+| **Problem inputs / parameters** | Per-application quota and quota-isolated latency target; queued kernel durations and SM-use profiles; each request's observed progress relative to that target; candidate MPS/SM configurations; remaining GPU memory; and the squad's predicted duration. |
+| **How the solution handles them** | It repeatedly selects the least-progressing request's next kernel to form a short cross-application squad, predicts the squad under strict spatial and unrestricted sharing options, and routes kernels through pre-created resource-affinity contexts. The later portion of a squad can run unrestricted to reclaim an unused spatial bubble. |
+| **Output / decision parameters** | Kernel-squad membership/order, selected SM/MPS context configuration, spatial-versus-semi-spatial execution choice, and the restricted-to-unrestricted switching point. It does not split or preempt a running kernel. |
+
 ### Motivation and background
 
 Bless assumes that **multiple independent workloads share one GPU and each has a predefined compute quota**, expressed as a fraction of SM capacity. For an application with quota *n%*, its performance target is the isolated latency measured while MPS restricts it to *n%* of the GPU.
@@ -183,6 +221,15 @@ Bless turns the gap between **allocated SM quota** and **useful execution** into
 > | *LithOS: An Operating System for Efficient Machine Learning on GPUs* | **October 2025 — SOSP '25** | **Institutions:** Carnegie Mellon University; Meta. **First:** Patrick H. Coppock (Carnegie Mellon University). **Corresponding:** Dimitrios Skarlatos (Carnegie Mellon University). | **No public repository found** as of this review |
 
 > **In brief:** Like Hummingbird and Tally, LithOS transparently colocates high-priority (HP) and best-effort (BE) workloads by intercepting CUDA launches and making long BE kernels yield at sub-kernel boundaries. Its distinctive contribution is to combine this temporal control with **per-atom TPC allocation**, so BE work can borrow idle physical compute units and return them when HP work arrives.
+
+### Problem formulation and workload context
+
+| Element | LithOS |
+|---|---|
+| **Workload target and paper examples** | Latency-sensitive inference and BE inference/training share a single GPU under desired performance/space allocations. Inference uses **RetinaNet, YOLOv4, ResNet-50, Llama 3 8B, GPT-J 6B, and BERT-Large**; training uses **VGG-19, ResNet-50, MobileNetV2, DLRM, BERT-Large, and Llama 3 finetuning**. **LLM context:** directly evaluates Llama 3/GPT-J through Triton and TensorRT-LLM with an Azure trace, but makes generic atom/TPC decisions rather than serving-phase-specific decisions. |
+| **Problem inputs / parameters** | Application priority/SLO or performance target; virtual-stream dependencies; per-operator/atom latency predictions; grid/block shape and safe atomization points; available and borrowed TPC sets; outstanding work/timers; and optional right-sizing or DVFS sensitivity. |
+| **How the solution handles them** | Driver-API interception preserves application semantics while virtual launch queues expose work to the scheduler. Prelude atomization filters a logical grid into bounded thread-block ranges; the scheduler selects a TPC mask for each atom, steals idle TPCs opportunistically, and stops giving borrowed TPCs to later BE atoms when an owner becomes active. |
+| **Output / decision parameters** | Dispatch order, atom block range/size, per-atom TPC mask and priority, right-sized TPC count, and optionally GPU-frequency choice. A running atom retains its current mask until it drains. |
 
 ### Motivation and limitations of existing sharing
 
@@ -261,6 +308,15 @@ LithOS can be summarized as **the same transparent HP/BE interception loop, exte
 
 > **In brief:** MMK manages latency-sensitive **online jobs** and throughput-oriented **offline jobs** at three different time scales. MIG creates coarse hardware-isolation domains, MPS multiplexes jobs and oversubscribes compute inside each domain, and an intercepted whole-kernel scheduler uses online-job slack to control short-term contention.
 
+### Problem formulation and workload context
+
+| Element | MMK |
+|---|---|
+| **Workload target and paper examples** | A dynamic queue of QoS-bound **online inference** jobs and throughput-oriented **offline training** jobs must share A100 GPUs. The testbed creates 60 online and 40 offline jobs from **VGG16, MobileNet, ResNet18, BERT, ResNet152, DenseNet201, Transformer, DenseNet121, VGG19, ResNet50, Qwen2-7B, Llama-3.2-3B, and DeepSeek-R1-1.5B**. **LLM context:** it includes three small/medium LLMs (batch size one), but has no token-level, KV-cache, prefill/decode, or communication-aware policy. |
+| **Problem inputs / parameters** | Job class and online QoS target; job-level SM, HBM-bandwidth, and L2-use features; kernel grid/block, register, shared-memory, and duration features; candidate MIG shape/layout; candidate MPS ceilings; colocation set; and online slack/current kernel contention. |
+| **How the solution handles them** | An offline-trained random forest predicts online/kernel execution time and offline throughput for candidate configurations. Partition Entropy prunes MIG layouts; a kernel-aware oversubscription rule derives MPS ceilings; and an intercepted whole-kernel scheduler uses slack to admit online-online overlap, budget online-offline overlap, or package offline kernels. |
+| **Output / decision parameters** | Selected MIG layout and job grouping, MPS percentage ceilings, kernel launch/admission order, offline execution budget, and offline-kernel packages. It never slices/preempts a released kernel. |
+
 ### Motivation and limitations of single-level GPU sharing
 
 **Problem space.** MMK colocates latency-sensitive **online inference jobs** with long-running **offline training or throughput jobs**. It seeks to preserve online QoS while reducing offline completion time, makespan, and stranded GPU capacity.
@@ -331,6 +387,26 @@ MMK can be summarized as **offline-learned performance modeling plus online hier
 > | *Usher: Holistic Interference Avoidance for Resource Optimized ML Inference* | **July 2024 — USENIX OSDI '24** | **Institutions:** University of Virginia; Georgia Institute of Technology. **First:** Sudipta Saha Shubha (University of Virginia). **Corresponding:** Anand Iyer (Georgia Institute of Technology). | **Available:** [author repository](https://github.com/ss7krd/Usher) |
 
 > **In brief:** After MMK decides a resource envelope and a lower-level runtime decides when kernels may run, a remaining question is **which workloads should share a GPU in the first place**. SMore and Usher address that question through interference prediction and workload-level placement, rather than slicing, intercepting, or physically placing individual CUDA kernels.
+
+### Problem formulation and workload context
+
+#### SMore
+
+| Element | SMore |
+|---|---|
+| **Workload target and paper examples** | Long-running **serverful training** occupies a GPU; bursty, deadline-sensitive **serverless inference functions** may be admitted into its slack. The paper characterizes **DeepFM, VGG, RoBERTa, DeepViT, ResNet-50, BERT, and MobileNet**; it uses DeepFM/VGG/RoBERTa as low/medium/high-utilization training representatives and derives serverless requests from an Azure Functions trace. **LLM context:** it evaluates BERT/RoBERTa but no generative LLM serving. |
+| **Problem inputs / parameters** | Training/function model features (SM/memory use, FLOPs, depth, footprint, and operator composition); pairwise degradation profiles; current GPU memory/resource state; function P99/SLO and deadline; permitted training degradation; request rate/history; and cold-start/load state. |
+| **How the solution handles them** | A pairwise degradation predictor estimates whether an inference function can safely colocate with a training job; a weighted multi-way estimate extends this to several functions. The scheduler checks memory, predicted latency/SLO, and predicted training impact before placement, while LS-LSTM demand prediction decides model preloading/offloading. |
+| **Output / decision parameters** | Admit/reject decision, selected target GPU/training job, function placement, and preload/offload action. It does not decide kernel order, MPS/MIG allocation, or a preemption unit. |
+
+#### Usher
+
+| Element | Usher |
+|---|---|
+| **Workload target and paper examples** | Many latency-SLO-constrained inference models must be jointly packed across a GPU cluster. The 20-model suite includes vision models such as **YOLO-v3, MobileNetSSD-v2, ResNet-50/101, MobileNet-v2, DenseNet, and EfficientNet**, plus **GNMT, BERT, GPT-2, and Llama-2 13B**. **LLM context:** it includes GPT-2/Llama-2, but treats them as generic models; it does not schedule prefill/decode or KV-cache state explicitly. |
+| **Problem inputs / parameters** | Per-model request workload and latency SLO; candidate batch size (**BS**), replication degree (**RD**), and GPU type; estimated peak compute requirement (**Creq**) and memory requirement (**Mreq**); operator/kernel graph features; available GPU compute/memory; and cross-model weight/graph similarity. |
+| **How the solution handles them** | GK-Estimator predicts a model's kernel-level peak resource requirements without exhaustive profiling. The scheduler groups complementary compute-heavy and memory-heavy configurations, searches BS/RD/GPU placement with a multidimensional packing heuristic, and merges compatible operator graphs to reduce cache interference. |
+| **Output / decision parameters** | For every model: chosen BS, RD, GPU type, and complete-model/partition placement; globally: model groups and graph-merge decisions. This is a cluster control-plane schedule, not a CUDA launch schedule. |
 
 ### Common problem and relation to the kernel schedulers
 
