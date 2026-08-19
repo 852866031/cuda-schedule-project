@@ -56,7 +56,7 @@ def build_device_map(n_offload):
     return dm
 
 
-def load(n_offload, batch, prefetch=False):
+def load(n_offload, batch, prefetch=False, depth=1, pattern="tail"):
     """Load fully onto the GPU, then hand the last `n_offload` layers to the streamer.
 
     Not device_map: accelerate's CPU offload leaves params on the meta device, which the
@@ -88,7 +88,7 @@ def load(n_offload, batch, prefetch=False):
     mgr = None
     if n_offload:
         mgr = OffloadManager(model.base_model.model.model.layers, n_offload,
-                             prefetch=prefetch)
+                             prefetch=prefetch, depth=depth, pattern=pattern)
         gc.collect()
         torch.cuda.empty_cache()
     return model, mgr
@@ -112,11 +112,12 @@ def pcie_counters():
         return {}
 
 
-def run_point(n_offload, batch, steps, warmup, lr=1e-4, prefetch=False):
+def run_point(n_offload, batch, steps, warmup, lr=1e-4, prefetch=False, depth=1,
+              pattern="tail"):
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
     t0 = time.time()
-    model, mgr = load(n_offload, batch, prefetch)
+    model, mgr = load(n_offload, batch, prefetch, depth, pattern)
     load_s = time.time() - t0
 
     # Reset AFTER load: the model is loaded fully resident and then streamed out, so the
@@ -159,6 +160,8 @@ def run_point(n_offload, batch, steps, warmup, lr=1e-4, prefetch=False):
     rec = {
         "n_offload": n_offload,
         "prefetch": prefetch,
+        "prefetch_depth": depth if prefetch else 0,
+        "pattern": pattern,
         "n_resident": N_LAYERS - n_offload,
         "batch": batch, "seq_len": SEQ_LEN, "tokens_per_step": tokens,
         "lora_rank": LORA_RANK, "trainable_params": trainable,
@@ -216,6 +219,10 @@ def main():
     ap.add_argument("--offload-step", type=int, default=4)
     ap.add_argument("--max-offload", type=int, default=N_LAYERS,
                     help="highest number of layers to offload (default: all 32)")
+    ap.add_argument("--pattern", choices=["tail", "interleave"], default="tail",
+                    help="which layers to offload: the last N, or every stride-th")
+    ap.add_argument("--prefetch-depth", type=int, default=1,
+                    help="how many layers ahead to stage (1 = next layer only)")
     ap.add_argument("--prefetch", action="store_true",
                     help="overlap the next layer's copy with the current layer's compute")
     ap.add_argument("--tag", default="ft")
@@ -240,7 +247,8 @@ def main():
     for n in range(0, args.max_offload + 1, args.offload_step):
         print(f"\n=== {n} layers offloaded ({N_LAYERS - n} resident) ===", flush=True)
         try:
-            rec = run_point(n, batch, args.steps, args.warmup, prefetch=args.prefetch)
+            rec = run_point(n, batch, args.steps, args.warmup, prefetch=args.prefetch,
+                            depth=args.prefetch_depth, pattern=args.pattern)
             print(f"  -> {rec['step_s_median']}s/step, {rec['tokens_per_s']} tok/s, "
                   f"MFU {rec['mfu']:.1%}, peak {rec['peak_vram_gib']} GiB", flush=True)
         except Exception as e:

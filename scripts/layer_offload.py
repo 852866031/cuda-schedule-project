@@ -11,8 +11,10 @@ Two modes, which is the point of the experiment:
   prefetch=False  fetch-on-demand. The copy is enqueued on the compute stream immediately
                   before the layer that needs it, so transfer and compute serialise. This is
                   the pessimistic bound.
-  prefetch=True   while layer N computes, layer N+1's weights copy on a side stream. Transfer
-                  hides behind compute up to the point where it exceeds it.
+  prefetch=True   while layer N computes, the next `prefetch_depth` layers' weights copy on a
+                  side stream. Depth 1 gives each copy one layer's compute window to finish in;
+                  deeper lookahead borrows compute time from layers further back, at the cost of
+                  holding `depth` staged buffers (~0.406 GiB each) instead of one.
 
 Lifecycle with gradient checkpointing on:
 
@@ -98,15 +100,28 @@ class LayerStreamer:
 class OffloadManager:
     """Installs streamers on the last `n_offload` layers, optionally with depth-1 prefetch."""
 
-    def __init__(self, layers, n_offload, device="cuda", prefetch=False):
+    def __init__(self, layers, n_offload, device="cuda", prefetch=False, depth=1,
+                 pattern="tail"):
         self.in_backward = False
         self.prefetch = prefetch
+        self.depth = max(1, depth)
+        self.pattern = pattern
         self.streamers = []
         self.handles = []
         self.fetches = 0
         self.copy_stream = torch.cuda.Stream() if prefetch else None
 
-        managed = list(layers)[len(layers) - n_offload:]
+        # Which layers to offload matters as much as how many. "tail" bunches every transfer
+        # into the last stretch of the step, where there is little compute left to hide behind.
+        # "interleave" spreads them so each streamed layer has a resident neighbour's compute
+        # to overlap with.
+        all_layers = list(layers)
+        if pattern == "interleave" and 0 < n_offload < len(all_layers):
+            stride = len(all_layers) / n_offload
+            picked = sorted({min(int(i * stride), len(all_layers) - 1) for i in range(n_offload)})
+            managed = [all_layers[i] for i in picked]
+        else:
+            managed = all_layers[len(all_layers) - n_offload:]
         for idx, layer in enumerate(managed):
             s = LayerStreamer(layer, device)
             self.streamers.append(s)
@@ -116,11 +131,13 @@ class OffloadManager:
                 cur.bind()
                 self.fetches += 1
                 if self.prefetch:
-                    # Forward runs ascending, backward's recompute runs descending: prefetch
-                    # whichever layer is about to be needed next.
-                    nxt = i - 1 if self.in_backward else i + 1
-                    if 0 <= nxt < len(self.streamers):
-                        self.streamers[nxt].stage(self.copy_stream)
+                    # Forward runs ascending, backward's recompute runs descending: stage
+                    # whichever layers are about to be needed, `depth` of them.
+                    step = -1 if self.in_backward else 1
+                    for d in range(1, self.depth + 1):
+                        nxt = i + step * d
+                        if 0 <= nxt < len(self.streamers):
+                            self.streamers[nxt].stage(self.copy_stream)
 
             def fwd_hook(module, args, output, i=idx):
                 # Keep weights alive through the recomputed-forward + backward window.
@@ -139,15 +156,17 @@ class OffloadManager:
         return sum(s.bytes for s in self.streamers)
 
     def pre_forward(self):
-        """Warm the first layer so the very first bind is not a cold synchronous copy."""
-        if self.prefetch and self.streamers:
-            self.streamers[0].stage(self.copy_stream)
+        """Warm the leading layers so the first binds are not cold synchronous copies."""
+        if self.prefetch:
+            for d in range(min(self.depth, len(self.streamers))):
+                self.streamers[d].stage(self.copy_stream)
 
     def backward(self, loss):
         """Run backward with the flag set, so recomputed forwards do not free too early."""
         self.in_backward = True
-        if self.prefetch and self.streamers:
-            self.streamers[-1].stage(self.copy_stream)
+        if self.prefetch:
+            for d in range(min(self.depth, len(self.streamers))):
+                self.streamers[len(self.streamers) - 1 - d].stage(self.copy_stream)
         try:
             loss.backward()
         finally:

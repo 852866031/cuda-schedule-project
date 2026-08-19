@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Figures for the LoRA finetuning sweep: throughput and VRAM vs offloaded layers.
+"""Figures for the LoRA finetuning sweep: five offload strategies compared.
 
     python scripts/plot_finetune.py
 """
@@ -14,75 +14,77 @@ import matplotlib.pyplot as plt
 REPO = Path(__file__).resolve().parent.parent
 OUT, FIGS = REPO / "output", REPO / "figures"
 
-BLUE, RED, PURPLE, GREY = "#1f6feb", "#c1440e", "#8250df", "#57606a"
 PCIE = 14.468          # GB/s, measured in phase 0
 GIB2GB = 1.0737
+MAX_OFFLOAD = 16       # the range every arm covers
+
+# (file, label, colour, marker, linestyle)
+ARMS = [
+    ("ft_sweep.json",           "no prefetch",              "#c1440e", "o", "-"),
+    ("ft_prefetch_sweep.json",  "prefetch d1",              "#1f6feb", "s", "-"),
+    ("ft_prefetch_d2_sweep.json", "prefetch d2",            "#54aeff", "^", "--"),
+    ("ft_int_d1_sweep.json",    "interleaved, prefetch d1", "#8250df", "D", "-"),
+    ("ft_int_d2_sweep.json",    "interleaved, prefetch d2", "#c297ff", "v", "--"),
+]
+GREY = "#57606a"
+
+
+def load(fname):
+    p = OUT / fname
+    if not p.exists():
+        return []
+    rows = [r for r in json.loads(p.read_text())
+            if "error" not in r and r["n_offload"] <= MAX_OFFLOAD]
+    return sorted(rows, key=lambda r: r["n_offload"])
 
 
 def main():
     FIGS.mkdir(exist_ok=True)
-    rows = [r for r in json.loads((OUT / "ft_sweep.json").read_text()) if "error" not in r]
-    rows.sort(key=lambda r: r["n_offload"])
-    pre_path = OUT / "ft_prefetch_sweep.json"
-    pre = sorted([r for r in json.loads(pre_path.read_text()) if "error" not in r],
-                 key=lambda r: r["n_offload"]) if pre_path.exists() else []
+    arms = [(lbl, c, m, ls, load(f)) for f, lbl, c, m, ls in ARMS]
+    arms = [a for a in arms if a[4]]
+    base = arms[0][4][0]["tokens_per_s"]
 
-    n = [r["n_offload"] for r in rows]
-    off_gib = [r["offloaded_weight_gib"] for r in rows]
-    step = [r["step_s_median"] for r in rows]
-    tps = [r["tokens_per_s"] for r in rows]
-    peak = [r["peak_vram_gib"] for r in rows]
-    mfu = [r["mfu"] * 100 for r in rows]
-    base_step = step[0]
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5.4))
 
-    fig, axes = plt.subplots(1, 3, figsize=(17, 5.2))
-
-    # --- 1. step time: measured vs the cost model -----------------------------------
+    # --- 1. throughput vs layers offloaded ------------------------------------------
     ax = axes[0]
-    ax.plot(n, step, color=BLUE, marker="o", lw=2, label="measured step time")
-    # Every offloaded layer crosses PCIe twice per step: once for forward, once for the
-    # recomputed forward inside backward.
-    pred = [base_step + g * 2 * GIB2GB / PCIE for g in off_gib]
-    ax.plot(n, pred, color=RED, ls="--", lw=1.5,
-            label=f"predicted: {base_step:.2f}s + 2×GiB/{PCIE:.1f} GB/s")
-    if pre:
-        ax.plot([r["n_offload"] for r in pre], [r["step_s_median"] for r in pre],
-                color=PURPLE, marker="s", lw=2, label="with prefetch (overlapped)")
+    for lbl, c, m, ls, rows in arms:
+        ax.plot([r["n_offload"] for r in rows], [r["tokens_per_s"] for r in rows],
+                color=c, marker=m, ls=ls, lw=2, ms=6, label=lbl)
+    ax.axhline(base, color=GREY, lw=1, ls=":")
+    ax.annotate("no offloading", xy=(0, base), xytext=(6, -13),
+                textcoords="offset points", fontsize=8, color=GREY)
     ax.set_xlabel("transformer layers offloaded to DRAM (of 32)")
-    ax.set_ylabel("step time (s)")
-    ax.set_title("Fetch-on-demand is exactly additive; prefetch hides it", fontsize=11)
-    ax.grid(alpha=0.25)
-    ax.legend(fontsize=8)
-
-    # --- 2. the tradeoff: throughput bought per GiB of VRAM freed --------------------
-    ax = axes[1]
-    ax.plot(peak, tps, color=BLUE, marker="o", lw=2, label="fetch-on-demand")
-    if pre:
-        ax.plot([r["peak_vram_gib"] for r in pre], [r["tokens_per_s"] for r in pre],
-                color=PURPLE, marker="s", lw=2, label="with prefetch")
-    ax.axhline(tps[0], color=GREY, lw=1, ls="--")
-    ax.annotate("no offloading at all", xy=(peak[-1], tps[0]), xytext=(4, 5),
-                textcoords="offset points", fontsize=8, color=GREY, ha="left")
-    ax.set_xlabel("peak VRAM during training (GiB)  —  less to the right")
-    ax.invert_xaxis()
     ax.set_ylabel("throughput (tokens/s)")
-    ax.set_title("What each freed GiB actually costs", fontsize=11)
+    ax.set_title("Throughput vs how much is offloaded", fontsize=11)
     ax.grid(alpha=0.25)
     ax.legend(fontsize=8, loc="lower left")
 
-    # --- 3. MFU: how much of the GPU is left doing useful work -----------------------
-    ax = axes[2]
-    ax.plot(n, mfu, color=BLUE, marker="o", lw=2, label="fetch-on-demand")
-    ax.fill_between(n, 0, mfu, color=BLUE, alpha=0.08)
-    if pre:
-        ax.plot([r["n_offload"] for r in pre], [r["mfu"] * 100 for r in pre],
-                color=PURPLE, marker="s", lw=2, label="with prefetch")
-    ax.legend(fontsize=8)
+    # --- 2. cost relative to no offloading ------------------------------------------
+    ax = axes[1]
+    for lbl, c, m, ls, rows in arms:
+        ax.plot([r["n_offload"] for r in rows],
+                [(1 - r["tokens_per_s"] / base) * 100 for r in rows],
+                color=c, marker=m, ls=ls, lw=2, ms=6, label=lbl)
+    ax.axhline(0, color=GREY, lw=1)
     ax.set_xlabel("transformer layers offloaded to DRAM (of 32)")
-    ax.set_ylabel("model FLOPs utilisation (%)")
-    ax.set_title("How much of the GPU is left doing useful work", fontsize=11)
-    ax.set_ylim(0, 60)
+    ax.set_ylabel("throughput lost vs no offloading (%)")
+    ax.set_title("What each strategy costs", fontsize=11)
     ax.grid(alpha=0.25)
+    ax.legend(fontsize=8, loc="upper left")
+
+    # --- 3. the actual tradeoff: throughput per GiB freed ---------------------------
+    ax = axes[2]
+    for lbl, c, m, ls, rows in arms:
+        ax.plot([r["peak_vram_gib"] for r in rows], [r["tokens_per_s"] for r in rows],
+                color=c, marker=m, ls=ls, lw=2, ms=6, label=lbl)
+    ax.axhline(base, color=GREY, lw=1, ls=":")
+    ax.set_xlabel("peak VRAM during training (GiB)  —  less to the right")
+    ax.invert_xaxis()
+    ax.set_ylabel("throughput (tokens/s)")
+    ax.set_title("Throughput bought per GiB freed", fontsize=11)
+    ax.grid(alpha=0.25)
+    ax.legend(fontsize=8, loc="lower left")
 
     fig.suptitle("LoRA finetuning Llama-3-8B with base weights streamed from DRAM — "
                  "rank 16 on attention, batch 2 × 2048 tokens, RTX 5090 (PCIe Gen4 ×8)",
@@ -91,14 +93,16 @@ def main():
     p = FIGS / "finetune_offload.png"
     fig.savefig(p, dpi=150)
     plt.close(fig)
-    print(f"wrote {p.relative_to(REPO)}")
+    print(f"wrote {p.relative_to(REPO)}\n")
 
-    # residual check, printed rather than plotted
-    print("\nmeasured vs predicted step time:")
-    for i, r in enumerate(rows):
-        err = (step[i] - pred[i]) / step[i] * 100
-        print(f"  {n[i]:>2d} layers ({off_gib[i]:5.2f} GiB): "
-              f"{step[i]:.3f}s vs {pred[i]:.3f}s predicted  ({err:+.1f}%)")
+    hdr = f"{'layers':>7s}" + "".join(f"{lbl[:22]:>24s}" for lbl, *_ in arms)
+    print(hdr)
+    for n in [r["n_offload"] for r in arms[0][4]]:
+        line = f"{n:>7d}"
+        for lbl, c, m, ls, rows in arms:
+            hit = [r for r in rows if r["n_offload"] == n]
+            line += f"{hit[0]['tokens_per_s']:>16.0f} tok/s" if hit else f"{'-':>24s}"
+        print(line)
 
 
 if __name__ == "__main__":
