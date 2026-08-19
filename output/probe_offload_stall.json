@@ -1,0 +1,138 @@
+{
+  "offload": {
+    "sequential": [
+      {
+        "i": 0,
+        "wall_s": 0.72,
+        "ttft_s": 0.646,
+        "store_gib": 0.766,
+        "store_s": 0.057
+      },
+      {
+        "i": 1,
+        "wall_s": 0.64,
+        "ttft_s": 0.557,
+        "store_gib": 0.766,
+        "store_s": 0.057
+      },
+      {
+        "i": 2,
+        "wall_s": 0.61,
+        "ttft_s": 0.528,
+        "store_gib": 0.766,
+        "store_s": 0.057
+      },
+      {
+        "i": 3,
+        "wall_s": 0.61,
+        "ttft_s": 0.528,
+        "store_gib": 0.766,
+        "store_s": 0.057
+      },
+      {
+        "i": 4,
+        "wall_s": 0.61,
+        "ttft_s": 0.529,
+        "store_gib": 0.766,
+        "store_s": 0.057
+      },
+      {
+        "i": 5,
+        "wall_s": 0.61,
+        "ttft_s": 0.528,
+        "store_gib": 0.766,
+        "store_s": 0.057
+      },
+      {
+        "i": 6,
+        "wall_s": 0.61,
+        "ttft_s": 0.528,
+        "store_gib": 0.766,
+        "store_s": 0.057
+      },
+      {
+        "i": 7,
+        "wall_s": 0.61,
+        "ttft_s": 0.529,
+        "store_gib": 0.766,
+        "store_s": 0.057
+      }
+    ],
+    "burst": {
+      "n": 8,
+      "wall_s": 4.46,
+      "ttft_p50_s": 1.278,
+      "ttft_max_s": 2.404,
+      "store_gib": 6.125,
+      "store_s": 0.459
+    }
+  },
+  "nooffload": {
+    "sequential": [
+      {
+        "i": 0,
+        "wall_s": 0.73,
+        "ttft_s": 0.65,
+        "store_gib": 0.0,
+        "store_s": 0
+      },
+      {
+        "i": 1,
+        "wall_s": 0.63,
+        "ttft_s": 0.546,
+        "store_gib": 0.0,
+        "store_s": 0
+      },
+      {
+        "i": 2,
+        "wall_s": 0.6,
+        "ttft_s": 0.525,
+        "store_gib": 0.0,
+        "store_s": 0
+      },
+      {
+        "i": 3,
+        "wall_s": 0.6,
+        "ttft_s": 0.525,
+        "store_gib": 0.0,
+        "store_s": 0
+      },
+      {
+        "i": 4,
+        "wall_s": 0.61,
+        "ttft_s": 0.525,
+        "store_gib": 0.0,
+        "store_s": 0
+      },
+      {
+        "i": 5,
+        "wall_s": 0.6,
+        "ttft_s": 0.525,
+        "store_gib": 0.0,
+        "store_s": 0
+      },
+      {
+        "i": 6,
+        "wall_s": 0.6,
+        "ttft_s": null,
+        "store_gib": 0.0,
+        "store_s": 0
+      },
+      {
+        "i": 7,
+        "wall_s": 0.61,
+        "ttft_s": 0.531,
+        "store_gib": 0.0,
+        "store_s": 0
+      }
+    ],
+    "burst": {
+      "n": 8,
+      "wall_s": 4.45,
+      "ttft_p50_s": 1.496,
+      "ttft_max_s": 2.404,
+      "store_gib": 0.0,
+      "store_s": 0
+    }
+  }
+}

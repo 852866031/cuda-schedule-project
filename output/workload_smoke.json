@@ -1,0 +1,26 @@
+{
+  "zipf": {
+    "num_sessions": 8,
+    "prefix_len": 6144,
+    "suffix_len": 128,
+    "num_requests": 24,
+    "skew": "zipf",
+    "zipf_a": 1.1,
+    "seed": 0,
+    "working_set_tokens": 49152,
+    "working_set_gib": 6.0,
+    "prefix_kv_gib": 0.75,
+    "hot_sessions_90pct": 5,
+    "hot_set_90pct_gib": 3.75,
+    "session_request_counts": [
+      13,
+      4,
+      2,
+      1,
+      1,
+      0,
+      1,
+      2
+    ]
+  }
+}
