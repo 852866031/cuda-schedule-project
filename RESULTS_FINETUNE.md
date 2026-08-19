@@ -95,17 +95,18 @@ streamed — releasing the trainable LoRA adapters would hand the optimiser zero
 
 ![Finetuning offload](figures/finetune_offload.png)
 
-| layers offloaded | GiB freed | peak VRAM | on-demand | **prefetch** | on-demand cost | **prefetch cost** |
+| layers offloaded | GiB freed | peak VRAM | no prefetch | **best prefetch** | no-prefetch cost | **best cost** |
 |---|---|---|---|---|---|---|
 | 0 | 0.00 | 23.04 GiB | 3580 tok/s | 3580 tok/s | — | — |
 | 4 | 1.63 | 21.82 GiB | 2965 | **3554** | 17% | **0.7%** |
-| 8 | 3.25 | 20.20 GiB | 2523 | **3523** | 30% | **1.6%** |
-| 12 | 4.88 | 18.57 GiB | 2197 | **3299** | 39% | **7.8%** |
-| 16 | 6.50 | 16.94 GiB | 1947 | **3033** | 46% | **15.3%** |
+| 8 | 3.25 | 20.20 GiB | 2523 | **3529** | 30% | **1.4%** |
+| 12 | 4.88 | 18.57 GiB | 2197 | **3379** | 39% | **5.6%** |
+| 16 | 6.50 | 16.94 GiB | 1947 | **3127** | 46% | **12.7%** |
 
-**With overlapped transfers, 3.25 GiB of VRAM can be freed for 1.6% of throughput.** Without
-overlap the same 3.25 GiB costs 30% — an 19× difference in price for an identical amount of
-memory saved.
+**With overlapped transfers, 3.25 GiB of VRAM can be freed for 1.4% of throughput.** Without
+overlap the same 3.25 GiB costs 30% — a 21× difference in price for an identical amount of
+memory saved. Which prefetch variant is "best" shifts with the offload count; see
+[Five strategies compared](#five-strategies-compared) below.
 
 ### Fetch-on-demand is exactly additive — which is the tell
 
@@ -188,8 +189,8 @@ implement and costing no extra VRAM. The elaborations buy little here because th
 ## 3. What this adds up to
 
 **On this hardware, LoRA finetuning an 8B model can give back a seventh of its VRAM almost for
-free — but only with overlapped transfers.** 3.25 GiB (14% of the 23.04 GiB footprint) for 1.6%;
-6.5 GiB (28%) for 15%.
+free — but only with overlapped transfers.** 3.25 GiB (14% of the 23.04 GiB footprint) for 1.4%;
+6.5 GiB (28%) for 12.7%. Without overlap those same savings cost 30% and 46%.
 
 Put in hardware terms: the job needs 23.0 GiB resident, which wants a 24 GB card. Offloading
 8 layers brings it to 20.2 GiB, and 16 layers to 16.9 GiB — **a 16 GB card runs the same job at
@@ -201,10 +202,10 @@ Put in hardware terms: the job needs 23.0 GiB resident, which wants a 24 GB card
 |---|---|---|
 | binding wall | **concurrency** — no room for running requests | **PCIe bandwidth** |
 | curve shape | flat, then collapse over two steps | smooth and monotonic |
-| free region | 58% of KV removable for 9% p95 | 14% of VRAM removable for 1.6% |
+| free region | 58% of KV removable for 9% p95 | 14% of VRAM removable for 1.4% |
 | failure mode | engine stalls, requests preempted | none — just slower |
 | what is reused | KV, once per hit | weights, **every single step** |
-| fix that helps | nothing — capacity is capacity | **overlap**, worth 1.6× |
+| fix that helps | nothing — capacity is capacity | **overlap**, worth 1.6×; depth and placement, ~3% |
 
 The inference study never touched the PCIe wall (5.7% of the link at its worst); the finetuning
 study never touched a capacity wall. Same machine, same offloading idea, opposite limiting

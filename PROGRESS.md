@@ -518,3 +518,40 @@ degree: inference ends in a cliff, training degrades gracefully.
 
 **Next:** the disaggregated prefill/decode plan (GPU0 prefill, GPU1 decode with offloading,
 resize GPU1's VRAM).
+
+## 2026-08-18 22:05 — Five offload strategies compared; two predictions falsified
+
+Ran the full set the user asked for: no prefetch, prefetch depth 1 and 2, and interleaved
+placement at both depths, 0-16 layers.
+
+| layers | no prefetch | prefetch d1 | prefetch d2 | interleaved d1 | interleaved d2 |
+|---|---|---|---|---|---|
+| 4 | 2965 | **3554** | 3551 | 3471 | 3460 |
+| 8 | 2523 | 3523 | **3529** | 3434 | 3423 |
+| 12 | 2197 | 3299 | 3379 | 3376 | **3378** |
+| 16 | 1947 | 3033 | 3032 | **3127** | 3127 |
+
+**Prefetching is the whole story.** No-prefetch loses 46% at 16 layers; every prefetching
+variant loses 12-15%. The spread among prefetching strategies is 3% against a 34-point gap to
+none at all.
+
+**Two things I predicted turned out wrong, both now corrected in the report:**
+
+1. **Depth 2 does nothing** (and costs 0.41 GiB every point). I had reasoned that depth-1 gives
+   each copy one layer's compute window (~35.8 ms) for a ~60.3 ms transfer, so more lookahead
+   should help. But the constraint is a **rate mismatch, not a scheduling one**: with all
+   offloaded layers at the tail, that region demands 482 ms of transfer against 190 ms of
+   compute. Queuing copies earlier on an already-saturated stream changes nothing.
+2. **Interleaving is not a clean win** -- it *crosses over*. Below 12 layers tail placement is
+   better (3554 vs 3471 at 4), because interleaving puts an offloaded layer at index 0 with no
+   preceding compute to hide behind, so every forward starts with a cold synchronous stall. At
+   16 layers interleaving wins (+3.1%) because spreading beats the tail region's rate deficit.
+
+Practical rule: offload the tail when offloading a little, interleave when offloading a lot --
+and note that plain depth-1 tail prefetch is within 3% of the best at every point, costs no
+extra VRAM, and is the simplest to build. The elaborations buy little because the system is
+bandwidth-bound rather than scheduling-bound.
+
+Also: my `until ! pgrep -f "..."` waiters self-matched on their own command line for the
+**third** time today, stalling one for 1h23m and silently preventing the interleave test from
+starting. Switched to polling a completion marker in a log file, which cannot self-match.
