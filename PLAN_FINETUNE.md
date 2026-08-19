@@ -1,5 +1,10 @@
 # LoRA Finetuning under a Shrinking VRAM Budget — Test Plan
 
+
+> **This is the design as written before running anything**, kept as a record of what was
+> predicted. Several predictions in it turned out wrong — where the study says otherwise,
+> the results document is correct. See [RESULTS_FINETUNE.md](RESULTS_FINETUNE.md).
+
 **Question:** with the base model's weights offloaded to DRAM, how does LoRA finetuning
 throughput degrade as the VRAM budget shrinks?
 

@@ -257,5 +257,5 @@ with no failure mode. If you must run out of memory somewhere, training is the b
 .venv/bin/python scripts/plot_finetune.py
 ```
 
-Design and predictions made before running: [PLAN_FINETUNE.md](PLAN_FINETUNE.md). Full narrative
-including every wrong turn: [PROGRESS.md](PROGRESS.md).
+Design and predictions made before running: [PLAN_FINETUNE.md](PLAN_FINETUNE.md). Environment
+setup and the gotchas behind each of these scripts: [README.md](README.md).

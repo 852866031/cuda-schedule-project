@@ -459,6 +459,6 @@ cd scripts && ../.venv-matched/bin/python run_sweep.py --tag main
 .venv/bin/python scripts/plot_case_a.py               # figures
 ```
 
-Raw per-request records are in `output/raw/*.json`; per-config summaries in
-`output/summary_*.csv`; the full narrative including every wrong turn is in
-[PROGRESS.md](PROGRESS.md). Setup and environment details are in [README.md](README.md).
+Raw per-request records are in `output/raw/*.json` (gitignored, regenerable); per-config
+summaries in `output/summary_*.csv`. Setup, environment and the gotchas that cost time are in
+[README.md](README.md).

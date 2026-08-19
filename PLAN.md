@@ -1,5 +1,10 @@
 # VRAM Limit Study — Test Plan
 
+
+> **This is the design as written before running anything**, kept as a record of what was
+> predicted. Several predictions in it turned out wrong — where the study says otherwise,
+> the results document is correct. See [RESULTS.md](RESULTS.md).
+
 **Question:** an LLM serving app whose working set is ~40 GB is run on a 32 GB GPU, with
 DRAM absorbing the overflow. How does serving performance degrade as we shrink the VRAM
 budget the app is allowed to use?
@@ -62,7 +67,7 @@ Establishes the physical constants that every later number is interpreted agains
    (`nvidia-smi -q` during the run).
 2. **Derive the offload cost model**:
    - `t_load(prefix) = prefix_tokens × 0.125 MiB / BW_h2d`
-   - at 12 GB/s: an **8192-token prefix = 1 GiB = ~85 ms**
+   - at 12 GB/s: an **8192-token prefix = 1 GiB = ~85 ms** (measured: 14.47 GB/s → 74 ms)
 3. **Measure recompute cost**: prefill latency for the same 8192-token prefix (one request,
    empty cache, `--kv-offloading-size` unset).
    Expected ~0.9–1.3 s ⇒ **offload should be ~10–15× cheaper than recompute per hit.**
@@ -115,9 +120,9 @@ question and is a possible follow-up.)
 Off-the-shelf datasets don't let us pin the working set to exactly 24 GiB, so the harness
 generates it:
 
-- **24 sessions × 8192-token unique prefix** = 196,608 tokens = **24.0 GiB of KV** exactly
+- **32 sessions × 6144-token unique prefix** = 196,608 tokens = **24.0 GiB of KV** exactly
 - each request = `session_prefix + ~128 unique tokens`, **128 output tokens**
-- **warmup pass** touches all 24 sessions once (populates both tiers), excluded from stats
+- **warmup pass** touches all 32 sessions once (populates both tiers), excluded from stats
 - **300 measured requests**, Poisson arrivals at a fixed QPS (default 2.0)
 - **access skew** is a first-class parameter:
   - `zipf-1.1` (**primary**) — realistic hot/cold split, produces a genuine knee
