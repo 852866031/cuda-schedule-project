@@ -326,7 +326,7 @@ you need offloading, and the more likely this becomes.**
 
 The curves above have a shape that needs explaining: flat for most of the sweep, then a
 collapse over two steps. Four different resources could in principle produce that shape. Each
-has a threshold that follows from a quantity we measured (`scripts/compute_walls.py`), so each
+has a threshold that follows from a quantity we measured (`scripts/inference/compute_walls.py`), so each
 can be located on the x-axis and checked against what actually happened.
 
 | wall | threshold | hit? | evidence |
@@ -453,10 +453,10 @@ space changes completely. Do not port these numbers to different silicon.
 ## Reproducing
 
 ```bash
-.venv/bin/python scripts/calibrate_pcie.py            # the physical constants
+.venv/bin/python scripts/common/calibrate_pcie.py            # the physical constants
 cd scripts && ../.venv-matched/bin/python run_sweep.py --tag main
 .venv/bin/python scripts/compute_walls.py             # thresholds from those constants
-.venv/bin/python scripts/plot_case_a.py               # figures
+.venv/bin/python scripts/plots/plot_case_a.py               # figures
 ```
 
 Raw per-request records are in `output/raw/*.json` (gitignored, regenerable); per-config

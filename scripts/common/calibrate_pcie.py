@@ -29,7 +29,7 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 
 import torch
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 OUT = REPO / "output"
 
 # KV cache geometry for Llama-3-8B fp16: 32 layers * 8 kv heads * 128 dim * 2 (K,V) * 2 bytes

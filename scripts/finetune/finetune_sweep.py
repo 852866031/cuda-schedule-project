@@ -26,7 +26,7 @@ import torch
 
 from layer_offload import OffloadManager
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 OUT = REPO / "output"
 
 MODEL = "NousResearch/Meta-Llama-3-8B-Instruct"

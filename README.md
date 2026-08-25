@@ -2,15 +2,63 @@
 
 **How far can you shrink an LLM's VRAM budget before DRAM offloading stops saving you?**
 
-Two experiments on the same machine — an RTX 5090 (32 GB) behind **PCIe Gen4 ×8** — asking that
-question of inference and of finetuning. They turn out to fail for opposite reasons.
+Three experiments on the same machine — an RTX 5090 (32 GB) behind **PCIe Gen4 ×8** — asking that
+question of inference, of finetuning, and of a disaggregated decode node. The first two are
+complete, and they fail for opposite reasons.
 
-| study | question | answer |
-|---|---|---|
-| **[Inference](RESULTS.md)** | vLLM serving, KV cache oversubscribed, weights resident | VRAM 30 → 22 GiB (**58% less KV**) for **9% of TTFT p95**. Below that it collapses two orders of magnitude in two steps. The wall is **concurrency**, not cache capacity or bandwidth. |
-| **[Finetuning](RESULTS_FINETUNE.md)** | LoRA r=16, base weights streamed from DRAM | **3.25 GiB freed for 1.4%** of throughput *with overlapped transfers* — **30% without**. The wall is **PCIe bandwidth**, and degradation is smooth rather than a cliff. |
+| study | status | question | answer |
+|---|---|---|---|
+| **[Inference](RESULTS.md)** | ✅ done | vLLM serving, KV cache oversubscribed, weights resident | VRAM 30 → 22 GiB (**58% less KV**) for **9% of TTFT p95**. Below that it collapses two orders of magnitude in two steps. The wall is **concurrency**, not cache capacity or bandwidth. |
+| **[Finetuning](RESULTS_FINETUNE.md)** | ✅ done | LoRA r=16, base weights streamed from DRAM | **3.25 GiB freed for 1.4%** of throughput *with overlapped transfers* — **30% without**. The wall is **PCIe bandwidth**, and degradation is smooth rather than a cliff. |
+| **[Decode node](PLAN_DECODE.md)** | 🔨 phase 0, blocked | GPU0 prefill → GPU1 decode, sweep GPU1's VRAM | not yet measured — see **Picking this up** below |
 
-Designs and predictions, written before running: [PLAN.md](PLAN.md), [PLAN_FINETUNE.md](PLAN_FINETUNE.md).
+Designs and predictions, written before running: [PLAN.md](PLAN.md),
+[PLAN_FINETUNE.md](PLAN_FINETUNE.md), [PLAN_DECODE.md](PLAN_DECODE.md).
+
+---
+
+## ⚠️ Read this before running anything on this machine
+
+**`P2pNcclConnector` pins 32 GiB of host memory *per instance* by default.** Two instances ask
+for 64 GiB of unswappable memory on a 60 GiB box. That is not an OOM kill — the kernel cannot
+reclaim pinned pages, so it starves the display server and the OOM killer alike. **It froze and
+rebooted this workstation once.**
+
+Always set `mem_pool_size_gb` explicitly. `scripts/decode/disagg_launch.sh` does, prints the
+budget, and refuses to start if the total is unsafe. Run `scripts/common/mem_guard.sh` alongside
+anything that allocates pinned memory:
+
+```bash
+scripts/common/mem_guard.sh 12000 &   # kills vLLM if available RAM drops below 12 GB
+```
+
+---
+
+## Picking this up
+
+**Done:** both completed studies, their reports, figures and raw data. Nothing left to run.
+
+**In progress — the decode study, phase 0.** Two vLLM instances (prefill on GPU0, decode on
+GPU1) plus a router come up cleanly, and the **NCCL handshake succeeds in both directions**.
+What does not work: the decode leg never responds. The cause is located but not yet fixed —
+`P2pNcclConnector`'s consumer blocks in
+
+```python
+while tensor_id not in self.recv_store:
+    self.recv_store_cv.wait()          # unbounded — no timeout, no logging
+```
+
+so a key mismatch hangs the decode engine **permanently and silently**. Leading hypothesis: the
+prefill and decode legs disagree on `request_id`, because vLLM can append suffixes to the id
+taken from the `X-Request-Id` header. [PLAN_DECODE.md §13](PLAN_DECODE.md) has the full state
+and the ordered steps to finish.
+
+Two practical warnings for whoever continues:
+
+- **Never probe with a bare `curl`** — that unbounded wait hangs the client indefinitely. Put a
+  hard timeout on every probe.
+- **One bad request wedges the whole decode engine**, not just that request. The sweep driver
+  will need the stall watchdog from the inference study.
 
 ---
 
@@ -25,28 +73,30 @@ python3 -m venv .venv-matched
 PIP_CONFIG_FILE=/dev/null .venv-matched/bin/pip install "vllm==0.15.1" pandas matplotlib
 
 # 2. measure the machine's physical constants — everything else is read against these
-.venv/bin/python scripts/calibrate_pcie.py
+.venv/bin/python scripts/common/calibrate_pcie.py
 
 # 3. inference: validate the pipeline in ~3 min, then run the sweep (~2 h)
-cd scripts && ../.venv-matched/bin/python run_sweep.py --smoke
-cd scripts && nohup ../.venv-matched/bin/python run_sweep.py --tag main > ../output/logs/sweep.out 2>&1 &
+cd scripts/inference && ../../.venv-matched/bin/python run_sweep.py --smoke
+cd scripts/inference && nohup ../../.venv-matched/bin/python run_sweep.py --tag main > ../output/logs/sweep.out 2>&1 &
 
 # 4. finetuning (~10 min per arm)
-.venv/bin/python scripts/finetune_sweep.py --find-batch
-.venv/bin/python scripts/finetune_sweep.py --batch 2 --tag ft                        # no prefetch
-.venv/bin/python scripts/finetune_sweep.py --batch 2 --prefetch --max-offload 16 --tag ft_prefetch
+.venv/bin/python scripts/finetune/finetune_sweep.py --find-batch
+.venv/bin/python scripts/finetune/finetune_sweep.py --batch 2 --tag ft                        # no prefetch
+.venv/bin/python scripts/finetune/finetune_sweep.py --batch 2 --prefetch --max-offload 16 --tag ft_prefetch
 
 # 5. figures
-.venv/bin/python scripts/plot_workload.py
-.venv/bin/python scripts/plot_case_a.py
-.venv/bin/python scripts/plot_finetune.py
-.venv/bin/python scripts/compute_walls.py     # wall thresholds from the calibration
+.venv/bin/python scripts/plots/plot_workload.py
+.venv/bin/python scripts/plots/plot_case_a.py
+.venv/bin/python scripts/plots/plot_finetune.py
+.venv/bin/python scripts/inference/compute_walls.py     # wall thresholds from the calibration
 ```
+
+The decode study is not runnable end to end yet; see **Picking this up** above.
 
 **Watch a running sweep** — safe to run any time, read-only:
 
 ```bash
-python3 scripts/status.py
+python3 scripts/common/status.py
 ```
 
 It prints what is running, the live engine state, every completed result, and an ETA. `output/summary_*.csv` is also rewritten after **every** config, so partial results are always readable.
@@ -60,8 +110,8 @@ It prints what is running, the live engine state, every completed result, and an
 The full matrix is 8 budgets × 2 arms × 2 access patterns. As run:
 
 ```bash
-cd scripts
-../.venv-matched/bin/python run_sweep.py --tag main                                    # everything
+cd scripts/inference
+../../.venv-matched/bin/python run_sweep.py --tag main                                    # everything
 ../.venv-matched/bin/python run_sweep.py --budgets 19 18 --skews zipf --arms offload --tag zipf_low
 ../.venv-matched/bin/python run_sweep.py --skews uniform --arms offload --tag uniform_off
 ../.venv-matched/bin/python run_sweep.py --budgets 30 --skews uniform --arms nooffload --tag uniform_ref
@@ -70,8 +120,8 @@ cd scripts
 One point on its own, or a server to poke by hand:
 
 ```bash
-cd scripts && ../.venv-matched/bin/python run_sweep.py --budgets 24 --skews zipf --arms offload --requests 100 --tag oneoff
-.venv-matched/bin/python scripts/server.py --util 0.7655 --kv-offload-gib 24 --hold
+cd scripts/inference && ../../.venv-matched/bin/python run_sweep.py --budgets 24 --skews zipf --arms offload --requests 100 --tag oneoff
+.venv-matched/bin/python scripts/inference/server.py --util 0.7655 --kv-offload-gib 24 --hold
 ```
 
 Useful flags: `--budgets --skews --arms --requests --qps --repeats --cpu-pool-gib --stall-timeout --tag --dry-run`.
@@ -79,20 +129,34 @@ Useful flags: `--budgets --skews --arms --requests --qps --repeats --cpu-pool-gi
 ### Finetuning (five offload strategies)
 
 ```bash
-.venv/bin/python scripts/finetune_sweep.py --batch 2 --tag ft                                   # no prefetch, 0-32
-.venv/bin/python scripts/finetune_sweep.py --batch 2 --prefetch --prefetch-depth 1 --max-offload 16 --tag ft_prefetch
-.venv/bin/python scripts/finetune_sweep.py --batch 2 --prefetch --prefetch-depth 2 --max-offload 16 --tag ft_prefetch_d2
-scripts/run_interleave.sh                                                                        # both interleaved arms
+.venv/bin/python scripts/finetune/finetune_sweep.py --batch 2 --tag ft                                   # no prefetch, 0-32
+.venv/bin/python scripts/finetune/finetune_sweep.py --batch 2 --prefetch --prefetch-depth 1 --max-offload 16 --tag ft_prefetch
+.venv/bin/python scripts/finetune/finetune_sweep.py --batch 2 --prefetch --prefetch-depth 2 --max-offload 16 --tag ft_prefetch_d2
+scripts/finetune/run_interleave.sh                                                                        # both interleaved arms
 ```
 
 Flags: `--batch --steps --warmup --offload-step --max-offload --prefetch --prefetch-depth --pattern {tail,interleave} --tag`.
+
+### Decode disaggregation (phase 0, incomplete)
+
+```bash
+scripts/common/mem_guard.sh 12000 &          # ALWAYS run this first
+scripts/decode/disagg_launch.sh 0.9568       # prefill GPU0 + decode GPU1 + router on :8000
+# ... probe with a HARD TIMEOUT, never a bare curl ...
+scripts/decode/disagg_stop.sh                # tears down; also kills orphaned engine children
+```
+
+`disagg_launch.sh` takes the decode instance's `--gpu-memory-utilization` as its one argument —
+that is the variable the study sweeps. Prefill is fixed at 28 GiB so it never bottlenecks.
+Pinned pools: 1 GiB on prefill (never used under `PUT_ASYNC`), 24 GiB on decode (holds queued
+KV). The current blocker is described in **Picking this up**.
 
 ### Regenerating derived numbers without re-running anything
 
 Every run's per-request records are kept, so a fix to a derived column costs a rebuild, not an experiment:
 
 ```bash
-cd scripts && ../.venv/bin/python rebuild_summary.py --tag main
+cd scripts/inference && ../../.venv/bin/python rebuild_summary.py --tag main
 ```
 
 ---
@@ -101,7 +165,11 @@ cd scripts && ../.venv/bin/python rebuild_summary.py --tag main
 
 | path | what it is |
 |---|---|
-| `scripts/` | everything executable — harness, diagnostics, plotting |
+| `scripts/common/` | shared: PCIe calibration, live status, memory watchdog |
+| `scripts/inference/` | Case A harness: workload, client, server, sweep driver, wall calculator |
+| `scripts/finetune/` | LoRA sweep and the layer streamer |
+| `scripts/decode/` | prefill/decode disaggregation: launcher, router, teardown |
+| `scripts/plots/` | all figure generation |
 | `output/` | `summary_*.csv`, `*_sweep.json`, `calibration_pcie.json`, plus gitignored `raw/` and `logs/` |
 | `figures/` | generated PNGs |
 | `RESULTS.md`, `RESULTS_FINETUNE.md` | findings, with figures and limitations |
@@ -109,20 +177,25 @@ cd scripts && ../.venv/bin/python rebuild_summary.py --tag main
 
 ### Scripts
 
+Grouped by experiment; `common/` holds what all three share.
+
 | script | role |
 |---|---|
-| `calibrate_pcie.py` | **Run this first.** Pinned/pageable H2D+D2H bandwidth, PCIe link state under load, and a 24 GiB pinned-allocation test. Derives `t_load`, the constant every later number is read against. |
-| `workload.py` | Synthetic multi-session workload with an **exactly-known** KV working set. Runnable: prints the shape. |
-| `client.py` | Open-loop async load generator: Poisson arrivals, streaming completions, per-request TTFT / ITL / e2e. |
-| `server.py` | One vLLM server per sweep point — launch, wait for `/health`, parse real KV sizing from the startup log, scrape `/metrics`, tear down. Runnable standalone with `--hold`. |
-| `run_sweep.py` | Inference driver: config matrix → server lifecycle → warmup → measured load → JSON + CSV. Includes the stall watchdog. |
-| `compute_walls.py` | The four wall thresholds, computed from measured constants rather than asserted. |
-| `finetune_sweep.py` | LoRA finetuning driver: batch-size probe, then the offload sweep. |
-| `layer_offload.py` | Streams a layer's frozen weights from pinned DRAM **correctly through backward**, with optional depth-*k* prefetch and tail/interleaved placement. |
-| `probe_offload_stall.py` | Diagnostic: measures offload store cost sequentially and under a concurrent burst. |
-| `rebuild_summary.py` | Regenerates a summary CSV from `output/raw/*.json` through the current derivation. |
-| `status.py` | Live, read-only view of any running sweep. |
-| `plot_*.py` | Figures: access patterns, inference sweep, walls, finetuning strategies. |
+| `common/calibrate_pcie.py` | **Run this first.** Pinned/pageable H2D+D2H bandwidth, PCIe link state under load, and a 24 GiB pinned-allocation test. Derives `t_load`, the constant every later number is read against. |
+| `inference/workload.py` | Synthetic multi-session workload with an **exactly-known** KV working set. Runnable: prints the shape. |
+| `inference/client.py` | Open-loop async load generator: Poisson arrivals, streaming completions, per-request TTFT / ITL / e2e. |
+| `inference/server.py` | One vLLM server per sweep point — launch, wait for `/health`, parse real KV sizing from the startup log, scrape `/metrics`, tear down. Runnable standalone with `--hold`. |
+| `inference/run_sweep.py` | Inference driver: config matrix → server lifecycle → warmup → measured load → JSON + CSV. Includes the stall watchdog. |
+| `inference/compute_walls.py` | The four wall thresholds, computed from measured constants rather than asserted. |
+| `finetune/finetune_sweep.py` | LoRA finetuning driver: batch-size probe, then the offload sweep. |
+| `finetune/layer_offload.py` | Streams a layer's frozen weights from pinned DRAM **correctly through backward**, with optional depth-*k* prefetch and tail/interleaved placement. |
+| `inference/probe_offload_stall.py` | Diagnostic: measures offload store cost sequentially and under a concurrent burst. |
+| `inference/rebuild_summary.py` | Regenerates a summary CSV from `output/raw/*.json` through the current derivation. |
+| `common/status.py` | Live, read-only view of any running sweep. |
+| `plots/plot_*.py` | Figures: access patterns, inference sweep, walls, finetuning strategies. |
+| `decode/disagg_launch.sh` | Brings up prefill (GPU0) + decode (GPU1) + router, with pinned-pool caps and a preflight RAM guard. |
+| `decode/disagg_p2p_proxy.py` | Router for `P2pNcclConnector`: mints request ids carrying both peer addresses, sends the prefill leg with `max_tokens=1`, then the decode leg. |
+| `common/mem_guard.sh` | Kills the instances if available RAM collapses — pinned memory cannot be reclaimed, so overcommit freezes the box rather than triggering the OOM killer. |
 
 ---
 
@@ -174,3 +247,4 @@ The base conda env cannot run vLLM at all — it has `transformers` 4.45 against
 4. **A stalled vLLM leaves its engine child alive holding VRAM.** `pkill -9 -f VLLM::EngineCore` is needed to actually free the card.
 5. **`model.train()` is load-bearing for gradient checkpointing.** HF applies it only when `self.gradient_checkpointing and self.training`, and `from_pretrained` returns a model in eval mode — the flag reads `True` while checkpointing silently does nothing (14 GiB of activations instead of 1).
 6. **`accelerate`'s `device_map` CPU offload cannot train.** It leaves parameters on the `meta` device and backward fails with *"expected device meta but got cuda:0"*. Hence `layer_offload.py`.
+7. **`P2pNcclConnector` pins 32 GiB of host memory per instance by default** (`DEFAULT_MEM_POOL_SIZE_GB = 32`). Disaggregation means ≥2 instances, so the default asks for ≥64 GiB of **unswappable, unreclaimable** memory. On this 60 GiB box that is not an OOM kill but a **hard freeze and reboot** — the kernel cannot reclaim pinned pages, so it starves the display server and the OOM killer alike. Always set `mem_pool_size_gb` in `kv_connector_extra_config`; `disagg_launch.sh` sets 4 GiB and refuses to start if the pools would exceed a third of RAM.

@@ -23,7 +23,7 @@ import client as client_mod
 import server as server_mod
 from workload import build_workload, warmup_requests
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 OUT = REPO / "output"
 RAW = OUT / "raw"
 

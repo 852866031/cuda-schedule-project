@@ -7,6 +7,7 @@ draws it from the real generator rather than describing it.
     python scripts/plot_workload.py
 """
 
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -14,9 +15,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from workload import build_workload
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "inference"))
+from workload import build_workload  # noqa: E402
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 FIGS = REPO / "figures"
 
 BLUE, PURPLE, RED, GREY = "#1f6feb", "#8250df", "#c1440e", "#57606a"

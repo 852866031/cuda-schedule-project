@@ -77,7 +77,7 @@ training**: it leaves parameters on the `meta` device and materialises them per 
 backward pass fails outright with *"expected device meta but got cuda:0"*. It is built for
 inference.
 
-[`scripts/layer_offload.py`](scripts/layer_offload.py) manages residency around the *whole* step
+[`scripts/finetune/layer_offload.py`](scripts/finetune/layer_offload.py) manages residency around the *whole* step
 instead:
 
 ```
@@ -251,10 +251,10 @@ with no failure mode. If you must run out of memory somewhere, training is the b
 ## Reproducing
 
 ```bash
-.venv/bin/python scripts/finetune_sweep.py --find-batch                        # phase 0
-.venv/bin/python scripts/finetune_sweep.py --batch 2 --tag ft                  # on-demand
-.venv/bin/python scripts/finetune_sweep.py --batch 2 --prefetch --max-offload 16 --tag ft_prefetch
-.venv/bin/python scripts/plot_finetune.py
+.venv/bin/python scripts/finetune/finetune_sweep.py --find-batch                        # phase 0
+.venv/bin/python scripts/finetune/finetune_sweep.py --batch 2 --tag ft                  # on-demand
+.venv/bin/python scripts/finetune/finetune_sweep.py --batch 2 --prefetch --max-offload 16 --tag ft_prefetch
+.venv/bin/python scripts/plots/plot_finetune.py
 ```
 
 Design and predictions made before running: [PLAN_FINETUNE.md](PLAN_FINETUNE.md). Environment

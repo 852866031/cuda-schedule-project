@@ -16,7 +16,7 @@ from pathlib import Path
 from run_sweep import derive_row
 from workload import build_workload
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 OUT = REPO / "output"
 
 
