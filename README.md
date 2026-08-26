@@ -11,7 +11,8 @@ complete, and they fail for opposite reasons.
 | **[Inference](reports/report_simple_inference.md)** | ✅ done | vLLM serving, KV cache oversubscribed, weights resident | VRAM 30 → 22 GiB (**58% less KV**) for **9% of TTFT p95**. Below that it collapses two orders of magnitude in two steps. The wall is **concurrency**, not cache capacity or bandwidth. |
 | **[Finetuning](reports/report_finetune.md)** | ✅ done | LoRA r=16, base weights streamed from DRAM | **3.25 GiB freed for 1.4%** of throughput *with overlapped transfers* — **30% without**. The wall is **PCIe bandwidth**, and degradation is smooth rather than a cliff. |
 | **[LMCache inference](reports/report_lmcache_inference.md)** | ✅ done | same sweep, LMCache as the DRAM tier | Same cliff at 19–20 GiB — the wall is the workload's, not the backend's. Below it: **zero preemptions, no stalls** — saturation queues instead of spiraling. |
-| **[Decode node](PLAN_DECODE.md)** | 🔨 phase 0, blocked | GPU0 prefill → GPU1 decode, sweep GPU1's VRAM | not yet measured — see **Picking this up** below |
+| **[Split inference](reports/report_split_inference.md)** | ✅ done | GPU0 prefill → GPU1 decode over a shared LMCache; decode VRAM swept | TTFT ~105 ms flat until the wall at 20–22 GiB — set by in-flight KV, not the working set. Prefill GPU 97% idle; decode DRAM-bound. The hand-built transfer arm and why it was abandoned are §1. |
+| **[Decode node](PLAN_DECODE.md)** | ✅ done — see [reports/report_split_inference.md](reports/report_split_inference.md) | GPU0 prefill → GPU1 decode, sweep GPU1's VRAM | measured over a shared LMCache; the plan's P2P transport arm was built, patched working, and superseded (report §1) |
 
 Designs and predictions, written before running: [PLAN.md](PLAN.md),
 [PLAN_FINETUNE.md](PLAN_FINETUNE.md), [PLAN_DECODE.md](PLAN_DECODE.md).
@@ -39,7 +40,9 @@ scripts/common/mem_guard.sh 12000 &   # kills vLLM if available RAM drops below 
 
 **Done:** both completed studies, their reports, figures and raw data. Nothing left to run.
 
-**In progress — the decode study, phase 0.** Two vLLM instances (prefill on GPU0, decode on
+**Historical — this section described phase 0 while it was blocked; the study is now
+complete** (see [reports/report_split_inference.md](reports/report_split_inference.md)).
+Kept because the failure mode is instructive. Two vLLM instances (prefill on GPU0, decode on
 GPU1) plus a router come up cleanly, and the **NCCL handshake succeeds in both directions**.
 What does not work: the decode leg never responds. The cause is located but not yet fixed —
 `P2pNcclConnector`'s consumer blocks in
@@ -138,7 +141,7 @@ scripts/finetune/run_interleave.sh                                              
 
 Flags: `--batch --steps --warmup --offload-step --max-offload --prefetch --prefetch-depth --pattern {tail,interleave} --tag`.
 
-### Decode disaggregation (phase 0, incomplete)
+### Decode disaggregation (complete — see reports/report_split_inference.md)
 
 ```bash
 scripts/common/mem_guard.sh 12000 &          # ALWAYS run this first

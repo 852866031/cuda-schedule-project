@@ -56,11 +56,29 @@ export PYTHONHASHSEED=0
 "$REPO/scripts/common/mem_guard.sh" "${MEM_GUARD_FLOOR_MB:-8000}" 1 > "$LOGS/mem_guard.log" 2>&1 &
 echo $! > /tmp/disagg_memguard.pid
 
+# Back-to-back sweep configs tear a server down and start the next within seconds; the
+# old socket can linger and the fresh bind then dies with EADDRINUSE. Wait for the port
+# to actually clear, and verify the new server is LISTENING, not merely alive.
+echo -n "waiting for :$LMC_PORT to clear "
+for i in $(seq 1 20); do
+    ss -ltn "sport = :$LMC_PORT" | grep -q ":$LMC_PORT" || { echo "clear"; break; }
+    sleep 1
+    [ "$i" = 20 ] && { echo "TIMEOUT: something still holds :$LMC_PORT" >&2; exit 1; }
+done
+
 echo "starting LMCache server (DRAM) on :$LMC_PORT..."
-"$PY" -m lmcache.v1.server 127.0.0.1 "$LMC_PORT" cpu > "$LOGS/lmc_server.log" 2>&1 &
-echo $! > /tmp/disagg_lmcserver.pid
-sleep 2
-kill -0 "$(cat /tmp/disagg_lmcserver.pid)" || { echo "LMCache server died -- see $LOGS/lmc_server.log" >&2; exit 1; }
+for attempt in 1 2 3; do
+    "$PY" "$(dirname "$0")/lmc_server_main.py" 127.0.0.1 "$LMC_PORT" cpu > "$LOGS/lmc_server.log" 2>&1 &
+    echo $! > /tmp/disagg_lmcserver.pid
+    sleep 2
+    if kill -0 "$(cat /tmp/disagg_lmcserver.pid)" 2>/dev/null && \
+       ss -ltn "sport = :$LMC_PORT" | grep -q ":$LMC_PORT"; then
+        break
+    fi
+    echo "  server attempt $attempt died -- retrying" >&2
+    sleep 2
+    [ "$attempt" = 3 ] && { echo "LMCache server died 3x -- see $LOGS/lmc_server.log" >&2; exit 1; }
+done
 
 # Per-instance LMCache config. save_unfull_chunk false: only whole 256-token chunks are
 # stored, so the 6144-token session prefix is exactly 24 chunks and per-request suffixes
@@ -108,9 +126,14 @@ for p in 8100 8200; do
     done
 done
 
+if ss -ltn "sport = :8000" | grep -q ":8000"; then
+    echo "REFUSING TO START THE ROUTER: something already listens on :8000" >&2
+    ss -ltnp 2>/dev/null | grep 8000 >&2
+    exit 1
+fi
 "$REPO/.venv/bin/python" lmc_proxy.py \
     --prefill 127.0.0.1:8100 --decode 127.0.0.1:8200 \
-    --max-inflight "$MAX_INFLIGHT" --port 8000 > "$LOGS/disagg_proxy.log" 2>&1 &
+    --max-inflight "$MAX_INFLIGHT" ${FORWARD_FIRST_TOKEN:+--forward-first-token} --port 8000 > "$LOGS/disagg_proxy.log" 2>&1 &
 echo $! > /tmp/disagg_proxy.pid
 sleep 3
 echo "proxy up on :8000"

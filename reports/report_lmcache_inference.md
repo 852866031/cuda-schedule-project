@@ -101,8 +101,12 @@ reassembly). Under zipf this is invisible — the median request is a GPU hit an
 backend never runs, hence the identical 56 vs 54 ms medians. Under uniform access,
 40–90% of requests take the DRAM path, and the extra fetch cost surfaces directly as the
 ~1.5× median gap (126 vs 73 ms at 30 GiB). This is the one difference that is an
-implementation artifact rather than a design property: with compiled ops the fetch cost
-shrinks and the median gap should shrink with it (re-measurement in progress).
+implementation artifact rather than a design property in principle — but it proved
+unavoidable in practice: no published lmcache wheel matches torch 2.9.1+cu128 (older
+wheels miss its C++ ABI, 0.4.5+ are built against CUDA-13 torch), and a from-source build
+whose compiled ops import cleanly then deadlocks in engine initialization. The measured
+fetch cost therefore stands, and how much of the ~86 ms is the copy path versus the
+per-chunk bookkeeping remains unresolved.
 
 ### Chain 2: coarser eviction → fewer total misses → tighter tails
 
@@ -154,8 +158,12 @@ all 300 requests. At the floor, compare throughput and completion, not latency.
   Unset, keys differ per process and across restarts; in a single-process run this silently
   empties the cache on every restart, and in the split deployment (companion work) it made
   the decode node recompute everything while *looking* correct.
-- The compiled CUDA ops don't load against torch 2.9.1; everything ran on the Python
-  fallback. The uniform-skew median toll should be re-measured if a matching wheel appears.
+- The compiled CUDA ops don't load against torch 2.9.1, and every escape route was tried:
+  0.4.5–0.5.3 wheels fail on `libcudart.so.13` and then on the CUDA-13 torch ABI even with
+  a cudart 13 supplied; a source build against the local CUDA 12.8 toolchain imports
+  cleanly (`Using backend: lmcache.c_ops`) but hangs in the engine's storage-manager
+  initialization. Everything measured here ran on the Python fallback; treat the fetch
+  cost as an upper bound.
 - Environment drift vs the original run: transformers 4.56.x → 4.57.6, lmcache and its
   dependency tree newly installed. The zipf/b24 re-measurement doubling as a drift control
   reproduced the original numbers.

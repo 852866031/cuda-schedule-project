@@ -39,6 +39,7 @@ from workload import build_workload, warmup_requests           # noqa: E402
 OUT = REPO / "output"
 RAW = OUT / "raw"
 LOGS = OUT / "logs"
+GPUMON = OUT / "gpumon"
 
 # vLLM sizes gpu_memory_utilization against torch's *total* device memory, not nvidia-smi's.
 # Same constant as run_sweep.py, so a budget means the same thing in both studies.
@@ -46,12 +47,19 @@ GPU_TOTAL_GIB = 31.3536
 DEFAULT_BUDGETS = [30.0, 28.0, 26.0, 24.0, 22.0, 20.0, 19.0, 18.0]
 
 PROXY = "http://127.0.0.1:8000"
+_ACTIVE_STACK = ["p2p"]   # which stack the stall watchdog should tear down
 PREFILL_URL = "http://127.0.0.1:8100"
 DECODE_URL = "http://127.0.0.1:8200"
 
 # Markers that mean a run's KV never arrived, so its numbers are not measurements.
 INVALID_MARKERS = ("RECV TIMEOUT", "kv_cache is None", "Insufficient memory",
                    "Peer Out Of Memory", "EngineDeadError")
+# Counted but not run-invalidating. The lmcache L1 logs thousands of transient allocation
+# failures under churn (24 GiB flowing through a 6 GiB staging pool) yet stores and
+# retrievals all complete -- measured: 32/32 sessions stored, full-prefix retrieval on
+# every request alongside 6.7k of these lines. A crash from real exhaustion still shows
+# up as EngineDeadError.
+WARN_MARKERS = ("Failed to allocate memory block",)
 
 
 def scrape(url):
@@ -72,17 +80,27 @@ def scrape(url):
     return out
 
 
-def launch(decode_util, env_extra):
+# The two split stacks share ports, pidfiles, log names and the reference-load client;
+# only their launch/stop scripts differ. "p2p" is the patched P2pNcclConnector stack in
+# this directory; "lmcache" is the shared-DRAM-cache stack in ../split_lmcache.
+STACKS = {
+    "p2p": (HERE / "disagg_launch.sh", HERE / "disagg_stop.sh"),
+    "lmcache": (HERE.parent / "split_lmcache" / "lmc_launch.sh",
+                HERE.parent / "split_lmcache" / "lmc_stop.sh"),
+}
+
+
+def launch(stack, decode_util, env_extra):
     env = {**os.environ, **env_extra}
-    r = subprocess.run(["bash", str(HERE / "disagg_launch.sh"), f"{decode_util:.4f}"],
+    r = subprocess.run(["bash", str(STACKS[stack][0]), f"{decode_util:.4f}"],
                        env=env, capture_output=True, text=True, timeout=900)
     if r.returncode != 0 or "proxy up" not in r.stdout:
         raise RuntimeError(f"launch failed: {r.stdout[-500:]}{r.stderr[-500:]}")
     return r.stdout
 
 
-def stop():
-    subprocess.run(["bash", str(HERE / "disagg_stop.sh")], capture_output=True,
+def stop(stack):
+    subprocess.run(["bash", str(STACKS[stack][1])], capture_output=True,
                    text=True, timeout=180)
 
 
@@ -109,7 +127,7 @@ def log_markers():
             text = (LOGS / log).read_text(errors="replace")
         except OSError:
             continue
-        for marker in INVALID_MARKERS:
+        for marker in INVALID_MARKERS + WARN_MARKERS:
             n = text.count(marker)
             if n:
                 counts[marker] = counts.get(marker, 0) + n
@@ -153,7 +171,7 @@ def load_with_watchdog(requests, qps, max_tokens, seed, timeout, stall_timeout, 
             # Scrape before the kill: afterwards /metrics is gone and every counter delta
             # comes out negative, silently corrupting the row.
             stall_metrics = {"prefill": scrape(PREFILL_URL), "decode": scrape(DECODE_URL)}
-            stop()
+            stop(_ACTIVE_STACK[0])
             t.join(timeout=240)
             break
     if "err" in box:
@@ -161,16 +179,53 @@ def load_with_watchdog(requests, qps, max_tokens, seed, timeout, stall_timeout, 
     return box.get("res", ([], 0.0)), hung, stall_metrics
 
 
+def gpu_stats(csv_path, t0, t1):
+    """Mean/max per GPU over [t0, t1] from a gpu_monitor.py capture."""
+    per = {}
+    try:
+        for line in open(csv_path):
+            f = line.strip().split(",")
+            if len(f) != 6 or f[0] == "ts":
+                continue
+            ts = float(f[0])
+            if not (t0 <= ts <= t1):
+                continue
+            g = per.setdefault(int(f[1]), {"n": 0, "smact": 0.0, "smocc": 0.0,
+                                           "drama": 0.0, "fb_max": 0.0})
+            g["n"] += 1
+            g["smact"] += float(f[2]); g["smocc"] += float(f[3]); g["drama"] += float(f[4])
+            g["fb_max"] = max(g["fb_max"], float(f[5]))
+    except OSError:
+        return {}
+    out = {}
+    for gpu, role in ((0, "prefill"), (1, "decode")):
+        g = per.get(gpu)
+        if g and g["n"]:
+            out[f"{role}_sm_active_mean"] = round(g["smact"] / g["n"], 4)
+            out[f"{role}_sm_occupancy_mean"] = round(g["smocc"] / g["n"], 4)
+            out[f"{role}_dram_active_mean"] = round(g["drama"] / g["n"], 4)
+            out[f"{role}_fb_used_max_gib"] = round(g["fb_max"] / 1024, 2)
+    return out
+
+
 def run_one(budget, wl, args):
     util = round(budget / GPU_TOTAL_GIB, 4)
-    name = f"disagg_uniform_b{budget:g}"
+    name = f"split_{args.stack}_{wl.skew}_b{budget:g}{args.name_suffix}"
     print(f"\n=== {name}  (decode util={util}) ===", flush=True)
     record = {"name": name, "budget_gib": budget, "util": util, "skew": wl.skew,
-              "setup": "split", "timestamp": datetime.now().isoformat(timespec="seconds"),
+              "setup": f"split_{args.stack}",
+              "timestamp": datetime.now().isoformat(timespec="seconds"),
               "max_inflight": args.max_inflight}
+    GPUMON.mkdir(parents=True, exist_ok=True)
+    mon_path = GPUMON / f"{name}.csv"
+    mon = subprocess.Popen([sys.executable, str(REPO / "scripts/common/gpu_monitor.py"),
+                            str(mon_path)])
     try:
         t0 = time.time()
-        launch(util, {"DECODE_MEM_POOL_GB": str(args.pool_gib),
+        _ACTIVE_STACK[0] = args.stack
+        env_extra = {"FORWARD_FIRST_TOKEN": "1"} if args.forward_first_token else {}
+        launch(args.stack, util, {**env_extra,
+                      "DECODE_MEM_POOL_GB": str(args.pool_gib),
                       "KV_BUFFER_SIZE": args.kv_buffer_size,
                       "MAX_INFLIGHT": str(args.max_inflight),
                       "PREFILL_PREFIX_CACHING": "1" if args.prefill_prefix_cache else "0",
@@ -194,12 +249,14 @@ def run_one(budget, wl, args):
 
         before = {"prefill": scrape(PREFILL_URL), "decode": scrape(DECODE_URL)}
         markers_before = log_markers()
+        t_measure0 = time.time()
         (results, duration), hung, stall_metrics = load_with_watchdog(
             wl.requests, args.qps, args.max_tokens, args.seed + 1, args.timeout,
             args.stall_timeout, args.model)
         after = stall_metrics or {"prefill": scrape(PREFILL_URL), "decode": scrape(DECODE_URL)}
 
         record["hung"] = hung
+        record["gpu"] = gpu_stats(mon_path, t_measure0, time.time())
         if hung:
             record["hung_phase"] = "measure"
         record["summary"] = client_mod.summarize(results, duration, args.max_tokens)
@@ -209,10 +266,23 @@ def run_one(budget, wl, args):
             for role in ("prefill", "decode")
         }
         markers = {k: v - markers_before.get(k, 0) for k, v in log_markers().items()}
-        record["kv_transfer_markers"] = {k: v for k, v in markers.items() if v > 0}
+        record["kv_transfer_markers"] = {k: v for k, v in markers.items()
+                                         if v > 0 and k in INVALID_MARKERS}
+        record["kv_transfer_warnings"] = {k: v for k, v in markers.items()
+                                          if v > 0 and k in WARN_MARKERS}
         record["kv_transfer_ok"] = not record["kv_transfer_markers"]
         record["ok"] = not hung and record["kv_transfer_ok"]
         s = record["summary"]
+        g = record.get("gpu", {})
+        if g:
+            print(f"  gpu[prefill] smact={g.get('prefill_sm_active_mean')} "
+                  f"smocc={g.get('prefill_sm_occupancy_mean')} "
+                  f"dram={g.get('prefill_dram_active_mean')} "
+                  f"fb={g.get('prefill_fb_used_max_gib')}GiB | "
+                  f"gpu[decode] smact={g.get('decode_sm_active_mean')} "
+                  f"smocc={g.get('decode_sm_occupancy_mean')} "
+                  f"dram={g.get('decode_dram_active_mean')} "
+                  f"fb={g.get('decode_fb_used_max_gib')}GiB", flush=True)
         print(f"  TTFT p50={s['ttft_ms']['p50']}ms p95={s['ttft_ms']['p95']}ms | "
               f"{s['output_tok_per_s']} tok/s | failed={s['n_failed']} | {duration:.0f}s"
               f"{'  KV MARKERS: ' + str(record['kv_transfer_markers']) if not record['kv_transfer_ok'] else ''}",
@@ -221,7 +291,8 @@ def run_one(budget, wl, args):
         record.update(ok=False, error=f"{type(e).__name__}: {e}")
         print(f"  FAILED: {record['error']}", flush=True)
     finally:
-        stop()
+        mon.terminate()
+        stop(args.stack)
 
     RAW.mkdir(parents=True, exist_ok=True)
     (RAW / f"{name}.json").write_text(json.dumps(record, indent=2))
@@ -239,7 +310,7 @@ def derive_row(rec, wl):
 
     kv_gib = st.get("decode_kv_gib")
     return {
-        "name": rec["name"], "setup": "split", "ok": rec.get("ok"),
+        "name": rec["name"], "setup": rec.get("setup", "split"), "ok": rec.get("ok"),
         "hung": rec.get("hung", False), "hung_phase": rec.get("hung_phase", ""),
         "kv_transfer_ok": rec.get("kv_transfer_ok"),
         "skew": rec.get("skew"), "arm": "disagg",
@@ -268,6 +339,7 @@ def derive_row(rec, wl):
         "decode_gen_tok_s": round(dec.get("vllm:generation_tokens_total", 0.0) / dur, 1)
         if dur else None,
         "max_inflight": rec.get("max_inflight"),
+        **rec.get("gpu", {}),
         "kv_markers": json.dumps(rec.get("kv_transfer_markers", {})),
     }
 
@@ -292,13 +364,23 @@ def main():
     ap.add_argument("--no-prefill-prefix-cache", dest="prefill_prefix_cache",
                     action="store_false")
     ap.add_argument("--model", default="NousResearch/Meta-Llama-3-8B-Instruct")
+    ap.add_argument("--stack", choices=list(STACKS), default="p2p")
+    ap.add_argument("--forward-first-token", action="store_true",
+                    help="lmcache stack only: stream prefill's token #1 to the client "
+                         "immediately; the KV retrieval moves into the first ITL")
+    ap.add_argument("--name-suffix", default="",
+                    help="appended to every config name so a variant never clobbers "
+                         "earlier raw/log/gpumon artifacts")
+    ap.add_argument("--skew", choices=["zipf", "uniform"], default="zipf")
+    ap.add_argument("--zipf-a", type=float, default=1.1)
     ap.add_argument("--tag", default="disagg")
     args = ap.parse_args()
 
     wl = build_workload(args.sessions, args.prefix_len, args.suffix_len, args.requests,
-                        "uniform", 1.1, args.seed)
+                        args.skew, args.zipf_a, args.seed)
     s = wl.summary()
-    print(f"workload[uniform]: {s['working_set_gib']} GiB working set, "
+    print(f"workload[{args.skew}] on stack '{args.stack}': "
+          f"{s['working_set_gib']} GiB working set, "
           f"{s['num_requests']} requests at {args.qps} QPS, "
           f"prefix {s['prefix_kv_gib']} GiB/session")
     print(f"budgets: {args.budgets}  pool={args.pool_gib} GiB  "

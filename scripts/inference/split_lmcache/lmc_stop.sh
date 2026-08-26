@@ -5,4 +5,5 @@
 rm -f /tmp/disagg_lmcserver.pid
 bash "$(dirname "$0")/../split_simple/disagg_stop.sh"
 pkill -9 -f "lmcache.v1.server" 2>/dev/null
+pkill -9 -f "lmc_server_main" 2>/dev/null
 true

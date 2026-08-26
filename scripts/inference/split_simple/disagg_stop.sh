@@ -9,5 +9,9 @@ sleep 3
 pkill -9 -f "VLLM::EngineCore" 2>/dev/null
 pkill -9 -f "vllm.entrypoints.cli.main serve" 2>/dev/null
 pkill -9 -f "mem_guard.sh" 2>/dev/null
+# The proxy pidfile gets overwritten by every relaunch, so a proxy orphaned by a crashed
+# session leaks and silently serves :8000 with stale code. Kill by name too.
+pkill -9 -f "disagg_p2p_proxy.py" 2>/dev/null
+pkill -9 -f "lmc_proxy.py" 2>/dev/null
 sleep 5
 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader
