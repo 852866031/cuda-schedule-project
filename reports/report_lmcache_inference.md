@@ -16,7 +16,7 @@ backend failed like a crash.
 
 ## 1. What changed, and only what changed
 
-| | native arm (original) | lmcache arm (this report) |
+| | native offload mechanism (original) | lmcache offload mechanism (this report) |
 |---|---|---|
 | offload connector | `OffloadingConnector` (in-tree) | `LMCacheConnectorV1` + lmcache 0.4.4 (pip) |
 | DRAM tier | 24 GiB pinned pool | 24 GiB pinned local-CPU cache (`max_local_cpu_size`) |
@@ -76,14 +76,14 @@ re-measurement reproduced within noise.
 
 ## 3. Discussion
 
-### What actually differs between the two arms
+### What actually differs between the two offload mechanisms
 
-Both arms are the same vLLM server with the same idea: a second KV cache tier in DRAM
+Both configurations are the same vLLM server with the same idea: a second KV cache tier in DRAM
 behind the GPU cache. When a request arrives and its session prefix is on the GPU, it is
 served instantly (a *GPU hit* — the backend never runs). When it is not, the prefix is
 either **fetched from DRAM over PCIe** (a *DRAM hit*, tens to hundreds of ms) or, if the
 DRAM tier does not have it either, **recomputed from scratch** (~530 ms of prefill). The
-only thing that changes between the arms is the software managing that DRAM tier:
+only thing that changes is the offload mechanism — the software managing that DRAM tier:
 
 | | native (`OffloadingConnector`) | lmcache (`LMCacheConnectorV1`) |
 |---|---|---|
@@ -119,7 +119,7 @@ fetch beats a recompute, and lmcache substitutes fetches for recomputes more oft
 
 ### Chain 3: cheap re-admission → the overload spiral never ignites
 
-The native arm's collapse below 20 GiB was a feedback loop: under memory pressure the
+The native mechanism's collapse below 20 GiB was a feedback loop: under memory pressure the
 scheduler evicts a running request, whose prefix must then be *recomputed in full* —
 530 ms of already-paid work turned back into new work, which deepens the pressure that
 caused the eviction. That spiral took native to 28–44 tok/s with a wedged engine (the red
@@ -131,11 +131,11 @@ deep queue instead of a death spiral.
 
 ### What does not change, and why: the cliff
 
-Both arms break at the same budgets (19–20 GiB) because decoding must read a sequence's
+Both offload mechanisms break at the same budgets (19–20 GiB) because decoding must read a sequence's
 KV from *VRAM* on every step — a DRAM tier can eliminate recompute, but it cannot shrink
 the resident KV that running requests need. At 19 GiB the GPU holds ~3.5 requests' KV
 against an offered load needing 5+ concurrent; that arithmetic is backend-independent,
-and indeed the two arms' GPU hit rates track point-for-point down the entire sweep.
+and indeed the two mechanisms' GPU hit rates track point-for-point down the entire sweep.
 Swapping the whole offload implementation moved the cliff not one GiB: **the wall belongs
 to the workload, not to the cache.**
 
@@ -162,9 +162,10 @@ all 300 requests. At the floor, compare throughput and completion, not latency.
 
 ## 5. Where this fits
 
-This is the colocated arm of a larger comparison. The companion split-system work
-(prefill on GPU0, decode on GPU1) has both a bespoke P2P-transfer arm and an
-LMCache-server arm standing; the decode-node VRAM sweep over those is the next experiment.
+This is the colocated half of a larger comparison. The companion split-system work
+(prefill on GPU0, decode on GPU1) has both a bespoke P2P-transfer stack and an
+LMCache-server stack standing; the decode-node VRAM sweep over those is the next
+experiment.
 Between them, the three studies now hold the same workload against: a single GPU with a
 native DRAM tier, a single GPU with LMCache (this report), and a disaggregated pair — with
 the failure mode at the VRAM floor as the sharpest differentiator so far.
