@@ -116,6 +116,10 @@ def summarize(results, duration, max_tokens):
     ttfts = [r["ttft"] for r in ok]
     e2es = [r["e2e"] for r in ok]
     itls = [x for r in ok for x in r["itls"]]
+    # TPOT = per-REQUEST mean gap. With fixed 128-token outputs its mean equals the
+    # all-gaps mean, but its percentiles differ from itl_ms (per-gap) whenever waiting
+    # concentrates in a few gaps -- which is exactly the split/coloc failure signature.
+    tpots = [float(np.mean(r["itls"])) for r in ok if r["itls"]]
     out_tokens = sum(r["n_chunks"] for r in ok)
 
     return {
@@ -129,6 +133,8 @@ def summarize(results, duration, max_tokens):
                     "mean": round(float(np.mean(ttfts)) * 1e3, 2) if ttfts else None},
         "itl_ms": {"p50": pct(itls, 50), "p95": pct(itls, 95),
                    "mean": round(float(np.mean(itls)) * 1e3, 2) if itls else None},
+        "tpot_ms": {"p50": pct(tpots, 50), "p95": pct(tpots, 95),
+                    "mean": round(float(np.mean(tpots)) * 1e3, 2) if tpots else None},
         "e2e_ms": {"p50": pct(e2es, 50), "p95": pct(e2es, 95),
                    "mean": round(float(np.mean(e2es)) * 1e3, 2) if e2es else None},
         "output_tokens": out_tokens,

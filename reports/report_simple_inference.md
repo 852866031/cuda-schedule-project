@@ -226,7 +226,9 @@ leaving p50 largely untouched.
 30 GiB — yet TTFT is 2078 ms. That time is not fetch and not recompute; it is requests waiting
 for KV blocks to be allocated at all. **The metric stops measuring the cache and starts
 measuring the queue.** The tell is that ITL *improves* at the same time (13.3 → 12.2 ms),
-because fewer sequences run concurrently.
+because fewer sequences run concurrently. (ITL here is deliberately the *per-gap*
+inter-token latency — it isolates pure decoding speed. The per-request mean gap, TPOT,
+would move the opposite way, since it absorbs the queue waits.)
 
 ### Decode is affected too — indirectly
 

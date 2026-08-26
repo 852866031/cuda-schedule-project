@@ -151,8 +151,14 @@ silently redefines TTFT as "time until the decode node has re-materialized the K
 ~580 ms flat, dominated by a ~430 ms retrieval that the client need not have waited for.
 The router was fixed to stream leg 1's token immediately and drop the decode leg's
 regenerated duplicate (exact at temperature 0). The accounting balances precisely:
-end-to-end time is unchanged and the retrieval moved into the token-1→2 gap (ITL mean
-rose ~4 ms ≈ 500 ms spread over 127 gaps).
+end-to-end time is unchanged and the retrieval moved into the token-1→2 gap (TPOT rose
+~4 ms ≈ 500 ms spread over 127 gaps).
+
+**Metric naming.** TPOT (time per output token) is the per-request mean inter-token gap,
+(e2e − TTFT)/127; because every request emits exactly 128 tokens, its mean equals the
+mean over all individual gaps, and earlier drafts called this column "ITL mean". "ITL"
+alone below always means the *per-gap* distribution — the two separate exactly when
+waiting concentrates in a few gaps, which is this report's §4 signature.
 
 **All results below use the token-forwarding router.** Discard-router numbers appear
 nowhere in this report; client TTFT here means what it means in a colocated benchmark.
@@ -161,7 +167,7 @@ nowhere in this report; client TTFT here means what it means in a colocated benc
 
 ![decode VRAM sweep](../figures/split_lmcache_sweep.png)
 
-| decode budget | decode KV | TTFT p50 | TTFT p95 | tok/s | e2e p50 | ITL mean | preempt |
+| decode budget | decode KV | TTFT p50 | TTFT p95 | tok/s | e2e p50 | TPOT | preempt |
 |---|---|---|---|---|---|---|---|
 | 30 | 13.77 | **110 ms** | 570 ms | 254.4 | 3.73 s | 27.7 ms | 0 |
 | 26 | 9.77 | **93 ms** | 544 ms | 254.4 | 3.79 s | 27.9 ms | 0 |
@@ -184,9 +190,10 @@ region are noise — the reproducible knee indicator at 22 GiB is the throughput
   token stream, not in TTFT.** At 2 req/s with ~4 s in the system, ~7–8 requests decode
   concurrently, needing ~6 GiB of resident KV: 22 GiB (5.8 GiB of KV) just holds it,
   20 GiB does not. Below the wall, service time stretches (e2e p50 3.7 → 64.5 s) and
-  the backlog lives in the gap between tokens #1 and #2 — visible as the ITL mean
-  climbing 28 → 524 ms (≈ 64 s spread over 127 gaps) while ITL p95 stays ~12 ms: actual
-  decoding stays fast; requests simply wait longer for a KV slot before token #2.
+  the backlog lives in the gap between tokens #1 and #2 — visible as TPOT
+  climbing 28 → 524 ms (≈ 64 s spread over 127 gaps) while the per-gap ITL p95 stays
+  ~12 ms: actual decoding stays fast; requests simply wait longer for a KV slot before
+  token #2.
 - **The floor degrades, it does not die.** At 1.77 GiB of KV — barely two sequences —
   the system still moved 132 tok/s and finished all 300 requests. Same
   queue-instead-of-spiral behavior the colocated LMCache study found, now confirmed on
