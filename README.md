@@ -54,7 +54,8 @@ while tensor_id not in self.recv_store:
 
 so a key mismatch hangs the decode engine **permanently and silently**. Leading hypothesis: the
 prefill and decode legs disagree on `request_id`, because vLLM can append suffixes to the id
-taken from the `X-Request-Id` header. [PLAN_DECODE.md §13](PLAN_DECODE.md) has the full state
+taken from the `X-Request-Id` header. The root causes were found and fixed (see
+[reports/report_split_inference.md](reports/report_split_inference.md) §1)
 and the ordered steps to finish.
 
 Two practical warnings for whoever continues:
@@ -80,8 +81,21 @@ PIP_CONFIG_FILE=/dev/null .venv-matched/bin/pip install "vllm==0.15.1" pandas ma
 .venv/bin/python scripts/common/calibrate_pcie.py
 
 # 3. inference: validate the pipeline in ~3 min, then run the sweep (~2 h)
-cd scripts/inference/simple && ../../.venv-matched/bin/python run_sweep.py --smoke
-cd scripts/inference/simple && nohup ../../.venv-matched/bin/python run_sweep.py --tag main > ../output/logs/sweep.out 2>&1 &
+cd scripts/inference/simple && ../../../.venv-matched/bin/python run_sweep.py --smoke
+cd scripts/inference/simple && nohup ../../../.venv-matched/bin/python run_sweep.py --tag main > ../../../output/logs/sweep.out 2>&1 &
+
+# 3b. the same sweep with LMCache as the DRAM tier (see reports/report_lmcache_inference.md).
+#     lmcache 0.4.4 is the newest release that pairs with vllm 0.15.1; pip will drag
+#     transformers to 5.x during install -- re-pin it afterwards.
+PIP_CONFIG_FILE=/dev/null .venv-matched/bin/pip install "lmcache==0.4.4" && \
+PIP_CONFIG_FILE=/dev/null .venv-matched/bin/pip install "transformers>=4.56,<5"
+cd scripts/inference/simple && ../../../.venv-matched/bin/python run_sweep.py --backend lmcache --arms offload --tag lmcache
+
+# 3c. the disaggregated split (GPU0 prefill, GPU1 decode over a shared LMCache),
+#     decode-VRAM sweep -- see reports/report_split_inference.md
+cd scripts/inference/split_simple && ../../../.venv/bin/python disagg_sweep.py \
+    --stack lmcache --skew zipf --budgets 30 26 22 20 18 \
+    --warmup-qps 0.5 --forward-first-token --max-inflight 999 --tag split_lmc
 
 # 4. finetuning (~10 min per arm)
 .venv/bin/python scripts/finetune/finetune_sweep.py --find-batch
@@ -92,10 +106,14 @@ cd scripts/inference/simple && nohup ../../.venv-matched/bin/python run_sweep.py
 .venv/bin/python scripts/plots/plot_workload.py
 .venv/bin/python scripts/plots/plot_case_a.py
 .venv/bin/python scripts/plots/plot_finetune.py
+.venv/bin/python scripts/plots/plot_lmcache.py          # native vs lmcache DRAM tier
+.venv/bin/python scripts/plots/plot_split_lmcache.py    # split decode-VRAM sweep
+.venv/bin/python scripts/plots/plot_split_timelines.py  # per-second GPU telemetry
 .venv/bin/python scripts/inference/simple/compute_walls.py     # wall thresholds from the calibration
 ```
 
-The decode study is not runnable end to end yet; see **Picking this up** above.
+All four studies are runnable end to end; the split stacks live under
+`scripts/inference/split_simple/` (hand-built P2P) and `split_lmcache/` (shared cache).
 
 **Watch a running sweep** — safe to run any time, read-only:
 

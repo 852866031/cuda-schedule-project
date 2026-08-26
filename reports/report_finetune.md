@@ -77,7 +77,7 @@ training**: it leaves parameters on the `meta` device and materialises them per 
 backward pass fails outright with *"expected device meta but got cuda:0"*. It is built for
 inference.
 
-[`scripts/finetune/layer_offload.py`](scripts/finetune/layer_offload.py) manages residency around the *whole* step
+[`scripts/finetune/layer_offload.py`](../scripts/finetune/layer_offload.py) manages residency around the *whole* step
 instead:
 
 ```
@@ -93,7 +93,7 @@ streamed — releasing the trainable LoRA adapters would hand the optimiser zero
 
 ## 2. Results
 
-![Finetuning offload](../../figures/finetune_offload.png)
+![Finetuning offload](../figures/finetune_offload.png)
 
 | layers offloaded | GiB freed | peak VRAM | no prefetch | **best prefetch** | no-prefetch cost | **best cost** |
 |---|---|---|---|---|---|---|
@@ -258,4 +258,4 @@ with no failure mode. If you must run out of memory somewhere, training is the b
 ```
 
 Design and predictions made before running: [PLAN_FINETUNE.md](../PLAN_FINETUNE.md). Environment
-setup and the gotchas behind each of these scripts: [README.md](README.md).
+setup and the gotchas behind each of these scripts: [README.md](../README.md).

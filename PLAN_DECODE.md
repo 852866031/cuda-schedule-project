@@ -1,9 +1,16 @@
 # Decode-Only Serving under a Shrinking VRAM Budget — Test Plan
 
-> **Design written before running.** Phase 0 has since been attempted and is **partially
-> complete** — transport works, the request-level handshake does not. **See §13 for the exact
-> state and the ordered steps to finish it.** Everything from §1–§12 is still the intended
-> design; nothing in it has been falsified yet, because no measurement has been taken.
+> **Design written before running — kept intact as the pre-registration record. The study
+> is complete**: results in [reports/report_split_inference.md](reports/report_split_inference.md).
+> How reality diverged from this plan, in brief: the P2pNcclConnector transport was made
+> to work (four patches; the request-id handshake below §4 was the connector being broken
+> in vLLM 0.15.1) but the architecture was superseded by a shared LMCache (report §1
+> explains why). The closed-loop N=32 design of §5 was replaced by the same open-loop
+> 2 QPS workload as the other studies, for comparability. Of §9's predictions: the
+> decode node's *throughput* does fall smoothly with budget (1), preemptions are ~zero
+> but for an admission-arithmetic pocket (3), and the "fixed ~64 ms transfer" (5) was
+> falsified — the KV path costs far more, and where it lands (TTFT vs the token-1→2 gap)
+> turned out to be router policy, the study's central finding.
 
 **Question:** in a real disaggregated prefill/decode deployment, how does **decode**
 performance degrade as the decode node's VRAM is reduced?
@@ -258,7 +265,7 @@ only after phases 1–2 land, and only if preemptions actually appear.
 
 | phase | work | time |
 |---|---|---|
-| **0** | **partially done — see §13.** Instances, proxy and NCCL handshake all work; the request-level handshake does not. Finish it before anything is swept. | ~1–2 h |
+| **0** | done — instances, proxy, NCCL and the request-level handshake all work after four connector patches (`scripts/inference/split_simple/p2p_patch/`) | done |
 | **1** | decode budget sweep 30 → 18 GiB, closed loop N=32, ISL 6144 / OSL 512 | ~1.5 h |
 | **2** | ISL sweep {2048, 4096, 6144} at a fixed decode budget | ~40 min |
 | **3** | figures + `RESULTS_DECODE.md` | ~30 min |

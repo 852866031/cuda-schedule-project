@@ -170,10 +170,9 @@ all 300 requests. At the floor, compare throughput and completion, not latency.
 
 ## 5. Where this fits
 
-This is the colocated half of a larger comparison. The companion split-system work
-(prefill on GPU0, decode on GPU1) has both a bespoke P2P-transfer stack and an
-LMCache-server stack standing; the decode-node VRAM sweep over those is the next
-experiment.
+This is the colocated half of a larger comparison. The companion split-system study —
+prefill on GPU0, decode on GPU1 over a shared LMCache, with the decode node's VRAM swept
+— is complete: [report_split_inference.md](report_split_inference.md).
 Between them, the three studies now hold the same workload against: a single GPU with a
 native DRAM tier, a single GPU with LMCache (this report), and a disaggregated pair — with
 the failure mode at the VRAM floor as the sharpest differentiator so far.

@@ -260,6 +260,11 @@ def run_one(budget, wl, args):
         if hung:
             record["hung_phase"] = "measure"
         record["summary"] = client_mod.summarize(results, duration, args.max_tokens)
+        # Per-request records, compact (no per-token ITL lists): enough to reconstruct
+        # the request/session timeline of a run offline.
+        record["records"] = [
+            {k: r.get(k) for k in ("index", "session_id", "t_submit", "ttft", "e2e")}
+            for r in results]
         record["metrics_delta"] = {
             role: {k: round(after[role].get(k, 0.0) - before[role].get(k, 0.0), 4)
                    for k in set(after[role]) | set(before[role]) if k != "error"}

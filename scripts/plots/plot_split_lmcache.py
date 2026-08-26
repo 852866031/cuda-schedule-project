@@ -31,8 +31,10 @@ def load(files, keep):
     return sorted(rows.values(), key=lambda r: float(r["budget_gib"]))
 
 
-split = load(["summary_split_lmc_fwd.csv", "summary_split_lmc_fwd2.csv"],
-             lambda r: r["name"].endswith("_fwd"))
+split = load(["summary_split_lmc_ng.csv", "summary_split_lmc_ng2.csv",
+              "summary_split_lmc_ng3.csv", "summary_split_lmc_ng4.csv",
+              "summary_split_lmc_ng6.csv"],
+             lambda r: r["name"].endswith("_fwd_ng") and float(r["budget_gib"]) != 24)
 coloc = load(["summary_lmcache.csv"],
              lambda r: r["name"].startswith("zipf_") and r["arm"] == "offload")
 

@@ -6,6 +6,23 @@ the reference workload every study here shares (32 sessions × 6144-token prefix
 prefix + 128 unique tokens, 128 out, zipf-1.1, 2 QPS open loop — see
 [report_simple_inference.md](report_simple_inference.md)).
 
+**The workload, precisely** (identical to every study in this repo):
+
+| | value | identity / reuse |
+|---|---|---|
+| sessions | 32, drawn zipf-1.1 | 90% of traffic on 17 of them |
+| session prefix | 6,144 tokens | fixed at session creation; **identical in every request of that session — it never grows** (deliberately *not* an accumulating chat history) |
+| request suffix | 128 tokens | fresh and unique per request, never reused |
+| prompt as sent | **6,272 tokens, every request** | same length for a session's first request and its fiftieth |
+| generated output | exactly 128 tokens | forced via `ignore_eos` |
+| KV per request at decode | 6,400 tokens ≈ 0.78 GiB | |
+| total KV working set | 32 × 6,144 tokens = **24.0 GiB** | pinned by construction |
+| arrivals | open-loop Poisson, 2 req/s | 300 measured requests per config, after a warmup visiting each session once |
+
+What distinguishes a session's first request from later ones is **cache state alone,
+never length**: request #1 computes all 6,272 tokens (~530 ms of prefill); later
+requests find the prefix cached and compute only the 129 fresh tokens (~30 ms).
+
 The study became two stories. **Act I** builds the split the way the vLLM box parts
 suggest — a point-to-point KV transfer plus pinned-DRAM pools — and hits two structural
 problems that no amount of patching fixes. **Act II** replaces the transfer with a shared
@@ -47,6 +64,8 @@ asking for 24 GiB pins 32; and the pool holds **one full copy of the prompt KV
 
 ### Structural problem 1: DRAM for decode only means prefill recomputes
 
+![the recompute problem](../figures/split_native_recompute.png)
+
 The transfer pool gives *decode* a DRAM tier. Prefill has none — its session cache is
 whatever fits in leftover VRAM (~9 of 32 sessions). So when a request from an older
 session returns, prefill recomputes the entire 6144-token prefix from scratch: **~31% of
@@ -55,7 +74,9 @@ onto prefill (vLLM's `OffloadingConnector` composed via `MultiConnector`) fixed 
 recompute — retrieval is ~65 ms — but exposed the deeper disease: the same session's KV
 now existed in **up to five places at once** (prefill's VRAM cache, prefill's DRAM tier,
 in transit, the decode pool — once *per in-flight request*, undeduplicated — and GPU1's
-VRAM), with 29 GiB of pinned RAM holding roughly 3 GiB of distinct hot bytes.
+VRAM), with 29 GiB of pinned RAM holding roughly 3 GiB of distinct hot bytes:
+
+![the copy multiplication](../figures/split_native_copies.png)
 
 ### Structural problem 2: one shared pool between the processes is not trivial
 
@@ -86,6 +107,26 @@ scale), so Act II adopts one rather than rebuilding it.
 ```
 GPU0 prefill ──store once──▶  LMCache server (DRAM, content-addressed)  ◀──retrieve── GPU1 decode
 ```
+
+![one session through the pipeline](../figures/split_lmcache_pipeline.png)
+
+*One session's requests through the pipeline. The prefix KV is computed once (①) and
+stored once; every later request either reuses it from GPU0's VRAM cache (②) or
+retrieves it back from the shared cache (③) — never recomputes it. The decode GPU keeps
+no session state and retrieves the prefix for every request, which is why that retrieval
+must live in the token-1→2 gap rather than TTFT (§3). Note what the user-visible sketch
+hides: GPU0 goes to the cache only on a VRAM miss, and nothing is stored after ① — the
+prefix is deduplicated by content and the 128-token suffix never fills a chunk.*
+
+The memory-layout view — the direct "after" of the Act I five-copies figure:
+
+![Act II memory layout](../figures/split_lmcache_memory.png)
+
+> **The layout is a cache hierarchy.** Each L1 is an LRU cache over the store — L1 + store
+> = two levels (the store is the L2). Counting VRAM: **prefill has three levels**
+> (VRAM prefix cache → L1 → store); **decode has two** — GPU1's VRAM is working memory,
+> not a cache, which is why every request re-retrieves. (L1s are pinned because GPU DMA
+> requires page-locked memory.)
 
 One cache replaces all three private pools. KV is keyed by 256-token chunk hashes, so a
 session's prefix is stored **once ever** (32 stores for 32 sessions, measured, across
@@ -120,26 +161,32 @@ nowhere in this report; client TTFT here means what it means in a colocated benc
 
 ![decode VRAM sweep](../figures/split_lmcache_sweep.png)
 
-| decode budget | decode KV | TTFT p50 | TTFT p95 | tok/s | e2e p50 | ITL p50 | preempt |
+| decode budget | decode KV | TTFT p50 | TTFT p95 | tok/s | e2e p50 | ITL mean | preempt |
 |---|---|---|---|---|---|---|---|
-| 30 | 13.77 | **105 ms** | 551 ms | 254.2 | 3.88 s | 15.9 ms | 0 |
-| 26 | 9.77 | **100 ms** | 554 ms | 254.4 | 3.77 s | 15.2 ms | 0 |
-| 22 | 5.77 | **112 ms** | 557 ms | 249.9 | 4.24 s | 14.4 ms | 0 |
-| 20 | 3.77 | 393 ms | 18.7 s | 207.1 | 15.0 s | 12.5 ms | 0 |
-| 18 | 1.77 | 39.5 s | 108.6 s | 132.4 | 66.4 s | 11.7 ms | 0 |
+| 30 | 13.77 | **110 ms** | 570 ms | 254.4 | 3.73 s | 27.7 ms | 0 |
+| 26 | 9.77 | **93 ms** | 544 ms | 254.4 | 3.79 s | 27.9 ms | 0 |
+| 22 | 5.77 | **111 ms** | 573 ms | 249.8 | 4.35 s | 35.2 ms | 0 |
+| 20 | 3.77 | **84 ms** | 549 ms | 207.7 | 14.8 s | 132.4 ms | 0 |
+| 18 | 1.77 | **74 ms** | 523 ms | 133.6 | 65.8 s | 534.7 ms | 0 |
 
-Zero failed requests and zero preemptions at every point; the stall watchdog never fired.
+Zero failed requests and zero preemptions at every point; the stall watchdog never
+fired. Repeat runs put the p50's run-to-run variance at ±15 ms (b30 measured 80 and
+110 ms in two runs; b22 measured 112 and 111), so small differences along the flat
+region are noise — the reproducible knee indicator at 22 GiB is the throughput dip
+(249.8 tok/s in both runs against 254.4 above it).
 
-- **Above 22 GiB the curve is flat at ~105 ms** — within 2× of the colocated LMCache
-  reference (56 ms), the residue being the router hop and second HTTP leg. TTFT p95 sits
-  at ~550 ms: the ~40% of requests whose prefix misses prefill's VRAM cache and pays
-  DRAM retrieval or recompute *on the prefill side*. Decode-side pressure does not touch
-  first-token latency at all in this regime.
-- **The wall arrives between 22 and 20 GiB**, and it is a capacity wall, not a latency
-  path: at 2 QPS with ~3.8 s in the system, ~7–8 requests are decoding at once, needing
-  ~6 GiB of resident KV. A 22 GiB budget (5.8 GiB KV) just holds it; 20 GiB (3.8 GiB)
-  cannot, the running batch shrinks, service time stretches, and the admission gate
-  backs up — first into the p95, then (at 18 GiB) into the median, which is pure queue.
+- **First-token latency never sees the decode budget.** Token #1 depends only on the
+  prefill GPU, which the sweep never touches — so TTFT stays flat from 30 GiB all the
+  way to 18 GiB, where the decode node can hold barely two sequences. The engine logs
+  make the floor mechanics exact: `Running: 2` (two KV slots at 1.77 GiB), drain
+  1.03 req/s against 2.0 req/s arriving.
+- **The capacity wall arrives between 22 and 20 GiB and shows up in throughput and the
+  token stream, not in TTFT.** At 2 req/s with ~4 s in the system, ~7–8 requests decode
+  concurrently, needing ~6 GiB of resident KV: 22 GiB (5.8 GiB of KV) just holds it,
+  20 GiB does not. Below the wall, service time stretches (e2e p50 3.7 → 64.5 s) and
+  the backlog lives in the gap between tokens #1 and #2 — visible as the ITL mean
+  climbing 28 → 524 ms (≈ 64 s spread over 127 gaps) while ITL p95 stays ~12 ms: actual
+  decoding stays fast; requests simply wait longer for a KV slot before token #2.
 - **The floor degrades, it does not die.** At 1.77 GiB of KV — barely two sequences —
   the system still moved 132 tok/s and finished all 300 requests. Same
   queue-instead-of-spiral behavior the colocated LMCache study found, now confirmed on
@@ -150,6 +197,21 @@ Zero failed requests and zero preemptions at every point; the stall watchdog nev
   split moves the working-set problem off the decode GPU but not the in-flight one.
 
 ![GPU telemetry](../figures/split_lmcache_gpu.png)
+
+**SM active** = the fraction of each 1 s sample during which at least one warp was
+executing somewhere on the chip — how *often* the GPU runs. **SM occupancy** = warps
+resident as a fraction of the maximum, averaged across **all** SMs (and over the
+sample) — how *full* the compute units are when it runs.
+
+![per-second occupancy timelines](../figures/split_lmcache_timelines_occ.png)
+
+*Per-second traces at 30, 22 and 18 GiB decode budgets. Left column: the prefill GPU —
+brief bursts during warmup (each spike one cold prefill), near-silence under load.
+Right: the decode GPU — SM active (green) and the DRAM interface (red) track each other
+at 40–80% through the measured window while SM occupancy (blue) stays under 5% at every
+budget: whenever the GPU runs, it is the memory system doing the work, and the compute
+units sit almost empty. The dashed line is VRAM, stepping to each
+budget and staying flat.*
 
 The telemetry (DCGM SMACT/SMOCC/DRAMA, per-second traces in `output/gpumon/`) shows the
 split's economics in two lines: **the prefill GPU is ~97% idle at every budget** (SM
@@ -174,8 +236,10 @@ other.
 cd scripts/inference/split_simple
 ../../../.venv/bin/python disagg_sweep.py --stack lmcache --skew zipf \
     --budgets 30 26 22 20 18 --warmup-qps 0.5 --forward-first-token \
-    --name-suffix _fwd --tag split_lmc_fwd
-../../../.venv/bin/python ../../plots/plot_split_lmcache.py
+    --max-inflight 999 --name-suffix _fwd_ng --tag split_lmc
+../../../.venv/bin/python ../../plots/plot_split_lmcache.py     # sweep + GPU figures
+../../../.venv/bin/python ../../plots/plot_split_timelines.py   # per-second telemetry
+../../../.venv/bin/python ../../plots/plot_native_pipeline.py   # architecture diagrams
 ```
 
 Data: `output/summary_split_lmc_fwd*.csv`, raw per-request records in
