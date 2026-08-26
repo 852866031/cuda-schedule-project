@@ -393,6 +393,18 @@ unretired, the gate first waits for the oldest — bounding how much already-iss
 work can drain into a decode step (defaults K=8, maxpend=3 ≈ a couple dozen
 kernels; both are env knobs, `COLOC_K` / `COLOC_MAXPEND`).
 
+![the kernel-gate pipeline and the credit scheme](../figures/coloc_kgate_pipeline.png)
+
+*Top: the path of one launch — whoever makes it (aten, cuBLAS, a graph replay), it
+becomes a driver call, and the CUPTI callback runs on the calling thread before the
+driver processes it: that callback is the gate. Note the asymmetry: only the trainer
+is gated; the decode engine is merely observed (a python wrapper publishing its busy
+window) — no interception ever touches the latency-critical process. Bottom: why
+the credit scheme
+exists — issue is asynchronous, so an ungated trainer's queue grows without bound
+during an idle gap and drains into the next decode step; markers every K launches
+plus a maxpend cap keep the issued-but-unexecuted backlog under ~24–32 kernels.*
+
 **Validation before measurement:** solo, the attached gate intercepted 157k
 launches over 60 steps at **zero overhead** (14 ms/step, identical to ungated);
 against a synthetic 20 ms-busy/30 ms-idle square wave it stretched steps 14 → 34 ms

@@ -251,3 +251,120 @@ fig3.tight_layout()
 fig3.savefig("figures/coloc_kgate_arms.png", dpi=140, bbox_inches="tight",
              facecolor="white")
 print("wrote figures/coloc_kgate_arms.png")
+
+# ============ §6.4 companion: the kernel-gate pipeline + credit scheme ============
+fig4, (axP, axQ) = plt.subplots(2, 1, figsize=(13, 7.4),
+                                gridspec_kw={"height_ratios": [1.05, 1]})
+for a in (axP, axQ):
+    a.set_xlim(0, 130); a.axis("off")
+axP.set_ylim(0, 30); axQ.set_ylim(0, 30)
+fig4.suptitle("The kernel-level gate: where a launch is intercepted, and how the "
+              "credit scheme bounds the backlog", fontsize=12, color=GRY,
+              fontweight="bold", y=0.985)
+
+# ---- panel A: the path of ONE kernel launch
+def pbox(x, y, w, h, fc, ec):
+    axP.add_patch(Rectangle((x, y), w, h, facecolor=fc, edgecolor=ec, lw=1.4,
+                            zorder=2))
+
+pbox(2, 16, 26, 10, "#fbf0d9", AMB)
+axP.text(15, 23.4, "trainer thread", fontsize=10, ha="center",
+         fontweight="bold", color=AMB)
+axP.text(15, 19.6, "torch / aten / cuBLAS /\ngraph replay calls a launch",
+         fontsize=8.6, ha="center", va="center", color=GRY)
+
+pbox(34, 8, 44, 18, "#e8e8f8", "#4a4a8a")
+axP.text(56, 23.4, "CUDA driver (libcuda)", fontsize=10, ha="center",
+         fontweight="bold", color="#4a4a8a")
+axP.add_patch(Rectangle((37, 10.5), 38, 10.5, facecolor="white",
+                        edgecolor=ORG, lw=1.5, zorder=3))
+axP.text(56, 19.2, "CUPTI ENTER callback — runs on the calling\nthread BEFORE "
+         "the launch is processed:", fontsize=8.3, ha="center", va="center",
+         color=ORG, zorder=4)
+axP.text(56, 14.2, "1. > maxpend markers unretired? wait for oldest\n"
+         "2. wait while decode's busy flag = 1\n"
+         "3. proceed; every K-th launch drops a marker",
+         fontsize=8.3, ha="center", va="center", color=GRY, zorder=4)
+axP.text(106, 7.0, "every launch passes here, no matter\nwho made it — "
+         "this is the hook LD_PRELOAD\ninterposition cannot reach",
+         fontsize=7.8, ha="center", va="top", color="#4a4a8a")
+
+pbox(84, 16, 20, 10, "#f0f0f0", GRY)
+axP.text(94, 23.4, "stream queue", fontsize=10, ha="center", fontweight="bold",
+         color=GRY)
+axP.text(94, 19.6, "issued, not yet\nexecuted", fontsize=8.6, ha="center",
+         va="center", color=GRY)
+
+pbox(110, 16, 18, 10, "#ddeee4", GRN)
+axP.text(119, 23.4, "GPU", fontsize=10, ha="center", fontweight="bold", color=GRN)
+axP.text(119, 19.6, "executes when\nit gets there", fontsize=8.6, ha="center",
+         va="center", color=GRY)
+
+for x0, x1 in ((28, 34), (78, 84), (104, 110)):
+    axP.add_patch(FancyArrowPatch((x0, 21), (x1, 21), arrowstyle="-|>",
+                                  mutation_scale=13, color=GRY, lw=1.7, zorder=5))
+# the decode side is OBSERVED, never intercepted -- its role is only to say
+# when it is busy; no interception ever touches the latency-critical process.
+axP.text(15, 14.6, "GATED — every launch intercepted", fontsize=7.8, ha="center",
+         color=AMB, fontweight="bold")
+pbox(2, 0.5, 34, 6.8, "#ddeee4", GRN)
+axP.text(19, 5.1, "vLLM decode engine (GPU1)", fontsize=9, ha="center",
+         fontweight="bold", color=GRN)
+axP.text(19, 2.6, "OBSERVED, never intercepted — a python wrapper\n"
+         "sets busy = 1/0 around each engine step", fontsize=7.8, ha="center",
+         va="center", color=GRY)
+pbox(44, 1.5, 24, 4.8, "#f7e3d8", ORG)
+axP.text(56, 3.9, "shm busy page\n(busy | heartbeat)", fontsize=8.0, ha="center",
+         va="center", color=ORG)
+axP.add_patch(FancyArrowPatch((36, 3.9), (44, 3.9), arrowstyle="-|>",
+                              mutation_scale=12, color=GRN, lw=1.5, zorder=5))
+axP.text(40, 5.3, "write", fontsize=7.5, ha="center", color=GRN)
+axP.add_patch(FancyArrowPatch((63, 6.3), (58, 10.5), arrowstyle="-|>",
+                              mutation_scale=12, color=ORG, lw=1.5, zorder=5))
+axP.text(64.5, 8.3, "read", fontsize=7.5, ha="left", color=ORG)
+
+# ---- panel B: the queue ribbon, with and without credits
+axQ.text(2, 28.5, "the stream queue during one idle gap (issue is asynchronous — "
+         "the GPU lags behind the issuing thread):", fontsize=9.5, color=GRY)
+
+def ribbon(y, n, flags, label, note, note_color):
+    axQ.text(2, y + 2, label, fontsize=9, color=GRY, va="center")
+    x = 26
+    for i in range(n):
+        done = i < 4
+        axQ.add_patch(Rectangle((x, y), 2.2, 4,
+                                facecolor="#2e7d4f" if done else "#9a6700",
+                                edgecolor="white", lw=0.4, zorder=3))
+        if flags and (i + 1) % 8 == 0:
+            axQ.plot([x + 2.6, x + 2.6], [y, y + 5.4], color=ORG, lw=1.6, zorder=4)
+            axQ.text(x + 2.6, y + 6.3, "M", fontsize=7.5, ha="center", color=ORG)
+        x += 2.55
+    axQ.text(x + 2.5, y + 2, note, fontsize=8.2, color=note_color, va="center")
+    return x
+
+# executed part legend
+axQ.add_patch(Rectangle((26, 24.2), 2.2, 2.6, facecolor="#2e7d4f",
+                        edgecolor="white", lw=0.4))
+axQ.text(29, 25.5, "executed", fontsize=7.8, color=GRY, va="center")
+axQ.add_patch(Rectangle((38, 24.2), 2.2, 2.6, facecolor="#9a6700",
+                        edgecolor="white", lw=0.4))
+axQ.text(41, 25.5, "issued, waiting", fontsize=7.8, color=GRY, va="center")
+axQ.text(56, 25.5, "M = marker event (every K=8th launch)", fontsize=7.8,
+         color=ORG, va="center")
+
+ribbon(15, 32, False, "unbounded issue\n(§6.3 gate v1)",
+       "…keeps growing: everything\nissued in the gap drains INTO\nthe next decode step",
+       ORG)
+x_end = ribbon(5, 26, True, "with credits\n(K=8, maxpend=3)", "", GRY)
+# the gate blocks at the 4th outstanding marker
+axQ.text(96, 7, "gate BLOCKS the next launch here:\n4 markers unretired → wait for "
+         "the oldest.\nbacklog ≤ K×(maxpend+1) ≈ 24–32 kernels (~1–2 ms)",
+         fontsize=8.2, color=GRY, va="center")
+axQ.plot([x_end + 0.8, x_end + 0.8], [4.5, 10], color=ORG, lw=2.6)
+axQ.text(x_end + 0.8, 11.2, "blocked", fontsize=8, ha="center", color=ORG,
+         fontweight="bold")
+
+fig4.tight_layout(rect=(0, 0, 1, 0.96))
+fig4.savefig("figures/coloc_kgate_pipeline.png", dpi=140, bbox_inches="tight",
+             facecolor="white")
+print("wrote figures/coloc_kgate_pipeline.png")
