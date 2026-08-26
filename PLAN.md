@@ -3,7 +3,7 @@
 
 > **This is the design as written before running anything**, kept as a record of what was
 > predicted. Several predictions in it turned out wrong — where the study says otherwise,
-> the results document is correct. See [RESULTS.md](RESULTS.md).
+> the results document is correct. See [reports/report_simple_inference.md](reports/report_simple_inference.md).
 
 **Question:** an LLM serving app whose working set is ~40 GB is run on a 32 GB GPU, with
 DRAM absorbing the overflow. How does serving performance degrade as we shrink the VRAM

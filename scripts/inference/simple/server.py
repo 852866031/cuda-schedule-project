@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent.parent
 LOG_DIR = REPO / "output" / "logs"
 
 SYSTEM_LIBSTDCXX = "/usr/lib/x86_64-linux-gnu/libstdc++.so.6"
@@ -81,6 +81,10 @@ class VLLMServer:
     def start(self, timeout=900):
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(self.gpu), VLLM_LOGGING_LEVEL="INFO")
+        if self.backend == "lmcache":
+            # lmcache keys chunks with python's builtin hash; pin the seed so keys are
+            # stable across engine restarts within a sweep (and across processes).
+            env["PYTHONHASHSEED"] = "0"
         # This conda env ships libstdc++ 6.0.29 (GLIBCXX_3.4.29) but vllm._C.abi3.so needs
         # GLIBCXX_3.4.32. Preload the system libstdc++ (3.4.33) rather than mutating the
         # user's conda env. Without this, `vllm serve` dies at import.

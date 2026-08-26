@@ -168,7 +168,7 @@ requests' KV (24 GiB) can sit queued. That is precisely the reservation.
 
 > **The default is a trap.** `DEFAULT_MEM_POOL_SIZE_GB = 32`, *per instance*. Two instances ask
 > for 64 GiB of unswappable memory, which on a 60 GiB box is not an OOM kill but a hard freeze
-> and reboot — it happened once here. `scripts/decode/disagg_launch.sh` now sets both pools explicitly, prints
+> and reboot — it happened once here. `scripts/inference/split_simple/disagg_launch.sh` now sets both pools explicitly, prints
 > the budget, and refuses to start if the total exceeds a safe share of RAM. `scripts/common/mem_guard.sh`
 > kills the instances if available RAM collapses anyway.
 
@@ -246,7 +246,7 @@ only after phases 1–2 land, and only if preemptions actually appear.
 
 | risk | mitigation |
 |---|---|
-| **`P2pNcclConnector` pins 32 GiB of host memory per instance by default** | **Already bit us: two instances asked for 64 GiB of unswappable memory on a 60 GiB box and froze the machine hard enough to force a reboot.** `scripts/decode/disagg_launch.sh` now sets `mem_pool_size_gb: 4` and refuses to launch if the pools exceed a third of RAM. Phase 0 must also confirm 4 GiB is enough at the target concurrency and that exhaustion degrades gracefully rather than hanging. |
+| **`P2pNcclConnector` pins 32 GiB of host memory per instance by default** | **Already bit us: two instances asked for 64 GiB of unswappable memory on a 60 GiB box and froze the machine hard enough to force a reboot.** `scripts/inference/split_simple/disagg_launch.sh` now sets `mem_pool_size_gb: 4` and refuses to launch if the pools exceed a third of RAM. Phase 0 must also confirm 4 GiB is enough at the target concurrency and that exhaustion degrades gracefully rather than hanging. |
 | `P2pNcclConnector` config is otherwise fiddly and lightly documented | phase 0 brings up both instances and transfers a single request before anything is swept |
 | The vendored proxy is a demo, slated for upstream removal | pinned to v0.15.1 and vendored into the repo, so it cannot drift |
 | NCCL between two instances may pick a bad transport | measured: 12.62 GB/s via SHM; assert this at startup |

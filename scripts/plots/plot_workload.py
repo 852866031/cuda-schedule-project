@@ -15,7 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "inference"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "inference" / "simple"))
 from workload import build_workload  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent.parent

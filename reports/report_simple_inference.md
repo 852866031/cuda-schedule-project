@@ -81,7 +81,7 @@ turns out to matter more than anything else except VRAM itself.
   **17 sessions = 12.75 GiB**. This is the realistic case — real traffic is skewed, because
   some documents, system prompts and conversations are far more popular than others.
 
-![The two access patterns](figures/workload_access.png)
+![The two access patterns](../figures/workload_access.png)
 
 *Left: requests per session, rank-ordered, from the actual generator. Right: the ceiling on GPU
 cache hits — holding the top-k sessions costs 0.75 GiB each, so this is the best hit rate any
@@ -250,7 +250,7 @@ cannot do. That is the single biggest limitation here.
 
 ## 4. Results
 
-![TTFT vs VRAM budget](figures/case_a_ttft.png)
+![TTFT vs VRAM budget](../figures/case_a_ttft.png)
 
 *Offload arm only, both access patterns. Top: TTFT p50 with the band out to
 p95. Bottom: output throughput, pinned at the offered load until the server
@@ -259,7 +259,7 @@ plotted, since the question is how offloading itself degrades with VRAM.*
 
 ### The DRAM tier absorbs the shrinking GPU cache — until it can't
 
-![Cache tiers](figures/case_a_tiers.png)
+![Cache tiers](../figures/case_a_tiers.png)
 
 | budget | GPU KV | GPU hits | DRAM hits | TTFT p50 | TTFT p95 | preempt |
 |---|---|---|---|---|---|---|
@@ -326,7 +326,7 @@ you need offloading, and the more likely this becomes.**
 
 The curves above have a shape that needs explaining: flat for most of the sweep, then a
 collapse over two steps. Four different resources could in principle produce that shape. Each
-has a threshold that follows from a quantity we measured (`scripts/inference/compute_walls.py`), so each
+has a threshold that follows from a quantity we measured (`scripts/inference/simple/compute_walls.py`), so each
 can be located on the x-axis and checked against what actually happened.
 
 | wall | threshold | hit? | evidence |
@@ -336,7 +336,7 @@ can be located on the x-axis and checked against what actually happened.
 | **3. PCIe bandwidth** | 14.47 GB/s → needs **35 req/s** | **no** — 5.7% used | 0.82 GB/s at the knee |
 | **4. Prefill compute** | 15,700 tok/s → **9 req/s** (no offload), **123 req/s** (offload) | **no** at 2 req/s | 21% vs 1.6% utilised |
 
-![Where the wall is](figures/case_a_walls.png)
+![Where the wall is](../figures/case_a_walls.png)
 
 ### Why walls 1 and 2 bind, and 3 and 4 do not
 
@@ -446,7 +446,7 @@ space changes completely. Do not port these numbers to different silicon.
 | **Combined weight + KV offload** | tests whether they compose — computed answer is no: weight streaming demands 330 GB/s and would starve the KV path |
 | **Repeats at 30 / 24 / 18 GiB** | error bars, currently absent |
 | **Preemption recovery tracing** | does the DRAM tier make preemption cheaper (56 ms refetch vs 530 ms recompute)? Would swap-based preemption beat recompute on a slow-interconnect box? |
-| **LoRA finetuning under a shrinking budget** | see [PLAN_FINETUNE.md](PLAN_FINETUNE.md) — training inverts the economics, and bandwidth becomes the binding wall instead of capacity |
+| **LoRA finetuning under a shrinking budget** | see [PLAN_FINETUNE.md](../PLAN_FINETUNE.md) — training inverts the economics, and bandwidth becomes the binding wall instead of capacity |
 
 ---
 

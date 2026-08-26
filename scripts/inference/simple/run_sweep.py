@@ -23,7 +23,7 @@ import client as client_mod
 import server as server_mod
 from workload import build_workload, warmup_requests
 
-REPO = Path(__file__).resolve().parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent.parent
 OUT = REPO / "output"
 RAW = OUT / "raw"
 
@@ -105,7 +105,7 @@ def run_one(cfg, wl, args, repeat=0):
     srv = server_mod.VLLMServer(
         gpu_mem_util=cfg["util"],
         kv_offload_gib=cfg["kv_offload_gib"],
-        backend="native",
+        backend=args.backend,
         run_name=name,
         gpu=args.gpu,
         extra_args=args.extra,
@@ -264,6 +264,11 @@ def main():
     ap.add_argument("--model", default=server_mod.MODEL)
     ap.add_argument("--extra", nargs="*", default=[],
                     help="extra vllm serve args, e.g. --extra=--enforce-eager")
+    ap.add_argument("--backend", default="native", choices=["native", "lmcache"],
+                    help="KV offloading backend for the offload arm. 'native' is vLLM's "
+                         "OffloadingConnector (the original study); 'lmcache' maps to "
+                         "LMCacheConnectorV1 with a local pinned-DRAM tier of the same "
+                         "size -- single process, no server, no disk.")
     ap.add_argument("--tag", default="", help="suffix for the summary csv")
     ap.add_argument("--smoke", action="store_true", help="tiny 2-config validation run")
     ap.add_argument("--dry-run", action="store_true")
@@ -276,6 +281,11 @@ def main():
         args.cpu_pool_gib, args.tag = 8.0, "smoke"
 
     configs = make_configs(args.budgets, args.skews, args.arms, args.cpu_pool_gib)
+    if args.backend != "native":
+        # Namespace every artifact -- raw json and per-config log share the config name --
+        # so a backend arm can never clobber the original study's files of the same shape.
+        for c in configs:
+            c["name"] += f"_{args.backend}"
     print(f"{len(configs)} configs x {args.repeats} repeat(s)")
     for c in configs:
         print(f"  {c['name']:32s} util={c['util']:.4f} offload={c['kv_offload_gib']}")

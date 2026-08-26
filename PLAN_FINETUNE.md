@@ -3,7 +3,7 @@
 
 > **This is the design as written before running anything**, kept as a record of what was
 > predicted. Several predictions in it turned out wrong — where the study says otherwise,
-> the results document is correct. See [RESULTS_FINETUNE.md](RESULTS_FINETUNE.md).
+> the results document is correct. See [reports/report_finetune.md](reports/report_finetune.md).
 
 **Question:** with the base model's weights offloaded to DRAM, how does LoRA finetuning
 throughput degrade as the VRAM budget shrinks?
@@ -188,7 +188,7 @@ test at one config caught three environment blockers before the matrix ran.
 | **0** | env check (peft/deepspeed install), one smoke step at 32 resident, verify memory accounting against `max_memory_allocated`, confirm the knob moves resident bytes | ~1 h |
 | **1** | budget sweep: 6 points x 3 arms at 8192 tok/step | ~1.5 h |
 | **2** | amortization sweep: 5 token counts x 2 arms at the tight budget | ~1 h |
-| **3** | figures + RESULTS_FINETUNE.md | ~0.5 h |
+| **3** | figures + reports/report_finetune.md | ~0.5 h |
 
 Reuse from the inference harness: the PCIe calibration, the run-per-config driver pattern,
 the stall watchdog, `rebuild_summary.py`, and `status.py` all carry over with small edits.

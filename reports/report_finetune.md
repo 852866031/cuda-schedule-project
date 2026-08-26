@@ -2,7 +2,7 @@
 
 **Llama-3-8B, LoRA r=16 on attention, base weights streamed from DRAM. RTX 5090, PCIe Gen4 ×8.**
 
-Companion to [RESULTS.md](RESULTS.md), which asked the same question of *inference*. Same
+Companion to [report_simple_inference.md](report_simple_inference.md), which asked the same question of *inference*. Same
 machine, same model, same measured constants — so the two are directly comparable, and they
 turn out to fail for opposite reasons.
 
@@ -93,7 +93,7 @@ streamed — releasing the trainable LoRA adapters would hand the optimiser zero
 
 ## 2. Results
 
-![Finetuning offload](figures/finetune_offload.png)
+![Finetuning offload](../../figures/finetune_offload.png)
 
 | layers offloaded | GiB freed | peak VRAM | no prefetch | **best prefetch** | no-prefetch cost | **best cost** |
 |---|---|---|---|---|---|---|
@@ -257,5 +257,5 @@ with no failure mode. If you must run out of memory somewhere, training is the b
 .venv/bin/python scripts/plots/plot_finetune.py
 ```
 
-Design and predictions made before running: [PLAN_FINETUNE.md](PLAN_FINETUNE.md). Environment
+Design and predictions made before running: [PLAN_FINETUNE.md](../PLAN_FINETUNE.md). Environment
 setup and the gotchas behind each of these scripts: [README.md](README.md).

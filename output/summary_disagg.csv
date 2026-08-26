@@ -1,0 +1,2 @@
+name,setup,ok,hung,hung_phase,kv_transfer_ok,skew,arm,budget_gib,util,gpu_kv_gib,gpu_kv_tokens,prefill_kv_gib,gpu_kv_frac_of_ws,sessions_resident,ttft_p50_ms,ttft_p90_ms,ttft_p95_ms,ttft_p99_ms,ttft_mean_ms,itl_p50_ms,e2e_p50_ms,output_tok_per_s,req_per_s,duration_s,n_ok,n_failed,preemptions,prefill_prompt_tok_s,prefill_hit_rate,decode_gen_tok_s,max_inflight,kv_markers
+disagg_uniform_b30,split,True,False,,True,uniform,disagg,30.0,0.9568,13.77,112816,6.66,0.5737,18.36,1563.87,3037.23,3522.38,5073.42,1772.91,14.13,3552.55,253.46,1.98,151.51,300,0,0.0,12419.0,0.2748,253.4,28,{}

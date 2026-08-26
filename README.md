@@ -8,8 +8,9 @@ complete, and they fail for opposite reasons.
 
 | study | status | question | answer |
 |---|---|---|---|
-| **[Inference](RESULTS.md)** | ✅ done | vLLM serving, KV cache oversubscribed, weights resident | VRAM 30 → 22 GiB (**58% less KV**) for **9% of TTFT p95**. Below that it collapses two orders of magnitude in two steps. The wall is **concurrency**, not cache capacity or bandwidth. |
-| **[Finetuning](RESULTS_FINETUNE.md)** | ✅ done | LoRA r=16, base weights streamed from DRAM | **3.25 GiB freed for 1.4%** of throughput *with overlapped transfers* — **30% without**. The wall is **PCIe bandwidth**, and degradation is smooth rather than a cliff. |
+| **[Inference](reports/report_simple_inference.md)** | ✅ done | vLLM serving, KV cache oversubscribed, weights resident | VRAM 30 → 22 GiB (**58% less KV**) for **9% of TTFT p95**. Below that it collapses two orders of magnitude in two steps. The wall is **concurrency**, not cache capacity or bandwidth. |
+| **[Finetuning](reports/report_finetune.md)** | ✅ done | LoRA r=16, base weights streamed from DRAM | **3.25 GiB freed for 1.4%** of throughput *with overlapped transfers* — **30% without**. The wall is **PCIe bandwidth**, and degradation is smooth rather than a cliff. |
+| **[LMCache inference](reports/report_lmcache_inference.md)** | ✅ done | same sweep, LMCache as the DRAM tier | Same cliff at 19–20 GiB — the wall is the workload's, not the backend's. Below it: **zero preemptions, no stalls** — saturation queues instead of spiraling. |
 | **[Decode node](PLAN_DECODE.md)** | 🔨 phase 0, blocked | GPU0 prefill → GPU1 decode, sweep GPU1's VRAM | not yet measured — see **Picking this up** below |
 
 Designs and predictions, written before running: [PLAN.md](PLAN.md),
@@ -24,7 +25,7 @@ for 64 GiB of unswappable memory on a 60 GiB box. That is not an OOM kill — th
 reclaim pinned pages, so it starves the display server and the OOM killer alike. **It froze and
 rebooted this workstation once.**
 
-Always set `mem_pool_size_gb` explicitly. `scripts/decode/disagg_launch.sh` does, prints the
+Always set `mem_pool_size_gb` explicitly. `scripts/inference/split_simple/disagg_launch.sh` does, prints the
 budget, and refuses to start if the total is unsafe. Run `scripts/common/mem_guard.sh` alongside
 anything that allocates pinned memory:
 
@@ -76,8 +77,8 @@ PIP_CONFIG_FILE=/dev/null .venv-matched/bin/pip install "vllm==0.15.1" pandas ma
 .venv/bin/python scripts/common/calibrate_pcie.py
 
 # 3. inference: validate the pipeline in ~3 min, then run the sweep (~2 h)
-cd scripts/inference && ../../.venv-matched/bin/python run_sweep.py --smoke
-cd scripts/inference && nohup ../../.venv-matched/bin/python run_sweep.py --tag main > ../output/logs/sweep.out 2>&1 &
+cd scripts/inference/simple && ../../.venv-matched/bin/python run_sweep.py --smoke
+cd scripts/inference/simple && nohup ../../.venv-matched/bin/python run_sweep.py --tag main > ../output/logs/sweep.out 2>&1 &
 
 # 4. finetuning (~10 min per arm)
 .venv/bin/python scripts/finetune/finetune_sweep.py --find-batch
@@ -88,7 +89,7 @@ cd scripts/inference && nohup ../../.venv-matched/bin/python run_sweep.py --tag 
 .venv/bin/python scripts/plots/plot_workload.py
 .venv/bin/python scripts/plots/plot_case_a.py
 .venv/bin/python scripts/plots/plot_finetune.py
-.venv/bin/python scripts/inference/compute_walls.py     # wall thresholds from the calibration
+.venv/bin/python scripts/inference/simple/compute_walls.py     # wall thresholds from the calibration
 ```
 
 The decode study is not runnable end to end yet; see **Picking this up** above.
@@ -120,8 +121,8 @@ cd scripts/inference
 One point on its own, or a server to poke by hand:
 
 ```bash
-cd scripts/inference && ../../.venv-matched/bin/python run_sweep.py --budgets 24 --skews zipf --arms offload --requests 100 --tag oneoff
-.venv-matched/bin/python scripts/inference/server.py --util 0.7655 --kv-offload-gib 24 --hold
+cd scripts/inference/simple && ../../.venv-matched/bin/python run_sweep.py --budgets 24 --skews zipf --arms offload --requests 100 --tag oneoff
+.venv-matched/bin/python scripts/inference/simple/server.py --util 0.7655 --kv-offload-gib 24 --hold
 ```
 
 Useful flags: `--budgets --skews --arms --requests --qps --repeats --cpu-pool-gib --stall-timeout --tag --dry-run`.
@@ -141,9 +142,9 @@ Flags: `--batch --steps --warmup --offload-step --max-offload --prefetch --prefe
 
 ```bash
 scripts/common/mem_guard.sh 12000 &          # ALWAYS run this first
-scripts/decode/disagg_launch.sh 0.9568       # prefill GPU0 + decode GPU1 + router on :8000
+scripts/inference/split_simple/disagg_launch.sh 0.9568       # prefill GPU0 + decode GPU1 + router on :8000
 # ... probe with a HARD TIMEOUT, never a bare curl ...
-scripts/decode/disagg_stop.sh                # tears down; also kills orphaned engine children
+scripts/inference/split_simple/disagg_stop.sh                # tears down; also kills orphaned engine children
 ```
 
 `disagg_launch.sh` takes the decode instance's `--gpu-memory-utilization` as its one argument —
@@ -156,7 +157,7 @@ KV). The current blocker is described in **Picking this up**.
 Every run's per-request records are kept, so a fix to a derived column costs a rebuild, not an experiment:
 
 ```bash
-cd scripts/inference && ../../.venv/bin/python rebuild_summary.py --tag main
+cd scripts/inference/simple && ../../.venv/bin/python rebuild_summary.py --tag main
 ```
 
 ---
@@ -168,11 +169,11 @@ cd scripts/inference && ../../.venv/bin/python rebuild_summary.py --tag main
 | `scripts/common/` | shared: PCIe calibration, live status, memory watchdog |
 | `scripts/inference/` | Case A harness: workload, client, server, sweep driver, wall calculator |
 | `scripts/finetune/` | LoRA sweep and the layer streamer |
-| `scripts/decode/` | prefill/decode disaggregation: launcher, router, teardown |
+| `scripts/inference/split_simple/` | prefill/decode disaggregation: launcher, router, teardown |
 | `scripts/plots/` | all figure generation |
 | `output/` | `summary_*.csv`, `*_sweep.json`, `calibration_pcie.json`, plus gitignored `raw/` and `logs/` |
 | `figures/` | generated PNGs |
-| `RESULTS.md`, `RESULTS_FINETUNE.md` | findings, with figures and limitations |
+| `reports/report_simple_inference.md`, `reports/report_finetune.md` | findings, with figures and limitations |
 | `PLAN.md`, `PLAN_FINETUNE.md` | designs and predictions recorded up front |
 
 ### Scripts
