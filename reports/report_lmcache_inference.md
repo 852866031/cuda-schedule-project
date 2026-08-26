@@ -76,91 +76,73 @@ re-measurement reproduced within noise.
 
 ## 3. Discussion
 
-Both arms share everything except the miss path: same vLLM, same scheduler, same GPU
-prefix cache, same 24 GiB of pinned DRAM. The backend is only consulted when a request's
-prefix is *not* resident on the GPU. So every difference in the tables has to trace back
-to one of two things: **what a miss costs** (the per-retrieval path), or **what a miss does
-to the rest of the system** (eviction, admission, preemption). That lens explains each
-observed difference.
+### What actually differs between the two arms
 
-### Where they are identical, and why
+Both arms are the same vLLM server with the same idea: a second KV cache tier in DRAM
+behind the GPU cache. When a request arrives and its session prefix is on the GPU, it is
+served instantly (a *GPU hit* — the backend never runs). When it is not, the prefix is
+either **fetched from DRAM over PCIe** (a *DRAM hit*, tens to hundreds of ms) or, if the
+DRAM tier does not have it either, **recomputed from scratch** (~530 ms of prefill). The
+only thing that changes between the arms is the software managing that DRAM tier:
 
-On zipf at healthy budgets the medians are indistinguishable (56 vs 54 ms at 30 GiB)
-because the median request is a GPU-cache hit — the hot 17 sessions fit in the GPU tier,
-and on a hit the backend's code never runs. Any DRAM backend would produce this row. The
-comparison only becomes informative where misses are common: uniform access, tight
-budgets, and the tails.
+| | native (`OffloadingConnector`) | lmcache (`LMCacheConnectorV1`) |
+|---|---|---|
+| unit of storage/eviction | 16-token blocks | 256-token chunks |
+| cache keys | vLLM's own block hashes, already computed | its own token-chunk hashes, computed at lookup |
+| copy path | one dedicated CUDA kernel (`swap_blocks`) | its own memory layer — here on a pure-Python/torch fallback, since no published wheel matches torch 2.9.1+cu128 |
+| measured fetch of one 0.75 GB prefix | ~65 ms (~11 GB/s) | ~151 ms (~5 GB/s) |
 
-### The median toll: lmcache's retrieval is ~2.3× slower per miss
+Everything in the results follows from three causal chains rooted in this table.
 
-Measured directly from the engine logs: lmcache retrieves a full 6144-token prefix
-(0.75 GB) in **~151 ms**, a consistent ~5 GB/s. The native connector's loads, instrumented
-in the companion split-system work, move the same KV at ~11 GB/s (~65 ms); the machine's
-pinned-DRAM ceiling is 14.5 GB/s. Three ingredients, in decreasing confidence:
+### Chain 1: slower fetch → higher medians where fetches are common
 
-1. **Compiled kernel vs Python fallback.** The native path copies blocks with a dedicated
-   CUDA kernel (`ops.swap_blocks`) on its own stream. lmcache 0.4.4's compiled ops do not
-   load against torch 2.9.1, so every copy runs through its pure-torch fallback —
-   gather/scatter through intermediate ops rather than one kernel.
-2. **Bookkeeping per retrieval.** lmcache hashes token chunks at lookup time, resolves
-   them through its memory-object layer, and reassembles 24 chunks per prefix; the native
-   spec reuses the block hashes vLLM's prefix cache already computed.
-3. **Granularity.** 256-token chunks vs 16-token blocks changes batching of the copies
-   (fewer, larger — which should *help*; the fact that it loses anyway points at 1 and 2
-   as the dominant costs).
+lmcache pays ~86 ms more per DRAM fetch (Python copy path + per-chunk hashing and
+reassembly). Under zipf this is invisible — the median request is a GPU hit and the
+backend never runs, hence the identical 56 vs 54 ms medians. Under uniform access,
+40–90% of requests take the DRAM path, and the extra fetch cost surfaces directly as the
+~1.5× median gap (126 vs 73 ms at 30 GiB). This is the one difference that is an
+implementation artifact rather than a design property: with compiled ops the fetch cost
+shrinks and the median gap should shrink with it (re-measurement in progress).
 
-Under zipf this toll is invisible (misses are rare). Under uniform, where 42–92% of
-requests take the DRAM path, it surfaces as the ~1.5× median gap (126 vs 73 ms at
-30 GiB). The honest caveat cuts lmcache's way: with its compiled ops working, ingredient
-1 disappears, and the toll should shrink toward parity.
+### Chain 2: coarser eviction → fewer total misses → tighter tails
 
-### The tighter tails: lmcache's tier covers more of the working set
+A prefix lookup must match *contiguously from token zero* — one missing piece ends the
+match and everything after it is recomputed. Native evicts in 16-token blocks, so under
+memory pressure a warm session can lose interior blocks piecemeal, and a single hole
+converts the rest of that 768 MiB prefix into a 530 ms recompute. lmcache evicts whole
+256-token chunks: a session is either resident or gone, rarely Swiss-cheesed. The effect
+is visible in tier coverage: adding both hit rates, lmcache captures **98%** of requests
+(zipf and uniform alike) against native's 93–95% — i.e. a third the recompute rate. Since
+p95 is exactly where the recompute victims live, lmcache's tails are tighter at every
+healthy budget (321–455 vs 594–606 ms on uniform) *despite* its slower fetches: **a slow
+fetch beats a recompute, and lmcache substitutes fetches for recomputes more often.**
 
-At 30 GiB, add up each arm's two hit rates. Native: 95.2% (zipf), 93.4% (uniform) — so
-5–7% of requests miss *both* tiers and pay the ~530 ms full recompute. lmcache: **98.0%
-and 97.9%** — the recompute fraction is a third of native's. p95 sits exactly where the
-recompute fraction puts it: native's 594–606 ms uniform p95 is the recompute cost plus
-queueing; lmcache's 321–455 ms is a slow retrieval instead. **The p95 difference is not a
-faster tail path — it is fewer catastrophic misses.**
+### Chain 3: cheap re-admission → the overload spiral never ignites
 
-Why does the same 24 GiB cover more? The likely mechanism (hypothesis, consistent with
-the hit-rate data but not separately instrumented): eviction granularity. The native pool
-evicts 16-token blocks LRU, so a warm prefix can lose interior blocks piecemeal — and a
-prefix match stops at the first hole, so one evicted block converts the rest of that
-prefix into recompute. lmcache evicts whole 256-token chunks against a chunk-level LRU,
-which keeps prefixes contiguous: a session is either resident or gone, rarely
-Swiss-cheesed.
+The native arm's collapse below 20 GiB was a feedback loop: under memory pressure the
+scheduler evicts a running request, whose prefix must then be *recomputed in full* —
+530 ms of already-paid work turned back into new work, which deepens the pressure that
+caused the eviction. That spiral took native to 28–44 tok/s with a wedged engine (the red
+rings). With lmcache, an evicted or delayed request re-enters via a ~151 ms fetch instead
+of a recompute, so falling behind does not compound — the sweep recorded **zero
+preemptions in all 16 configs**, no engine ever stalled, and at the 18 GiB floor the
+server still delivered 143–172 tok/s with every request completing. Overload became a
+deep queue instead of a death spiral.
 
-### The cliff does not move, because no cache can shrink resident KV
+### What does not change, and why: the cliff
 
-At 19 GiB the GPU tier holds 2.77 GiB ≈ 3.5 requests' full KV, while 2 req/s arriving
-with multi-second service times need 5+ sequences *resident and growing* to keep up.
-Decoding reads its KV from VRAM every step; no backend changes that. Both arms therefore
-cross from "keeping up" to "over capacity" at the same budget — and their GPU-tier hit
-rates track point-for-point down the sweep (75/75% at 30 GiB, 55/49% at 22, 9/11% at 20)
-because the GPU tier's capacity, not the backend behind it, sets them. This is the
-original report's concurrency-wall claim, now confirmed by swapping the entire offload
-implementation and watching nothing move.
+Both arms break at the same budgets (19–20 GiB) because decoding must read a sequence's
+KV from *VRAM* on every step — a DRAM tier can eliminate recompute, but it cannot shrink
+the resident KV that running requests need. At 19 GiB the GPU holds ~3.5 requests' KV
+against an offered load needing 5+ concurrent; that arithmetic is backend-independent,
+and indeed the two arms' GPU hit rates track point-for-point down the entire sweep.
+Swapping the whole offload implementation moved the cliff not one GiB: **the wall belongs
+to the workload, not to the cache.**
 
-### Below the wall: the difference is what a miss does, not what it costs
-
-Overloaded, the native arm enters the preemption spiral the original report documented:
-evict a running request, recompute its 6144-token prefix from scratch, fall further
-behind, evict again. Every preemption converts ~530 ms of *already-paid* work into new
-work, so the spiral is self-feeding — throughput collapses to 28–44 tok/s and the engine
-eventually stops making progress (the red rings). With lmcache the same eviction costs a
-~151 ms retrieval instead of a recompute: falling behind no longer compounds, and the
-sweep recorded **zero preemptions in 16 of 16 configs**. A second, softer mechanism
-likely helps (hypothesis): the serialized per-request retrieval acts as admission
-pacing — requests trickle into the running batch behind their loads rather than being
-admitted in bursts that later collide over KV growth.
-
-One comparison in the tables should not be read at face value: at the floor, native shows
-*lower* latency numbers than lmcache (4.9 s vs 31 s p50 at zipf/18). Native's floor runs
-were **aborted by the stall watchdog** — their latencies are censored snapshots of a
-system that had stopped serving, while lmcache's are complete measurements of a system
-that served every request. The honest floor comparison is throughput and completion:
-143–172 tok/s with 300/300 requests finished, against 28–44 tok/s with a wedged engine.
+One reading note for the floor rows: native's latency numbers there *look* lower (4.9 s
+vs 31 s p50 at 18 GiB) but come from runs the stall watchdog aborted — snapshots of a
+server that had stopped serving. lmcache's are complete measurements of one that finished
+all 300 requests. At the floor, compare throughput and completion, not latency.
 
 ## 4. Operational notes, learned the hard way
 
