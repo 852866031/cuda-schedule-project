@@ -63,6 +63,7 @@ def main():
             label="TPOT p50 / baseline  (GPU1 decode leg)")
     ax.axhline(1.0, color=GRY, lw=0.8, ls=":")
     ax.set_yscale("log")
+    ax.set_ylim(0.8, 260)      # headroom above the 83x point for its annotation + legend
     ax.set_xticks(xpos, xticks, fontsize=9)
     ax.set_ylabel("latency, × the 8B-alone baseline (log)", fontsize=10)
     ax.set_title("What the 8B incumbent pays", fontsize=11, color=GRY)
@@ -81,8 +82,11 @@ def main():
     ax_t.set_ylabel("8B throughput, tok/s", fontsize=10, color=GRN)
     ax_t.tick_params(axis="y", labelcolor=GRN)
     ax.plot([], [], "-s", color=GRN, ms=5.5, label="8B throughput (right axis)")
-    ax.legend(fontsize=8.3, loc="upper left", handlelength=2.6, handletextpad=0.8,
-              borderpad=0.6)
+    # the green throughput line hugs the top and TTFT/TPOT rise on the right, so the
+    # clear band is mid-left; anchor the legend there.
+    ax.legend(fontsize=8.3, loc="center left", bbox_to_anchor=(0.01, 0.42),
+              handlelength=2.4, handletextpad=0.7, borderpad=0.6,
+              framealpha=0.95)
 
     # ---- right: Qwen tenant -- achieved vs its solo ceiling ----
     ceil = {"fits": qtp(cells["solo_fits"]), "offload": qtp(cells["solo_offload"])}

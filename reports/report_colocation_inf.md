@@ -22,19 +22,33 @@ Two questions:
 
 ## 2. The view
 
-![system view of scenario B](../figures/inf_coloc_view.png)
-
 The successor to the split study's Act II layout, now with a second tenant. The 8B split
-is unchanged — prefill on GPU0 writes each session's KV to its own LMCache DRAM store
-(:8300); decode on GPU1 retrieves it and runs. The Qwen tenant is dropped into the
-**margin GPU1 leaves free** (≥1.9 GiB beside the 27 GiB decode), with its **own**
-store (:8301) so the two models share no cache state. The figure's single most
-important object is the callout in the middle: the two stores are separate *processes*,
-but they drive the **same host copy engine** (CPU memcpy + host DRAM bandwidth), and
-that shared path — not PCIe, not GPU compute — is where the incumbent and the tenant
-actually collide (§7). The dashed Qwen‑prefill box on GPU0 is scenario B's "invisible
-GPU": it exists only long enough to populate the store, then is killed, so during
-measurement the tenant never prefills — it retrieves KV from DRAM and decodes.
+is unchanged in every scenario — prefill on GPU0 writes each session's KV to its own
+LMCache DRAM store (:8300); decode on GPU1 retrieves it and runs. The Qwen tenant is
+dropped into the **margin GPU1 leaves free** (≥1.9 GiB beside the 27 GiB decode), with
+its **own** store (:8301) so the two models share no cache state. The single most
+important object in each panel is the callout in the middle: the two stores are separate
+*processes*, but they drive the **same host copy engine** (CPU memcpy + host DRAM
+bandwidth), and that shared path — not PCIe, not GPU compute — is where the incumbent and
+the tenant actually collide (§7). What changes between scenarios is only *where the
+tenant's prefill runs and how its KV reaches GPU1*:
+
+**A — whole Qwen on GPU1.** One Qwen engine does prefill *and* decode on GPU1; on
+oversubscription it spills to / reloads from its own store. GPU0 carries only the 8B.
+
+![scenario A view](../figures/inf_coloc_view_A.png)
+
+**B — Qwen decode-only ("prefill from an invisible GPU").** The dashed GPU0 box is a
+*temporary* Qwen prefill that populates the store once and is then killed; during
+measurement the GPU1 engine only retrieves KV from DRAM and decodes — it never prefills.
+
+![scenario B view](../figures/inf_coloc_view_B.png)
+
+**C — split Qwen (memory-deferred).** A second full split beside the 8B's: Qwen prefill
+on GPU0, decode on GPU1, its own forwarding proxy (:8001). Two complete stacks — the
+configuration that trips the pinned-memory guard (§7).
+
+![scenario C view](../figures/inf_coloc_view_C.png)
 
 ## 3. The four placements
 
