@@ -211,8 +211,8 @@ already built, by us, on the same engine family and the same GPU.
 
 The study is no longer purely a proposal: challenge §3.2 has first numbers. The setup
 is the reference workload through the split-LMCache stack (all code copied into
-`scripts/coloc/` — same `workload.py`/`client.py` imported, so the request stream is
-identical), with a LoRA trainer (`scripts/coloc/ft_train.py`, r=16 on attention,
+`scripts/inf_ft_coloc/` — same `workload.py`/`client.py` imported, so the request stream is
+identical), with a LoRA trainer (`scripts/inf_ft_coloc/ft_train.py`, r=16 on attention,
 deterministic synthetic batches, per-step trace) started on the decode GPU once the
 engine has claimed its budget. DeltaServe (§5) is the endgame; these arms establish
 what the naive mechanisms do first.
@@ -296,7 +296,7 @@ resuming the moment the window closes. Scheduling happens at kernel-issue time, 
 no admission control, no static share, and no change to what either side computes.
 The policy is Orion's (the best-effort job runs only when the latency-critical job
 has nothing on the GPU), rebuilt for two processes that can't share a scheduler
-(`scripts/coloc/orion_gate/`). A feasibility lesson paid for in code first: a
+(`scripts/inf_ft_coloc/orion_gate/`). A feasibility lesson paid for in code first: a
 runtime-API `LD_PRELOAD` shim sees essentially none of a torch process's launches
 (cuBLAS/Triton fetch driver-API entry points via `cuGetProcAddress`), and decode's
 CUDA-graph replay makes launch *timestamps* meaningless anyway — one API call per
@@ -454,33 +454,33 @@ detects the conflict and runs ungated, loudly).
 .venv/bin/python scripts/plots/plot_coloc_gate.py
 
 # solo trainer calibration (per MPS cap; also runs without MPS)
-CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/coloc/ft_train.py \
-    --model gpt2 --out output/coloc/ft_solo.csv --steps 60
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/inf_ft_coloc/ft_train.py \
+    --model gpt2 --out output/inf_ft_coloc/ft_solo.csv --steps 60
 
 # one colocated arm (MPS daemon first; stack + trainer + teardown are handled)
 nvidia-cuda-mps-control -d   # with CUDA_MPS_PIPE_DIRECTORY/_LOG_DIRECTORY set
-CUDA_MPS_PIPE_DIRECTORY=/tmp/mps-pipe .venv/bin/python scripts/coloc/coloc_sweep.py \
+CUDA_MPS_PIPE_DIRECTORY=/tmp/mps-pipe .venv/bin/python scripts/inf_ft_coloc/coloc_sweep.py \
     --budgets 26 --warmup-qps 0.5 --forward-first-token --max-inflight 999 \
     --ft --ft-model gpt2 --ft-mps-pct 10 --name-suffix _g2mps10 --tag coloc_g2mps10
 
 # the idle-window scheduling arm (§6.3): same, with the gate instead of a cap
-CUDA_MPS_PIPE_DIRECTORY=/tmp/mps-pipe .venv/bin/python scripts/coloc/coloc_sweep.py \
+CUDA_MPS_PIPE_DIRECTORY=/tmp/mps-pipe .venv/bin/python scripts/inf_ft_coloc/coloc_sweep.py \
     --budgets 26 --warmup-qps 0.5 --forward-first-token --max-inflight 999 \
     --ft --ft-model gpt2 --ft-gate --name-suffix _g2gate2 --tag coloc_g2gate2
 
 # the kernel-level (CUPTI) gate arm (§6.4): build the .so once, then --ft-kgate
 CUPTI=~/.triton/nvidia/cupti/cuda_cupti-linux-x86_64-12.8.90-archive
 gcc -O2 -shared -fPIC -I$CUPTI/include -I/usr/local/cuda/include \
-    scripts/coloc/orion_gate/cupti_gate.c -o scripts/coloc/orion_gate/cupti_gate.so \
+    scripts/inf_ft_coloc/orion_gate/cupti_gate.c -o scripts/inf_ft_coloc/orion_gate/cupti_gate.so \
     -L$CUPTI/lib -lcupti -ldl -lpthread -Wl,-rpath,$CUPTI/lib
-CUDA_MPS_PIPE_DIRECTORY=/tmp/mps-pipe .venv/bin/python scripts/coloc/coloc_sweep.py \
+CUDA_MPS_PIPE_DIRECTORY=/tmp/mps-pipe .venv/bin/python scripts/inf_ft_coloc/coloc_sweep.py \
     --budgets 26 --warmup-qps 0.5 --forward-first-token --max-inflight 999 \
     --ft --ft-model gpt2 --ft-kgate --name-suffix _g2kgate --tag coloc_g2kgate
 ```
 
 Data: `output/summary_coloc_*.csv`, raw per-request records in
 `output/raw/coloc_lmcache_zipf_b*.json` (with per-arm FT step traces in
-`output/coloc/`), per-second GPU telemetry in `output/gpumon/`, engine logs in
-`output/logs/`. `scripts/coloc/` is self-contained: the lmcache stack scripts are
+`output/inf_ft_coloc/`), per-second GPU telemetry in `output/gpumon/`, engine logs in
+`output/logs/`. `scripts/inf_ft_coloc/` is self-contained: the lmcache stack scripts are
 local copies of `scripts/inference/split_lmcache/` + `split_simple/`, and the driver
 is an adapted `disagg_sweep.py` that additionally manages the trainer's lifecycle.

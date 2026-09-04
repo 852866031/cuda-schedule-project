@@ -6,12 +6,12 @@ the stack scripts live in this directory). Same reference workload -- `workload.
 `client.py` are imported from scripts/inference/simple, NOT copied, so the request
 stream is provably identical to every other study.
 
-New here: --ft starts scripts/coloc/ft_train.py on the decode GPU right after the
+New here: --ft starts scripts/inf_ft_coloc/ft_train.py on the decode GPU right after the
 engines are up (so the whole warmup+measure window runs colocated) and SIGTERMs it at
-teardown; its per-step trace lands in output/coloc/ft_<name>.csv and a step-time
+teardown; its per-step trace lands in output/inf_ft_coloc/ft_<name>.csv and a step-time
 summary is folded into the raw record.
 
-    scripts/coloc/coloc_sweep.py --budgets 25 --warmup-qps 0.5 --forward-first-token \
+    scripts/inf_ft_coloc/coloc_sweep.py --budgets 25 --warmup-qps 0.5 --forward-first-token \
         --max-inflight 999 --name-suffix _base --tag coloc          # decode alone
     ... --ft --name-suffix _ft --tag coloc_ft                       # with the neighbor
 """
@@ -209,7 +209,7 @@ def gpu_stats(csv_path, t0, t1):
 
 def start_ft(name, args):
     """Launch the fine-tune neighbor on the decode GPU; returns (Popen, csv_path)."""
-    ft_csv = OUT / "coloc" / f"ft_{name}.csv"
+    ft_csv = OUT / "inf_ft_coloc" / f"ft_{name}.csv"
     ft_csv.parent.mkdir(parents=True, exist_ok=True)
     log = open(LOGS / "ft_train.log", "w")
     env = {**os.environ, "CUDA_VISIBLE_DEVICES": "1"}

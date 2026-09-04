@@ -21,7 +21,7 @@ fatal() {
     echo "----- last log lines -----" >&2
     tail -5 "$2" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' >&2
     echo "killing the stack so clients fail fast" >&2
-    bash "$REPO/scripts/coloc/disagg_stop.sh" >/dev/null 2>&1
+    bash "$REPO/scripts/inf_ft_coloc/disagg_stop.sh" >/dev/null 2>&1
     exit 1
 }
 

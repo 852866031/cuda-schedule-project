@@ -5,7 +5,7 @@ Left: the frontier — each MPS cap as a point (x = fine-tune wall-clock progres
 y = decode TPOT). Right: how much of its capped solo ceiling the trainer keeps
 while decode runs beside it. Data: output/raw/coloc_lmcache_zipf_b26_g2mps*.json,
 the split study's b26 row as the decode-alone reference, and the solo trainer
-calibrations in output/coloc/. Run from the repo root.
+calibrations in output/inf_ft_coloc/. Run from the repo root.
 """
 
 import csv
@@ -50,7 +50,7 @@ def solo_rate(path):
 ref = json.load(open("output/raw/split_lmcache_zipf_b26_fwd_ng.json"))
 arms = {p: json.load(open(f"output/raw/coloc_lmcache_zipf_b26_g2mps{p}.json"))
         for p in (10, 50, 100)}
-solo = {p: solo_rate(f"output/coloc/ft_gpt2_mps{p}_solo.csv") for p in (10, 50, 100)}
+solo = {p: solo_rate(f"output/inf_ft_coloc/ft_gpt2_mps{p}_solo.csv") for p in (10, 50, 100)}
 
 fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12.5, 4.6),
                               gridspec_kw={"width_ratios": [1.15, 1]})

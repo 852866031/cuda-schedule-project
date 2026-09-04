@@ -8,8 +8,8 @@ run's window and the per-second GPU telemetry.
 
 Run with .venv, pinned to the decode GPU:
 
-    CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/coloc/ft_train.py \
-        --out output/coloc/ft_solo.csv --duration 120
+    CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/inf_ft_coloc/ft_train.py \
+        --out output/inf_ft_coloc/ft_solo.csv --duration 120
 
 Safety: --mem-cap-gib (default 5.5) caps the torch caching allocator, so a
 misconfigured trainer OOMs itself rather than starving a vLLM engine that has

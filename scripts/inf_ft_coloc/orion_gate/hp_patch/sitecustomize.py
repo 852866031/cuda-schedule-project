@@ -13,7 +13,7 @@ get, because cuBLAS/Triton launch via driver-API entry points obtained through
 cuGetProcAddress (measured: a runtime-API shim sees ~none of the launches).
 
 Page layout (/dev/shm/coloc_hp_busy, 7 little-endian int64s), shared with
-scripts/coloc/ft_train.py's --gate reader:
+scripts/inf_ft_coloc/ft_train.py's --gate reader:
   [0] magic 0x434f4c4f43   [1] heartbeat_ns (CLOCK_MONOTONIC)   [2] busy
   [3] last_step_end_ns     [4] steps                            [5,6] spare
 Pinned to vllm==0.15.1.

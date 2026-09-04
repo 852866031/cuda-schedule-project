@@ -4,7 +4,7 @@ workload sharing GPU1, with the workload's snapshot living in DRAM.
 
 Companion to the Act II memory-layout figure in plot_native_pipeline.py — same
 three physical locations, redrawn for the elastic phase proposed in
-reports/report_colocation_decode.md. No measured data; run from the repo root.
+reports/report_colocation_ft.md. No measured data; run from the repo root.
 """
 
 import matplotlib
