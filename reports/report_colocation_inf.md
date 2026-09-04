@@ -158,7 +158,7 @@ when it is time‑shared out — the honest decode latency. The raw single‑gap
 barely moves (~17 ms) because most gaps stay short; it is the per‑request average that
 triples (fits) to ×13 (offload) as the incumbent's decode waits behind the tenant's.
 
-## 7. Where the bottleneck is — two independent axes
+## 7. Where the bottleneck is
 
 The tenant hits the incumbent on **two separate resources**, and which one dominates
 depends on whether the tenant's KV is resident or streaming. Keeping them separate is the
@@ -167,13 +167,11 @@ key to reading the results (and corrects an earlier draft that wrongly blamed GP
 
 ![the two-axis mechanism](../figures/inf_coloc_mechanism.png)
 
-*Top: one 8B request has two legs. Token #1 (TTFT) is emitted by the prefill leg on GPU0
-the instant its forward pass finishes and is forwarded by the proxy — so TTFT is a GPU0
+*One 8B request has two legs. Token #1 (TTFT) is emitted by the prefill leg on GPU0 the
+instant its forward pass finishes and is forwarded by the proxy — so TTFT is a GPU0
 quantity, and the only way the tenant touches it is through the shared host store path
-(axis 2). Tokens 2–128 come from the decode leg on GPU1, which time‑shares the GPU with
-the Qwen decode (axis 1). Bottom: without MPS the two processes' decode kernels serialize,
-so the 8B's per‑token gap stretches from ~28 ms to ~93 ms — that is TPOT, and it never
-touches TTFT.*
+(axis 2). Tokens 2–128 come from the decode leg on GPU1, which shares the GPU with the
+Qwen decode (axis 1) — so GPU1 sharing shows up in TPOT, not TTFT.*
 
 **Axis 1 — the decode leg (GPU1): TPOT + throughput.** With `--forward-first-token`,
 token #1 comes from the prefill GPU; GPU1 only produces token #2 onward. So GPU1 sharing
@@ -181,11 +179,14 @@ shows up in the 8B's **TPOT and throughput, not its TTFT**. Wherever the Qwen de
 active (A/fits, B/fits, A/offload) the 8B TPOT rises from **28 ms to ~93–97 ms** (3.3×)
 and throughput drops ~6–16%; in B/offload TPOT reaches **370 ms** (13×). The tell: GPU1's
 *mean* utilization *falls* when the tenant is added (sm 0.52→0.48, dram 0.46→0.39) — the
-8B decode is **stalling/waiting**, not the GPU saturating. Two decode processes on one GPU
-without spatial partitioning (MPS) time‑share execution slots, so the incumbent's decode
-periodically waits behind the tenant's. This is the **fundamental, unavoidable** cost of
-decode‑with‑decode colocation, and it is why TPOT (which counts the waits) moves sharply
-while the raw single‑gap ITL median does not.
+8B decode is **waiting** for GPU time, not the GPU saturating (if it were HBM-bandwidth
+saturation, DRAM-active would *rise*, not fall). Whether that waiting is coarse context
+switching between the two processes (there is no MPS here, so their kernels cannot
+co-reside) or host-side descheduling of the decode loop is **not separated** by these
+counters — the clean discriminator is an MPS control, which is not yet run. What is solid
+is that sharing GPU1 with a second active decode costs the incumbent a 3–13× TPOT rise,
+and that TPOT (which counts the waits) moves sharply while the raw single-gap ITL median
+does not.
 
 **Axis 2 — the prefill leg (GPU0) via the host store path: TTFT.** The 8B TTFT is the
 prefill leg alone (verified: the proxy sends token #1 the instant GPU0 finishes its
@@ -260,9 +261,9 @@ FT arms ran — it is about **which resource the neighbor consumes**:
   gate returns even TTFT to baseline.
 - **A second inference tenant is bandwidth-dense — it fights for the binding resource.**
   Qwen's decode, however small, reads KV from HBM every step, exactly what the 8B decode is
-  already bottlenecked on, and (without MPS) their kernels serialize. The cheapest inference
-  cell (B/fits) already costs **+232% TPOT** (28 → 93 ms) — 3× worse than the *uncapped*
-  fine-tune arm — and the offload cells reach ×7–13 or collapse the prefill leg's TTFT
+  already bottlenecked on, and with no MPS here the two share GPU1 coarsely. The cheapest
+  inference cell (B/fits) already costs **+232% TPOT** (28 → 93 ms) — 3× worse than the
+  *uncapped* fine-tune arm — and the offload cells reach ×7–13 or collapse the prefill leg's TTFT
   through the shared host path.
 
 The lesson generalizes the fifth study's §3.2 thesis: colocation on a decode GPU pays only

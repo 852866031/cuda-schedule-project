@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """How the tenant hits the incumbent on two independent axes (decode+decode colocation).
 
-Top: one 8B request's path — the prefill leg on GPU0 (TTFT, axis 2, via the shared host
-store path) and the decode leg on GPU1 (TPOT, axis 1, time-shared with the Qwen decode).
-Bottom: a synchronized wall-clock view of GPU1 serializing the two processes' decode
-steps without MPS, stretching the 8B's per-token gap from ~28 ms to ~93 ms. No measured
-data (illustrative timings from the run). Run from the repo root.
+One 8B request has two legs: the prefill leg on GPU0 (TTFT, axis 2, via the shared host
+store path) and the decode leg on GPU1 (TPOT, axis 1, sharing GPU1 with the Qwen decode).
+No measured data. Run from the repo root.
 """
 
 from pathlib import Path
@@ -25,32 +23,29 @@ GRY = "#57606a"
 
 
 def main():
-    fig, (axT, axB) = plt.subplots(2, 1, figsize=(13.5, 8.4),
-                                   gridspec_kw={"height_ratios": [1.05, 1]})
-
-    # ================= TOP: the request path =================
+    fig, axT = plt.subplots(figsize=(13.5, 5.0))
     axT.set_xlim(0, 132); axT.set_ylim(0, 46); axT.axis("off")
     axT.text(66, 44.5, "One 8B request: two legs, two contention points",
              fontsize=12.5, ha="center", fontweight="bold", color=GRY)
 
-    def box(ax, x, y, w, h, txt, fc, ec, fs=8.4):
-        ax.add_patch(Rectangle((x, y), w, h, facecolor=fc, edgecolor=ec, lw=1.5, zorder=3))
-        ax.text(x + w / 2, y + h / 2, txt, ha="center", va="center", fontsize=fs, zorder=4)
+    def box(x, y, w, h, txt, fc, ec, fs=8.4):
+        axT.add_patch(Rectangle((x, y), w, h, facecolor=fc, edgecolor=ec, lw=1.5, zorder=3))
+        axT.text(x + w / 2, y + h / 2, txt, ha="center", va="center", fontsize=fs, zorder=4)
 
-    def arr(ax, xy0, xy1, color=GRY, lw=1.6):
-        ax.add_patch(FancyArrowPatch(xy0, xy1, arrowstyle="-|>", mutation_scale=13,
-                     color=color, lw=lw, zorder=5))
+    def arr(xy0, xy1, color=GRY, lw=1.6):
+        axT.add_patch(FancyArrowPatch(xy0, xy1, arrowstyle="-|>", mutation_scale=13,
+                      color=color, lw=lw, zorder=5))
 
-    box(axT, 2, 16, 15, 9, "client", "white", GRY)
-    box(axT, 21, 16, 17, 9, "proxy :8000\n(forwards\ntoken #1)", "white", GRY, 7.8)
-    box(axT, 44, 15, 22, 11, "GPU0\n8B prefill leg\ncompute + host store", BLUF, BLU)
-    box(axT, 74, 15, 24, 11, "GPU1\n8B decode leg\ntokens 2..128", GRNF, GRN)
-    box(axT, 104, 15, 24, 11, "Qwen decode\n(shares GPU1)", PURF, PUR)
+    box(2, 16, 15, 9, "client", "white", GRY)
+    box(21, 16, 17, 9, "proxy :8000\n(forwards\ntoken #1)", "white", GRY, 7.8)
+    box(44, 15, 22, 11, "GPU0\n8B prefill leg\ncompute + host store", BLUF, BLU)
+    box(74, 15, 24, 11, "GPU1\n8B decode leg\ntokens 2..128", GRNF, GRN)
+    box(104, 15, 24, 11, "Qwen decode\n(shares GPU1)", PURF, PUR)
 
-    arr(axT, (17, 20.5), (21, 20.5))
-    arr(axT, (38, 20.5), (44, 20.5))
-    arr(axT, (66, 20.5), (74, 20.5))
-    # token #1 back to the client, routed as an L through the clear band BELOW the boxes
+    arr((17, 20.5), (21, 20.5))
+    arr((38, 20.5), (44, 20.5))
+    arr((66, 20.5), (74, 20.5))
+    # token #1 back to the client, routed as an arc through the clear band below the boxes
     axT.add_patch(FancyArrowPatch((51, 15), (9.5, 15.5), arrowstyle="-|>",
                   mutation_scale=12, color=BLU, lw=1.5, zorder=6,
                   connectionstyle="arc3,rad=-0.55"))
@@ -58,9 +53,8 @@ def main():
              "GPU0's forward pass finishes", fontsize=7.6, color=BLU, ha="center")
 
     # axis-2 callout on the prefill leg (host store)
-    box(axT, 40, 31, 30, 6, "shared host store path\n(:8300 server, CPU memcpy)",
-        ORGF, ORG, 7.4)
-    arr(axT, (55, 31), (55, 26), ORG, 1.4)
+    box(40, 31, 30, 6, "shared host store path\n(:8300 server, CPU memcpy)", ORGF, ORG, 7.4)
+    arr((55, 31), (55, 26), ORG, 1.4)
     axT.text(55, 39.4, "AXIS 2 → TTFT", fontsize=8.4, color=ORG, ha="center",
              fontweight="bold")
 
@@ -69,52 +63,9 @@ def main():
                   mutation_scale=12, color=PUR, lw=1.8, zorder=5))
     axT.text(101, 33.5, "AXIS 1 → TPOT", fontsize=8.4, color=PUR, ha="center",
              fontweight="bold")
-    axT.text(101, 30.8, "time-share GPU1\n(no MPS)", fontsize=7.2, color=PUR, ha="center")
+    axT.text(101, 30.8, "share GPU1\n(no MPS)", fontsize=7.2, color=PUR, ha="center")
 
-    # ================= BOTTOM: synchronized wall-clock =================
-    axB.set_xlim(0, 132); axB.set_ylim(0, 34); axB.axis("off")
-    axB.text(66, 33, "GPU1 wall-clock: without spatial sharing (MPS) the two decodes serialize",
-             fontsize=11.5, ha="center", fontweight="bold", color=GRY)
-    # legend, top-right
-    axB.add_patch(Rectangle((92, 30), 2.6, 2.6, facecolor=GRNF, edgecolor=GRN))
-    axB.text(95.4, 31.3, "8B decode step", fontsize=7.6, va="center")
-    axB.add_patch(Rectangle((112, 30), 2.6, 2.6, facecolor=PURF, edgecolor=PUR))
-    axB.text(115.4, 31.3, "Qwen decode step", fontsize=7.6, va="center")
-
-    def gap_marker(ax, x0, x1, y, txt, col):
-        ax.add_patch(FancyArrowPatch((x0, y), (x1, y), arrowstyle="<|-|>",
-                     mutation_scale=9, color=col, lw=1.3))
-        ax.text((x0 + x1) / 2, y + 1.1, txt, ha="center", fontsize=7.8, color=col)
-
-    STEP = 3.4
-    # Row A: 8B alone -- tight, one 8B step per gap
-    yA = 21
-    axB.text(1, yA + 2, "8B\nalone", fontsize=8.2, color=GRN, va="center")
-    x = 14
-    xs_a = []
-    for i in range(9):
-        box(axB, x, yA, STEP, 4.5, "", GRNF, GRN); xs_a.append(x); x += STEP + 0.4
-    axB.text(x + 0.5, yA + 2, "…", fontsize=12, color=GRY)
-    gap_marker(axB, xs_a[3], xs_a[4] + STEP, yA + 6, "~28 ms / token (TPOT)", GRN)
-
-    # Row B: + Qwen -- 8B steps spaced out by intervening Qwen steps
-    yB = 7
-    axB.text(1, yB + 2, "+ Qwen\n(shared)", fontsize=8.2, color=PUR, va="center")
-    seq = [GRN, PUR, PUR, PUR, GRN, PUR, PUR, PUR, GRN, PUR, PUR, PUR, GRN]
-    x = 14
-    eight_xs = []
-    for ec in seq:
-        fc = GRNF if ec == GRN else PURF
-        w = STEP if ec == GRN else 2.6
-        box(axB, x, yB, w, 4.5, "", fc, ec)
-        if ec == GRN:
-            eight_xs.append(x)
-        x += w + 0.4
-    axB.text(x + 0.5, yB + 2, "…", fontsize=12, color=GRY)
-    gap_marker(axB, eight_xs[1], eight_xs[2] + STEP, yB + 6,
-               "~93 ms / token — the 8B waits behind Qwen's steps (TPOT ×3.3)", PUR)
-
-    fig.tight_layout(h_pad=1.5)
+    fig.tight_layout()
     FIGS.mkdir(exist_ok=True)
     fig.savefig(FIGS / "inf_coloc_mechanism.png", dpi=140, bbox_inches="tight",
                 facecolor="white")
