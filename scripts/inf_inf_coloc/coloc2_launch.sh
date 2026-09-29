@@ -218,6 +218,21 @@ if [ "$SCENARIO" = C ]; then
     sleep 3
 fi
 
+# Optional CPU-isolation experiment (TASKSET_ISOLATE=1): pin the 8B host-path python
+# (store server + proxy) onto reserved cores 0-5 and keep the Qwen processes off them
+# (cores 6-13), so the tenant cannot deschedule the 8B's critical single-GIL path. The
+# 8B vLLM engines and the system stay unpinned. Tests whether the fits-TTFT rise is
+# host-CPU contention. Leaves cores 14-31 fully free for the system/SSH.
+if [ -n "${TASKSET_ISOLATE:-}" ]; then
+    echo "TASKSET_ISOLATE: 8B store/proxy -> cores 0-5, Qwen -> cores 6-13"
+    for pf in /tmp/disagg_lmcserver.pid /tmp/disagg_proxy.pid; do
+        [ -f "$pf" ] && taskset -a -cp 0-5 "$(cat "$pf")" >/dev/null 2>&1
+    done
+    for pf in /tmp/qwen_lmcserver.pid /tmp/qwen_decode.pid /tmp/qwen_prefill.pid; do
+        [ -f "$pf" ] && taskset -a -cp 6-13 "$(cat "$pf")" >/dev/null 2>&1
+    done
+fi
+
 [ "$SCENARIO" = solo ] && echo "proxy up (none needed: solo)"
 echo "qwen up ($SCENARIO)"
 

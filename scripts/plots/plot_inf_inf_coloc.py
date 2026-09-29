@@ -51,16 +51,48 @@ def main():
                                   gridspec_kw={"width_ratios": [1.15, 1]})
 
     # ---- left: 8B incumbent cost, ratios to baseline (log y) + throughput twin ----
+    # fits cells have 4 repeat runs each -> plot the mean with a min-max range bar so the
+    # A/B fits comparison shows its spread honestly (the single-run version looked like a
+    # crisp step; it is a ~40 ms systematic B>A on top of ~15 ms run-to-run jitter).
+    REPEATS = {
+        "A_fits": ["infc_A_fits", "infc_A_fits_r2", "infc_A_fits_r3", "infc_A_fits_r4"],
+        "B_fits": ["infc_B_fits", "infc_B_fits_iso", "infc_B_fits_legs", "infc_B_fits_cpu"],
+    }
+
+    def vals(k, metric):
+        out = []
+        for n in REPEATS.get(k, [f"infc_{k}"]):
+            s = load(n).get("summary", {})
+            out.append(s["ttft_ms"]["p50"] if metric == "ttft"
+                       else s["tpot_ms"]["p50"] if metric == "tpot"
+                       else s["output_tok_per_s"])
+        return out
+
     xpos = np.arange(len(order) + 1)
     xticks = ["8B alone\n(baseline)"] + labels
-    ttft = [b_ttft] + [s8(cells[k])["ttft_ms"]["p50"] for k in order]
-    tpot = [b_tpot] + [s8(cells[k])["tpot_ms"]["p50"] for k in order]
-    tput = [b_tput] + [s8(cells[k])["output_tok_per_s"] for k in order]
 
-    ax.plot(xpos, [v / b_ttft for v in ttft], "-^", color=ORG, lw=1.8, ms=8, zorder=3,
-            label="TTFT p50 / baseline  (GPU0 prefill leg)")
-    ax.plot(xpos, [v / b_tpot for v in tpot], "-o", color=BLU, lw=1.8, ms=7, zorder=3,
-            label="TPOT p50 / baseline  (GPU1 decode leg)")
+    def series(metric, base):
+        mean = [1.0]                   # baseline is 1.0 by definition
+        lo, hi = [0.0], [0.0]          # ratio-space asymmetric error (baseline has none)
+        for k in order:
+            v = [x / base for x in vals(k, metric)]
+            m = float(np.mean(v))
+            mean.append(m); lo.append(m - min(v)); hi.append(max(v) - m)
+        return mean, [lo, hi]
+
+    ttft_m, ttft_e = series("ttft", b_ttft)
+    tpot_m, tpot_e = series("tpot", b_tpot)
+    tput = [b_tput] + [float(np.mean(vals(k, "tput"))) for k in order]
+
+    ax.errorbar(xpos, ttft_m, yerr=ttft_e, fmt="-^", color=ORG, lw=1.8, ms=8, zorder=3,
+                capsize=3, elinewidth=1.2,
+                label="TTFT p50 / baseline  (GPU0 prefill leg)")
+    ax.errorbar(xpos, tpot_m, yerr=tpot_e, fmt="-o", color=BLU, lw=1.8, ms=7, zorder=3,
+                capsize=3, elinewidth=1.2,
+                label="TPOT p50 / baseline  (GPU1 decode leg)")
+    # keep the extreme-ratio annotations pointing at the offload means
+    ttft = ttft_m
+    tpot = tpot_m
     ax.axhline(1.0, color=GRY, lw=0.8, ls=":")
     ax.set_yscale("log")
     ax.set_ylim(0.8, 260)      # headroom above the 83x point for its annotation + legend
@@ -69,12 +101,12 @@ def main():
     ax.set_title("What the 8B incumbent pays", fontsize=11, color=GRY)
     ax.set_xlim(-0.4, len(order) + 0.4)
     ax.grid(alpha=0.25, which="both")
-    # annotate the two extreme ratios so the log axis is readable
-    ax.annotate(f"{ttft[-1] / b_ttft:.0f}×  ({ttft[-1] / 1000:.1f}s TTFT)",
-                (xpos[-1], ttft[-1] / b_ttft), textcoords="offset points",
-                xytext=(-6, 6), fontsize=8, color=ORG, ha="right")
-    ax.annotate(f"{tpot[-1] / b_tpot:.0f}×", (xpos[-1], tpot[-1] / b_tpot),
-                textcoords="offset points", xytext=(6, -2), fontsize=8, color=BLU)
+    # annotate the two extreme ratios so the log axis is readable (ttft/tpot are ratios)
+    ax.annotate(f"{ttft[-1]:.0f}×  ({ttft[-1] * b_ttft / 1000:.1f}s TTFT)",
+                (xpos[-1], ttft[-1]), textcoords="offset points",
+                xytext=(-6, 8), fontsize=8, color=ORG, ha="right")
+    ax.annotate(f"{tpot[-1]:.0f}×", (xpos[-1], tpot[-1]),
+                textcoords="offset points", xytext=(8, -2), fontsize=8, color=BLU)
 
     ax_t = ax.twinx()
     ax_t.plot(xpos, tput, "-s", color=GRN, lw=1.6, ms=5.5, alpha=0.85)

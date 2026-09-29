@@ -610,6 +610,8 @@ def main():
                     help="forwarding is default-ON: the baseline row is _fwd_ng")
     ap.add_argument("--name-suffix", default="")
     ap.add_argument("--zipf-a", type=float, default=1.1)
+    ap.add_argument("--qwen-decode-skew", choices=["uniform", "zipf"], default="uniform",
+                    help="reuse skew for the decode-only (B/solo) prefix pool")
     ap.add_argument("--tag", default="inf_coloc")
     ap.add_argument("--smoke", action="store_true",
                     help="30 requests, _smoke names and tag -- cannot clobber real data")
@@ -626,10 +628,12 @@ def main():
     def qwen_workload(scenario, wl_name):
         n = args.qwen_fits_sessions if wl_name == "fits" else args.qwen_offload_sessions
         if scenario in ("B", "solo"):
-            # decode-only: N distinct prefixes, no unique suffix, uniform reuse -> every
-            # request is a whole-prefix hit (no prefill compute) that only decodes.
+            # decode-only: N distinct prefixes, no unique suffix, reuse -> every request
+            # is a whole-prefix hit (no prefill compute) that only decodes. Reuse skew is
+            # uniform by default; --qwen-decode-skew zipf removes the A(zipf)-vs-B(uniform)
+            # confound when comparing B/offload against A/offload.
             return build_workload(n, args.prefix_len, 0, args.qwen_requests,
-                                  "uniform", args.zipf_a, args.qwen_seed,
+                                  args.qwen_decode_skew, args.zipf_a, args.qwen_seed,
                                   kv_bytes_per_token=QWEN_KV_BYTES_PER_TOKEN)
         return build_workload(n, args.prefix_len, args.suffix_len, args.qwen_requests,
                               "zipf", args.zipf_a, args.qwen_seed,

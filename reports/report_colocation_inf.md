@@ -148,8 +148,17 @@ p50 (blue, the GPU1 decode leg) as ratios to the 8B‑alone baseline (log), with
 decode throughput.* The measured points, per cell (8B TTFT / 8B TPOT / 8B tok/s ·
 Qwen tok/s · Qwen KV streamed from DRAM):
 
-- **A/fits** (whole Qwen) — 141 ms / 97 ms / 236 · 271 (99%) · 0.00 GiB
-- **B/fits** (decode‑only) — 175 ms / 93 ms / 237 · 271 (99%) · 0.05 GiB
+- **A/fits** (whole Qwen) — TTFT **119 ms** (n=4: 95–141) / TPOT 97 ms / 236 · 271 (99%) · 0.00 GiB
+- **B/fits** (decode‑only) — TTFT **157 ms** (n=4: 142–175) / TPOT 93 ms / 237 · 271 (99%) · 0.05 GiB
+
+The fits TTFTs were each measured **4×** (the figure shows their min–max range): A/fits
+mean 119 ms, B/fits mean 157 ms, with **non‑overlapping ranges** (A max 141 < B min 142).
+So B/fits is a **real ~40 ms above A/fits**, not run‑to‑run noise — the tenant's
+decode‑only engine queries the LMCache store on every request (its retrieval path is
+always live), while A's whole‑Qwen engine mostly hits its own VRAM prefix cache and
+touches the store less, so B loads the shared host path a little more. Both, though, sit
+far below the offload cells: with the tenant's KV resident, the 8B is within ~30–70 ms of
+its 92 ms baseline.
 - **A/offload** — 312 ms / 199 ms / 212 · 261 (95%) · 8.26 GiB
 - **B/offload** — 7.7 s / 370 ms / 175 · 230 (84%) · 14.6 GiB
 
@@ -180,30 +189,54 @@ active (A/fits, B/fits, A/offload) the 8B TPOT rises from **28 ms to ~93–97 ms
 and throughput drops ~6–16%; in B/offload TPOT reaches **370 ms** (13×). The tell: GPU1's
 *mean* utilization *falls* when the tenant is added (sm 0.52→0.48, dram 0.46→0.39) — the
 8B decode is **waiting** for GPU time, not the GPU saturating (if it were HBM-bandwidth
-saturation, DRAM-active would *rise*, not fall). Whether that waiting is coarse context
-switching between the two processes (there is no MPS here, so their kernels cannot
-co-reside) or host-side descheduling of the decode loop is **not separated** by these
-counters — the clean discriminator is an MPS control, which is not yet run. What is solid
-is that sharing GPU1 with a second active decode costs the incumbent a 3–13× TPOT rise,
-and that TPOT (which counts the waits) moves sharply while the raw single-gap ITL median
-does not.
+saturation, DRAM-active would *rise*, not fall).
+
+**An MPS control settles the mechanism: it is context serialization.** Without MPS two
+processes' CUDA contexts cannot run kernels concurrently on GPU1 — they time-slice. Rerun
+under MPS (both engines become clients, verified live via the MPS server), so their
+kernels co-reside on the SMs, and the decode cost nearly vanishes:
+
+![MPS collapses the decode-side cost](../figures/inf_coloc_mps.png)
+
+| fits cell | TPOT no-MPS (n=4) | TPOT +MPS | 8B tput no-MPS → +MPS |
+|---|---|---|---|
+| A/fits | 95 ms | **33 ms** | 236 → **254** |
+| B/fits | 98 ms | **34 ms** | 237 → **254** |
+
+MPS drops TPOT from ~3.4× the 28 ms baseline back to ~1.2× and recovers throughput to the
+254 tok/s baseline, for both scenarios — and *without* hurting TTFT (still ~120–130 ms).
+Since the decode runs at only ~5% SM occupancy, there is ample room for two decodes to
+co-reside; the large no-MPS penalty despite that spare capacity is exactly the signature
+of coarse whole-context serialization, and MPS removing it is the proof. So the axis-1
+cost is **GPU1 context serialization, and MPS is its mitigation** — the same lever the
+[fine-tune study](report_colocation_ft.md) used. TPOT (which counts the waits) is what
+moves; the raw single-gap ITL median does not.
 
 **Axis 2 — the prefill leg (GPU0) via the host store path: TTFT.** The 8B TTFT is the
 prefill leg alone (verified: the proxy sends token #1 the instant GPU0 finishes its
 forward pass). It moves with the tenant's **DRAM streaming volume** (0→0.05→8.3→14.6 GiB
 gives 92→175→312→7700 ms), because the prefill leg's host‑side store step (retrieve on a
 prefix‑cache miss, store the computed KV back) contends on the shared host copy machinery.
-Two clarifications settle the *fits* case (~+60–80 ms with ~zero streaming):
+Two clarifications settle the *fits* case (A +27 ms, B +65 ms over the 92 ms baseline,
+means of n=4, with ~zero streaming):
 - **Not GPU0 compute.** The 8B‑alone control reproduces 92 ms with the identical model, so
   the prefill compute is untouched — the extra time is entirely the host‑side store step.
 - **Not host‑DRAM bandwidth.** The 8B decode already streams ~225 GB from the store in the
   baseline at 92 ms; W‑fits adds ~0 host traffic (Qwen KV is VRAM‑resident). No new
-  bandwidth wall is introduced. By elimination the residual +60–80 ms is a **host‑side
-  effect** of the tenant's extra processes on the GIL‑bound Python‑fallback LMCache path
-  (server + proxy) — CPU/scheduling contention (the box was seen bursting to 99% user CPU
-  during the run), a *measurement‑stack artifact* rather than a fundamental GPU or memory
-  limit. The identified fix — `taskset`‑isolating the store server and proxy onto reserved
-  cores — is not yet run; it is the one open confirmation.
+  bandwidth wall is introduced. By elimination the residual is a **host‑side effect** on
+  the GIL‑bound Python‑fallback LMCache path (server + proxy) — the box bursts to 99% user
+  CPU during the run — a *measurement‑stack artifact* rather than a fundamental GPU or
+  memory limit. That B (+65) exceeds A (+27) fits this: B's decode‑only engine hits the
+  store on every request while A mostly hits VRAM, so B adds more host‑path load.
+- **What the taskset test showed (and didn't).** Pinning the 8B store server + proxy onto
+  dedicated cores 0–5 with the Qwen processes excluded (kept on 6–13) — affinity verified
+  live — moved a control B/fits of 182 ms to 152 ms, but 152 ms sits **inside** B/fits's
+  normal 142–175 range, so the effect is not distinguishable from run‑to‑run noise at n=1
+  each. So CPU isolation *from the tenant* did **not** clearly help — consistent with the
+  contention coming from total host‑CPU load (the 8B's own engine threads still span those
+  cores), not from the tenant's processes specifically. The host‑side sub‑mechanism is
+  therefore established only as *host‑side, non‑bandwidth*; the finer attribution is left
+  open rather than overclaimed.
 
 In the offload cells the same host path is genuinely saturated: the tenant streams
 8–15 GiB, halving the 8B prefill leg's effective throughput and queueing its TTFT into
