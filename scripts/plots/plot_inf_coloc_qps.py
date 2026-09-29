@@ -21,6 +21,8 @@ GRY, GRN, PUR = "#57606a", "#2e7d4f", "#8250df"
 ALONE = {2: "split_lmcache_zipf_b26_ctrl", 3: "split_lmcache_zipf_b26_q3",
          4: "split_lmcache_zipf_b26_q4"}
 TENANT = {2: "infc_B_fits", 3: "infc_B_fits_q3", 4: "infc_B_fits_q4"}
+TENANT_MPS = {2: "infc_B_fits_mps", 3: "infc_B_fits_mpsq3", 4: "infc_B_fits_mpsq4"}
+AMB = "#9a6700"
 
 
 def s(f):
@@ -33,26 +35,31 @@ def main():
     offered = [q * 128 for q in qs]
     a_tput, a_ttft = zip(*(s(ALONE[q]) for q in qs))
     t_tput, t_ttft = zip(*(s(TENANT[q]) for q in qs))
+    m_tput, m_ttft = zip(*(s(TENANT_MPS[q]) for q in qs))
 
     fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12, 4.6))
 
     # left: achieved vs offered, with the y=x ideal
     ax.plot([200, 540], [200, 540], color=GRY, ls=":", lw=1.2, label="offered = achieved")
     ax.plot(offered, a_tput, "-o", color=GRN, lw=2, ms=8, label="8B alone")
-    ax.plot(offered, t_tput, "-s", color=PUR, lw=2, ms=8, label="8B + 0.5B tenant (no MPS)")
-    ax.axhline(max(a_tput), color=GRN, ls="--", lw=0.9, alpha=0.6)
-    ax.axhline(max(t_tput), color=PUR, ls="--", lw=0.9, alpha=0.6)
-    ax.annotate(f"8B-alone capacity ≈ {max(a_tput):.0f} tok/s", (384, max(a_tput)),
-                textcoords="offset points", xytext=(0, 6), fontsize=8.5, color=GRN, ha="center")
-    ax.annotate(f"with tenant ≈ {max(t_tput):.0f} tok/s  (−{(1 - max(t_tput) / max(a_tput)) * 100:.0f}%)",
+    ax.plot(offered, m_tput, "-D", color=AMB, lw=2, ms=7, label="8B + tenant, + MPS")
+    ax.plot(offered, t_tput, "-s", color=PUR, lw=2, ms=8, label="8B + tenant, no MPS")
+    ax.axhline(max(a_tput), color=GRN, ls="--", lw=0.9, alpha=0.5)
+    ax.axhline(max(t_tput), color=PUR, ls="--", lw=0.9, alpha=0.5)
+    ax.annotate(f"alone ≈ {max(a_tput):.0f}", (512, max(a_tput)),
+                textcoords="offset points", xytext=(0, 5), fontsize=8, color=GRN, ha="center")
+    ax.annotate(f"+MPS ≈ {max(m_tput):.0f} (−{(1 - max(m_tput) / max(a_tput)) * 100:.0f}%)",
+                (384, max(m_tput)), textcoords="offset points", xytext=(0, 6),
+                fontsize=8, color=AMB, ha="center")
+    ax.annotate(f"no MPS ≈ {max(t_tput):.0f} (−{(1 - max(t_tput) / max(a_tput)) * 100:.0f}%)",
                 (384, max(t_tput)), textcoords="offset points", xytext=(0, -14),
-                fontsize=8.5, color=PUR, ha="center")
+                fontsize=8, color=PUR, ha="center")
     for xo, y in zip(offered, a_tput):
         ax.annotate(f"{y:.0f}", (xo, y), textcoords="offset points", xytext=(5, 7),
-                    fontsize=8, color=GRN)
+                    fontsize=7.5, color=GRN)
     for xo, y in zip(offered, t_tput):
-        ax.annotate(f"{y:.0f}", (xo, y), textcoords="offset points", xytext=(5, 6),
-                    fontsize=8, color=PUR)
+        ax.annotate(f"{y:.0f}", (xo, y), textcoords="offset points", xytext=(5, -12),
+                    fontsize=7.5, color=PUR)
     ax.set_xticks(offered, [f"{q} QPS\n({o})" for q, o in zip(qs, offered)], fontsize=9)
     ax.set_xlabel("offered load, tok/s", fontsize=10)
     ax.set_ylabel("achieved 8B throughput, tok/s", fontsize=10)
@@ -63,22 +70,23 @@ def main():
 
     # right: TTFT vs QPS
     ax2.plot(qs, a_ttft, "-o", color=GRN, lw=2, ms=8, label="8B alone")
-    ax2.plot(qs, t_ttft, "-s", color=PUR, lw=2, ms=8, label="8B + tenant")
+    ax2.plot(qs, m_ttft, "-D", color=AMB, lw=2, ms=7, label="8B + tenant, + MPS")
+    ax2.plot(qs, t_ttft, "-s", color=PUR, lw=2, ms=8, label="8B + tenant, no MPS")
     for xq, y in zip(qs, a_ttft):
-        ax2.annotate(f"{y:.0f}", (xq, y), textcoords="offset points", xytext=(4, 6),
-                     fontsize=8, color=GRN)
+        ax2.annotate(f"{y:.0f}", (xq, y), textcoords="offset points", xytext=(4, 5),
+                     fontsize=7.5, color=GRN)
     for xq, y in zip(qs, t_ttft):
-        ax2.annotate(f"{y:.0f}", (xq, y), textcoords="offset points", xytext=(4, -12),
-                     fontsize=8, color=PUR)
+        ax2.annotate(f"{y:.0f}", (xq, y), textcoords="offset points", xytext=(4, 4),
+                     fontsize=7.5, color=PUR)
     ax2.set_xticks(qs, [f"{q} QPS" for q in qs], fontsize=9)
     ax2.set_xlabel("8B offered QPS (tenant fixed at 2 QPS)", fontsize=10)
     ax2.set_ylabel("8B TTFT p50, ms", fontsize=10)
-    ax2.set_title("TTFT climbs faster with the tenant present", fontsize=11, color=GRY)
+    ax2.set_title("MPS also holds TTFT down as load rises", fontsize=11, color=GRY)
     ax2.legend(fontsize=8.5, loc="upper left")
     ax2.grid(alpha=0.25)
 
-    fig.suptitle("QPS sweep — pricing the tenant's cost as lost 8B capacity (b26, B/fits)",
-                 fontsize=12, y=1.02)
+    fig.suptitle("QPS sweep — the tenant's capacity cost, and MPS recovering most of it "
+                 "(b26, B/fits)", fontsize=12, y=1.02)
     fig.tight_layout()
     FIGS.mkdir(exist_ok=True)
     fig.savefig(FIGS / "inf_coloc_qps.png", dpi=140, bbox_inches="tight", facecolor="white")

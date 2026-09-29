@@ -175,18 +175,20 @@ cost. Sweeping the 8B's QPS (tenant fixed at 2 QPS) exposes it as a **capacity c
 
 ![QPS sweep — the tenant lowers the 8B's capacity ceiling](../figures/inf_coloc_qps.png)
 
-| 8B QPS (offered tok/s) | 8B alone | 8B + tenant |
-|---|---|---|
-| 2 (256) | 254 tok/s | 237 |
-| 3 (384) | 317 | 245 |
-| 4 (512) | **327** (saturated) | **239** (saturated) |
+| 8B QPS (offered tok/s) | 8B alone | 8B + tenant, no MPS | 8B + tenant, + MPS |
+|---|---|---|---|
+| 2 (256) | 254 tok/s | 237 | 254 |
+| 3 (384) | 317 | 245 | 300 |
+| 4 (512) | **327** (sat.) | **245** (sat.) | **298** (sat.) |
 
-The 8B alone saturates near **~327 tok/s**; with the decode‑only tenant on GPU1 (no MPS)
+The 8B alone saturates near **~327 tok/s**; with the decode‑only tenant on GPU1 **no MPS**
 it saturates near **~245** — the tenant consumes **~25% of the 8B's serving capacity**, and
-its TTFT climbs faster with load (right panel). This is the honest way to price a colocated
-tenant: not the flattering 7% at a single sub‑capacity QPS, but the QPS headroom it costs.
-(This is the no‑MPS ceiling; MPS, which recovers the per‑request TPOT in §7, would be the
-lever to test for recovering the *ceiling* too.)
+its TTFT climbs faster with load. This is the honest way to price a colocated tenant: not
+the flattering 7% at a single sub‑capacity QPS, but the QPS headroom it costs. And **MPS
+recovers most of it** — the +MPS ceiling is **~300 tok/s (only −8%)**, and its TTFT tracks
+the 8B‑alone curve (right panel). So the same MPS lever that fixes the per‑request TPOT
+(§7) also restores most of the lost capacity: the tenant's true cost, given MPS, is ~8% of
+QPS headroom, not 25%.
 
 ## 7. Where the bottleneck is
 
