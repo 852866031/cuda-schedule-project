@@ -169,18 +169,25 @@ triples (fits) to ×13 (offload) as the incumbent's decode waits behind the tena
 
 ## 7. Where the bottleneck is
 
-The tenant hits the incumbent on **two separate resources**, and which one dominates
-depends on whether the tenant's KV is resident or streaming. Keeping them separate is the
-key to reading the results (and corrects an earlier draft that wrongly blamed GPU1 for the
-8B's TTFT).
+A request has **two legs** — the prefill leg on GPU0 (whose finish is the TTFT, thanks to
+`--forward-first-token`) and the decode leg on GPU1 (whose per‑token pace is the TPOT).
+The clean, resident‑KV (*fits*) case isolates them: there the tenant's only real cost is
+on the decode leg, and it is **GPU1 context serialization** — proven and undone by MPS
+(§ below). The *offload* case is messier: the tenant's DRAM streaming and the box's memory
+pressure pull the **prefill leg** down too, so the same GPU1 serialization ends up
+back‑pressuring TTFT as well. So the two legs are the structure; a single cause — sharing
+GPU1 without spatial partitioning — dominates both, with offload adding a host‑streaming
+residual on top.
 
-![the two-axis mechanism](../figures/inf_coloc_mechanism.png)
+![the two legs of a request](../figures/inf_coloc_mechanism.png)
 
 *One 8B request has two legs. Token #1 (TTFT) is emitted by the prefill leg on GPU0 the
 instant its forward pass finishes and is forwarded by the proxy — so TTFT is a GPU0
-quantity, and the only way the tenant touches it is through the shared host store path
-(axis 2). Tokens 2–128 come from the decode leg on GPU1, which shares the GPU with the
-Qwen decode (axis 1) — so GPU1 sharing shows up in TPOT, not TTFT.*
+quantity that the tenant reaches only through the shared host store path. Tokens 2–128
+come from the decode leg on GPU1, shared with the Qwen decode. In the resident‑KV (fits)
+case this cleanly splits — the tenant's cost is on the decode leg (TPOT). Under offload it
+does not: the loaded decode back‑pressures the prefill pipeline, so the prefill leg's TTFT
+collapses too (see § offload below).*
 
 **Axis 1 — the decode leg (GPU1): TPOT + throughput.** With `--forward-first-token`,
 token #1 comes from the prefill GPU; GPU1 only produces token #2 onward. So GPU1 sharing
@@ -238,10 +245,24 @@ means of n=4, with ~zero streaming):
   therefore established only as *host‑side, non‑bandwidth*; the finer attribution is left
   open rather than overclaimed.
 
-In the offload cells the same host path is genuinely saturated: the tenant streams
-8–15 GiB, halving the 8B prefill leg's effective throughput and queueing its TTFT into
-seconds (B/offload worst, streaming the most). That is a real capacity limit of the
-Python‑fallback copy path, not an artifact.
+**The offload cells: a prefill‑leg collapse, not a clean second axis (correcting an
+earlier draft).** In offload the 8B TTFT collapses to *seconds* — on a clean box B/offload
+measured TTFT p50 **11.1 s**, and it is genuinely the prefill leg (proxy `leg1` == TTFT ==
+11.07 s), whose effective throughput has fallen to ~8000 tok/s, below the ~12.5k tok/s the
+2 QPS offered load needs, so requests queue without bound. An earlier draft called this a
+pure host‑copy‑bandwidth saturation (a "second axis" MPS could not touch). **The MPS
+experiment refutes that:** rerun under MPS, B/offload's TTFT dropped to **348 ms** and its
+prefill‑leg throughput recovered to ~10.8k tok/s — a GPU1 co‑residency fix removing most
+of a GPU0 prefill‑leg queue. So the collapse is *not* mainly a fixed host‑bandwidth wall;
+much of it rides on the same GPU1 serialization the fits cells showed, back‑pressuring the
+prefill pipeline. **But the offload comparison is confounded:** at ~57 GiB it sits at the
+box's RAM edge, and the no‑MPS control paged in 27× more (36k vs 1.3k swap‑in pages) than
+the MPS run, because run‑ordering changes the swap state. So on this box the offload
+collapse entangles GPU‑serialization back‑pressure, host‑copy streaming (14.6 GiB), and
+swap pressure, and they cannot be cleanly separated — the honest statement is that offload
+is far worse than fits and MPS helps it a lot, with a residual cost (offload+MPS still
+348 ms TTFT / 169 ms TPOT / 13 s p95) that the streaming and memory pressure impose. The
+fits result is the clean, unconfounded one.
 
 **Earlier faulty B (for the record).** A first version ran the decode engine with prefix
 caching *off*, re‑fetching the full 72 MiB prefix every request even in fits (21 GiB of
