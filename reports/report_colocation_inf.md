@@ -167,6 +167,27 @@ when it is time‑shared out — the honest decode latency. The raw single‑gap
 barely moves (~17 ms) because most gaps stay short; it is the per‑request average that
 triples (fits) to ×13 (offload) as the incumbent's decode waits behind the tenant's.
 
+### The real price: capacity, not the 2‑QPS latency
+
+At the reference 2 QPS the open loop pins throughput at the offered rate while both models
+still have headroom, so the incumbent looks only ~7% down — that single point *hides* the
+cost. Sweeping the 8B's QPS (tenant fixed at 2 QPS) exposes it as a **capacity ceiling**:
+
+![QPS sweep — the tenant lowers the 8B's capacity ceiling](../figures/inf_coloc_qps.png)
+
+| 8B QPS (offered tok/s) | 8B alone | 8B + tenant |
+|---|---|---|
+| 2 (256) | 254 tok/s | 237 |
+| 3 (384) | 317 | 245 |
+| 4 (512) | **327** (saturated) | **239** (saturated) |
+
+The 8B alone saturates near **~327 tok/s**; with the decode‑only tenant on GPU1 (no MPS)
+it saturates near **~245** — the tenant consumes **~25% of the 8B's serving capacity**, and
+its TTFT climbs faster with load (right panel). This is the honest way to price a colocated
+tenant: not the flattering 7% at a single sub‑capacity QPS, but the QPS headroom it costs.
+(This is the no‑MPS ceiling; MPS, which recovers the per‑request TPOT in §7, would be the
+lever to test for recovering the *ceiling* too.)
+
 ## 7. Where the bottleneck is
 
 A request has **two legs** — the prefill leg on GPU0 (whose finish is the TTFT, thanks to

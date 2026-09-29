@@ -13,6 +13,8 @@ complete, and they fail for opposite reasons.
 | **[LMCache inference](reports/report_lmcache_inference.md)** | ✅ done | same sweep, LMCache as the DRAM tier | Same cliff at 19–20 GiB — the wall is the workload's, not the backend's. Below it: **zero preemptions, no stalls** — saturation queues instead of spiraling. |
 | **[Split inference](reports/report_split_inference.md)** | ✅ done | GPU0 prefill → GPU1 decode over a shared LMCache; decode VRAM swept | TTFT ~105 ms flat until the wall at 20–22 GiB — set by in-flight KV, not the working set. Prefill GPU 97% idle; decode DRAM-bound. The hand-built transfer arm and why it was abandoned are §1. |
 | **[Decode node](PLAN_DECODE.md)** | ✅ done — see [reports/report_split_inference.md](reports/report_split_inference.md) | GPU0 prefill → GPU1 decode, sweep GPU1's VRAM | measured over a shared LMCache; the plan's P2P transport arm was built, patched working, and superseded (report §1) |
+| **[Colocate finetuning](reports/report_colocation_ft.md)** | ✅ done | lend the decode GPU's idle VRAM/SMs to a LoRA fine-tune neighbor; reclaim on demand | a **compute-dense** neighbor fits decode's ~95%-idle SMs: **+23% TPOT** at a 10% MPS cap (uncapped +67%), zero failed requests. MPS caps, an idle-window gate, and a CUPTI kernel-gate compared. |
+| **[Colocate a 2nd model](reports/report_colocation_inf.md)** | ✅ done | colocate a Qwen2.5-0.5B tenant's decode with the 8B decode on GPU1 | the tenant's cost is **GPU1 context serialization** (no MPS) — decode TPOT 28→98 ms; **MPS undoes it** (→34 ms), the same lever as finetuning. Streaming (offload) adds a host-path residual. A **bandwidth-dense** decode neighbor is the hard case. |
 
 Designs and predictions, written before running: [PLAN.md](PLAN.md),
 [PLAN_FINETUNE.md](PLAN_FINETUNE.md), [PLAN_DECODE.md](PLAN_DECODE.md).
@@ -38,7 +40,11 @@ scripts/common/mem_guard.sh 12000 &   # kills vLLM if available RAM drops below 
 
 ## Picking this up
 
-**Done:** both completed studies, their reports, figures and raw data. Nothing left to run.
+**Done:** six studies (table above), their reports, figures and raw data. The two
+colocation studies live in `scripts/inf_ft_coloc/` (fine-tune neighbor) and
+`scripts/inf_inf_coloc/` (second-model tenant); both drive the split-LMCache stack and
+add a neighbor on GPU1. MPS is the shared lever that lets a neighbor co-reside with
+decode instead of serializing behind it.
 
 **Historical — this section described phase 0 while it was blocked; the study is now
 complete** (see [reports/report_split_inference.md](reports/report_split_inference.md)).

@@ -34,6 +34,13 @@ every failure mode of the KV-transfer path is a silent hang, not an error.
   budget-sweep driver for BOTH split stacks (`--stack p2p|lmcache`).
 - `scripts/inference/split_lmcache/` — shared-LMCache split (server wrapper adds
   SO_REUSEADDR; launch with `--warmup-qps 0.5` or the L1 staging pool overflows).
+- `scripts/inf_ft_coloc/` — colocate-finetuning study (split-LMCache stack + a LoRA
+  trainer on GPU1; `coloc_sweep.py`, MPS/gate/CUPTI arms in `orion_gate/`).
+- `scripts/inf_inf_coloc/` — colocate-a-second-model study (self-contained copies +
+  `coloc2_*.sh` launch both stacks with one teardown; `coloc2_sweep.py` runs the 8B in
+  process and the Qwen tenant as a subprocess). Env knobs: `TASKSET_ISOLATE`,
+  `--qwen-decode-skew`; MPS is run by exporting `CUDA_MPS_PIPE_DIRECTORY` before the
+  driver (start `nvidia-cuda-mps-control -d` first, `echo quit | …` to tear down).
 - `scripts/plots/` — one script per figure family; regenerate after data changes and
   **always view the PNG before finishing** (label collisions are the recurring bug).
 
