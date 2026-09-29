@@ -316,38 +316,40 @@ actually afford?*
 
 ![inference vs fine-tuning neighbor](../figures/inf_coloc_vs_ft.png)
 
-*Left: what each neighbor costs the incumbent's decode, as TPOT × the decode-alone
-baseline (log). The fine-tuning arms sit at 1.2–1.7×; the second-inference arms at
-3.3–13×. Right: why — decode leaves ~95% of its SM occupancy idle but runs at ~50% HBM
-bandwidth, which is its binding resource.*
+*Left: decode TPOT × the decode-alone baseline (log). The fine-tune arms ran under MPS, so
+the fair comparison is MPS‑vs‑MPS: a resident (fits) second‑model tenant with MPS costs
+**1.2×**, right alongside the fine‑tune arms' 1.2–1.7× (bracket). Without MPS the tenant
+serializes (3.5×); MPS removes that. Offload keeps a residual (6× even with MPS). Right:
+why — decode leaves ~95% of its SMs idle, so MPS lets any resident neighbor use them; the
+inference tenant reaches the binding HBM bandwidth only when it streams KV (offload).*
 
-The gap is not about model size — the Qwen tenant (0.5 B) is far smaller than nothing the
-FT arms ran — it is about **which resource the neighbor consumes**:
+The first cut of this section drew an unfair contrast — a *no‑MPS* inference tenant
+(3.3–13×) against the *with‑MPS* fine‑tune arms (1.2–1.7×) — and concluded a second decode
+was near‑worst‑case. The MPS control corrects it. Three points:
 
-- **The decode GPU's idle resource is compute, not bandwidth.** The split study measured
-  decode at **SM occupancy under 5%** while **DRAM-active sits at 45–62%** — memory-bound,
-  compute nearly empty. The spare capacity a neighbor can take for free is SM cycles; the
-  scarce one it must not touch is memory bandwidth.
-- **A fine-tune neighbor is compute-dense — it fills the idle resource.** LoRA-SFT is
-  prefill-shaped GEMMs that live on the idle SMs, and (in DeltaServe's design) it even
-  shares the served model's weights. Under MPS spatial sharing it costs the incumbent only
-  **+23% TPOT** at a 10% SM cap (34.2 vs 27.9 ms) and just **+67%** uncapped, with **zero**
-  failed requests and the trainer keeping 72–77% of its solo throughput. An idle-window
-  gate returns even TTFT to baseline.
-- **A second inference tenant is bandwidth-dense — it fights for the binding resource.**
-  Qwen's decode, however small, reads KV from HBM every step, exactly what the 8B decode is
-  already bottlenecked on, and with no MPS here the two share GPU1 coarsely. The cheapest
-  inference cell (B/fits) already costs **+232% TPOT** (28 → 93 ms) — 3× worse than the
-  *uncapped* fine-tune arm — and the offload cells reach ×7–13 or collapse the prefill leg's TTFT
-  through the shared host path.
+- **The decode GPU's idle resource is compute; MPS is what unlocks it.** Decode runs at
+  **SM occupancy under 5%** while **DRAM‑active sits at 45–62%** — memory‑bound, SMs nearly
+  empty. But two processes cannot use those idle SMs concurrently *without MPS* — their
+  contexts time‑slice. This bites **both** neighbors: the fine‑tune study's un‑MPS'd
+  time‑slice arm collapsed decode (TPOT 1193 ms), and the inference tenant's no‑MPS arms
+  serialize to 3.5× (fits) / 13× (offload). MPS is the shared enabler, not a fine‑tune
+  detail.
+- **With MPS, a resident right‑sized tenant is cheap either way.** A fine‑tune neighbor
+  costs **+23% TPOT** at a 10% SM cap; the resident second‑model tenant costs **+20%**
+  (34 vs 28 ms) and recovers full throughput. When the neighbor's working state fits in the
+  margin, the ~95%‑idle SMs absorb its kernels and the incumbent barely notices.
+- **The inference tenant's distinctive cost is KV streaming, not "being inference."** Its
+  one hazard the fine‑tune neighbor lacks is that its KV can oversubscribe the VRAM margin
+  and spill to DRAM (offload); that streaming loads the host path and leaves a residual MPS
+  cannot remove (offload+MPS still ~6× TPOT). A fine‑tune adapter's state stays resident, so
+  it never triggers this.
 
-The lesson generalizes the fifth study's §3.2 thesis: colocation on a decode GPU pays only
-when the neighbor consumes what decode leaves idle (SM cycles) and avoids what it depends
-on (memory bandwidth). Fine-tuning is close to the ideal complement; a second latency-
-sensitive decode is close to the worst case — it wants precisely the resource decode is
-starved for, and brings a second latency SLO of its own. If a second *model* must be
-colocated, the tenant that behaves like the fine-tune neighbor — compute-dense, bandwidth-
-light, deadline-free — is the one to pick; a decode-heavy tenant belongs on its own GPU.
+So the corrected lesson refines the fifth study's §3.2 thesis. It is **not** "compute‑dense
+good, a decode tenant bad." It is: **MPS is mandatory** for either neighbor to share the
+decode GPU without serializing; given MPS, a **resident, right‑sized** tenant — fine‑tune or
+a second model — costs ~20% and is very affordable; the real thing to avoid is letting the
+tenant's KV **oversubscribe the VRAM margin and stream**, which is a capacity‑planning
+problem (size the tenant to fit, per §3), not an inherent property of colocating inference.
 
 ## Reproducing
 
