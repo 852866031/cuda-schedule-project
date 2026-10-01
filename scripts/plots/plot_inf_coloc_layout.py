@@ -25,20 +25,20 @@ COL_H, COL_W = 3.0, 0.78
 
 def column(ax, x, title, total_gib, boxes):
     h = COL_H * total_gib / DRAM_GIB
-    ax.add_patch(Rectangle((x, 0), COL_W, h, fill=False, ec=GREY, lw=1.2))
-    ax.text(x + COL_W / 2, -0.14, f"{title}\n{total_gib:g} GiB", ha="center", va="top",
-            fontsize=9.5, color=GREY)
+    ax.add_patch(Rectangle((x, 0), COL_W, h, fill=False, ec=GREY, lw=1.3))
+    ax.text(x + COL_W / 2, -0.15, f"{title}\n{total_gib:g} GiB", ha="center", va="top",
+            fontsize=11.5, color=GREY)
     y = 0.0
     for label, gib, face, edge, ls in boxes:
         bh = h * gib / total_gib
         ax.add_patch(Rectangle((x + 0.02, y + 0.01), COL_W - 0.04, max(bh - 0.02, 0.03),
-                               fc=face, ec=edge, lw=1.1, ls=ls, zorder=3))
-        if bh > 0.30:
+                               fc=face, ec=edge, lw=1.2, ls=ls, zorder=3))
+        if bh > 0.42:
             ax.text(x + COL_W / 2, y + bh / 2, label, ha="center", va="center",
-                    fontsize=8.6, zorder=4)
+                    fontsize=11.0, zorder=4)
         else:
             ax.text(x + COL_W + 0.05, y + bh / 2, label, ha="left", va="center",
-                    fontsize=8.0, zorder=4)
+                    fontsize=10.0, zorder=4)
         y += bh
     return h
 
@@ -83,27 +83,27 @@ def panel(ax, scenario):
     # KV-flow arrow: DRAM store -> GPU1 (the transfer that matters for B/C)
     if scenario in ("B", "C"):
         ax.add_patch(FancyArrowPatch((x1 + COL_W, hd * 0.55), (x2, COL_H * 0.55),
-                     arrowstyle="-|>", mutation_scale=12, color=RED, lw=1.4))
-        ax.text((x1 + COL_W + x2) / 2, COL_H * 0.63, "KV in", ha="center",
-                fontsize=8.0, color=RED)
+                     arrowstyle="-|>", mutation_scale=14, color=RED, lw=1.6))
+        ax.text((x1 + COL_W + x2) / 2, COL_H * 0.64, "KV in", ha="center",
+                fontsize=10.5, color=RED)
 
     titles = {"solo": "solo — Qwen decode-only, no 8B",
               "A": "A — whole Qwen on GPU1 (prefill+decode here)",
               "B": "B — Qwen decode-only (KV from DRAM, prefill invisible)",
               "C": "C — split Qwen (prefill GPU0 + decode GPU1)  [deferred]"}
-    ax.text(1.55, COL_H + 0.30, titles[scenario], ha="center", va="bottom",
-            fontsize=10.5, fontweight="bold", color=GREY)
+    ax.text(1.55, COL_H + 0.32, titles[scenario], ha="center", va="bottom",
+            fontsize=13.0, fontweight="bold", color=GREY)
     ax.set_xlim(-0.15, 3.35)
-    ax.set_ylim(-0.6, COL_H + 0.85)
+    ax.set_ylim(-0.6, COL_H + 0.95)
     ax.axis("off")
 
 
 def main():
-    fig, axes = plt.subplots(2, 2, figsize=(13, 9.2))
+    fig, axes = plt.subplots(2, 2, figsize=(13.5, 10.0))
     for ax, sc in zip(axes.ravel(), ("solo", "A", "B", "C")):
         panel(ax, sc)
     fig.suptitle("Tenant placements — the 8B split stack is identical in A/B/C; "
-                 "boxes scaled to GiB  (C deferred by host memory)", fontsize=13.5)
+                 "boxes scaled to GiB  (C deferred by host memory)", fontsize=15.5)
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     FIGS.mkdir(exist_ok=True)
     fig.savefig(FIGS / "inf_coloc_layout.png", dpi=140, bbox_inches="tight")
