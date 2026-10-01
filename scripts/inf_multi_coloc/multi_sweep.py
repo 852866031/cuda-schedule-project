@@ -60,6 +60,10 @@ MPS_LOG = "/tmp/mc_mps_log"
 GIB = 1 << 30
 INVALID_MARKERS = ("RECV TIMEOUT", "kv_cache is None", "Insufficient memory",
                    "Peer Out Of Memory", "EngineDeadError")
+# LMCache's pinned L1 staging pool running dry. Not fatal by itself, but it is the
+# signature of the N=4 decode-only-offload collapse (in-flight KV pinned in L1 exceeds
+# the pool, retrievals stall, requests re-queue), so it is counted per model per cell.
+WARN_MARKERS = ("Failed to allocate memory block", "Pin timeout detected")
 
 # Per-model sizing. kv_bytes = layers * kv_heads * head_dim * 2 (K,V) * 2 B (bf16).
 # ram_mb = host RSS of one model (API server + EngineCore incl. pinned L1 + store
@@ -67,11 +71,23 @@ INVALID_MARKERS = ("RECV TIMEOUT", "kv_cache is None", "Insufficient memory",
 COHORTS = {
     "small": dict(model="Qwen/Qwen2.5-0.5B", util=0.08, max_num_seqs=64, l1_gb=1,
                   kv_bytes=24 * 2 * 64 * 2 * 2, fits=8, offload=48, ram_mb=5000),
+    # Qwen2.5-3B: 36 layers x 2 kv heads x 128 dim -> 36 KiB/token, 0.21 GiB per 6144
+    # prefix; 5.8 GiB bf16 weights. Probe at util 0.24: KV 1.09 GiB but 8.24 GiB of GPU1
+    # per model (incl. ~0.72 GiB CUDA/MPS context) -> only 3 fit. util 0.22 (~7.6 GiB
+    # each, ~30.7 GiB for 4) keeps N=4 feasible at a ~0.47 GiB grant; fits/offload keep
+    # the small cohort's ratios (resident / ~3x over). ram_mb measured: 1.1 API + 3.6
+    # EngineCore + 0.7 store overhead.
+    "medium": dict(model="Qwen/Qwen2.5-3B", util=0.22, max_num_seqs=64, l1_gb=1,
+                   kv_bytes=36 * 2 * 128 * 2 * 2, fits=2, offload=7, ram_mb=5500),
 }
 
 CELLS = {   # name -> (decode_only, wl)
     "dfits": (True, "fits"), "doff": (True, "offload"),
     "ffits": (False, "fits"), "foff": (False, "offload"),
+    # prefill-only: every request a fresh pf_len-token prompt, 1 output token, routed
+    # through the external scheduler (mc_scheduler.py). Engines run WITHOUT LMCache
+    # (nothing to reuse; a store would just grow with every prompt). Own launch.
+    "pfill": (False, "pfill"),
 }
 
 
@@ -169,8 +185,16 @@ def marker_counts(n):
             text = (LOGS / f"mc_engine_{i}.log").read_text(errors="replace")
         except OSError:
             continue
-        out[i] = {m: text.count(m) for m in INVALID_MARKERS if text.count(m)}
+        out[i] = {m: text.count(m) for m in INVALID_MARKERS + WARN_MARKERS
+                  if text.count(m)}
     return out
+
+
+def cpu_times():
+    """(busy, total) jiffies over all cores from /proc/stat."""
+    f = [int(x) for x in Path("/proc/stat").read_text().splitlines()[0].split()[1:]]
+    idle = f[3] + f[4]
+    return sum(f) - idle, sum(f)
 
 
 def proc_rss_mb():
@@ -222,21 +246,28 @@ def mps_stop():
 # ------------------------------------------------------------------- workloads
 def model_wl(args, coh, i, cell):
     decode_only, wl = CELLS[cell]
-    n = coh[wl]
     seed = args.seed + 100 * i
+    base = dict(prefix=args.prefix_len, max_tokens=args.max_tokens, qps=args.qps,
+                url=f"http://127.0.0.1:{eport(i)}", seed=seed)
+    if wl == "pfill":   # one 16-token stub prefix + a fresh pf_len suffix: all prefill
+        url = (f"http://127.0.0.1:{args.sched_port}/m/{i}" if args.sched_active
+               else base["url"])
+        return {**base, "sessions": 1, "prefix": 16, "suffix": args.pf_len - 16,
+                "skew": "uniform", "max_tokens": 1, "qps": args.pf_qps, "url": url}
+    n = coh[wl]
     if decode_only:   # whole-prefix hits, no unique suffix: the engine only decodes
-        return dict(sessions=n, suffix=0, skew="uniform", seed=seed)
-    return dict(sessions=n, suffix=args.suffix_len, skew="zipf", seed=seed)
+        return {**base, "sessions": n, "suffix": 0, "skew": "uniform"}
+    return {**base, "sessions": n, "suffix": args.suffix_len, "skew": "zipf"}
 
 
 def runner_cmd(args, coh, i, w, phase, out, start_at=0.0):
     return [str(REPO / ".venv" / "bin" / "python"), str(HERE / "model_client_runner.py"),
-            "--base-url", f"http://127.0.0.1:{eport(i)}", "--model", coh["model"],
-            "--sessions", str(w["sessions"]), "--prefix-len", str(args.prefix_len),
+            "--base-url", w["url"], "--model", coh["model"],
+            "--sessions", str(w["sessions"]), "--prefix-len", str(w["prefix"]),
             "--suffix-len", str(w["suffix"]), "--skew", w["skew"],
             "--kv-bytes", str(coh["kv_bytes"]),
-            "--requests", str(args.requests), "--qps", str(args.qps),
-            "--seed", str(w["seed"]), "--max-tokens", str(args.max_tokens),
+            "--requests", str(args.requests), "--qps", str(w["qps"]),
+            "--seed", str(w["seed"]), "--max-tokens", str(w["max_tokens"]),
             "--timeout", str(args.timeout), "--start-at", f"{start_at:.3f}",
             "--phase", phase, "--out", str(out)]
 
@@ -311,6 +342,8 @@ def launch_models(args, coh, n, arm, need_temp_pf, populate_sessions, ws_gib):
         menv = {**env, "MC_MODEL": coh["model"], "MC_UTIL": str(coh["util"]),
                 "MC_MAX_NUM_SEQS": str(coh["max_num_seqs"]), "MC_L1_GB": str(coh["l1_gb"]),
                 "MC_ROLE": role}
+        if args.no_lmc:
+            menv["MC_NO_LMC"] = "1"
         if arm == "eager" and i > 0:
             menv["MC_EAGER"] = "1"
         t0 = time.time()
@@ -380,8 +413,46 @@ def run_clients(args, coh, n, cell, phase, tag):
     return results, hung
 
 
-def run_cell(args, coh, n, arm, cell, launch_info, mon_path):
-    name = f"mc_{args.cohort}_{cell}_n{n}_{arm}{args.name_suffix}"
+def run_sched_cell(args, coh, n, sc, launch_info, mon_path):
+    """Prefill-only under one external-scheduler config ('none' = clients hit the
+    engines directly; '<policy>:<k>' = through mc_scheduler.py with global cap k)."""
+    proc = None
+    args.sched_active = sc != "none"
+    if args.sched_active:
+        policy, k = sc.split(":")
+        proc = subprocess.Popen(
+            [str(REPO / ".venv" / "bin" / "python"), str(HERE / "mc_scheduler.py"),
+             "--n", str(n), "--k", k, "--policy", policy, "--port", str(args.sched_port)],
+            stdout=open(LOGS / "mc_scheduler.log", "w"), stderr=subprocess.STDOUT)
+        for _ in range(30):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{args.sched_port}/health", timeout=2)
+                break
+            except Exception:
+                time.sleep(1)
+    tag = "none" if sc == "none" else sc.replace(":", "k")
+    try:
+        rec = run_cell(args, coh, n, args.arm, "pfill", launch_info, mon_path,
+                       name_extra=f"_{tag}")
+        if proc is not None:
+            try:
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{args.sched_port}/stats", timeout=5) as r:
+                    rec["sched_stats"] = json.loads(r.read())
+            except Exception as e:
+                rec["sched_stats"] = {"error": str(e)}
+        rec["sched"] = sc
+        (RAW / f"{rec['name']}.json").write_text(json.dumps(rec, indent=1))
+        return rec
+    finally:
+        if proc is not None:
+            proc.terminate()
+            proc.wait(timeout=30)
+        args.sched_active = False
+
+
+def run_cell(args, coh, n, arm, cell, launch_info, mon_path, name_extra=""):
+    name = f"mc_{args.cohort}_{cell}_n{n}_{arm}{name_extra}{args.name_suffix}"
     print(f"\n=== {name} ===", flush=True)
     rec = {"name": name, "cohort": args.cohort, "model": coh["model"], "n": n, "arm": arm,
            "cell": cell, "decode_only": CELLS[cell][0], "wl": CELLS[cell][1],
@@ -400,6 +471,7 @@ def run_cell(args, coh, n, arm, cell, launch_info, mon_path):
         before = {i: scrape(eport(i)) for i in range(n)}
         mk_before = marker_counts(n)
         sw_before = swap_counters()
+        cpu0 = cpu_times()
         t0 = time.time()
         res, hung = run_clients(args, coh, n, cell, "measure", name)
         t1 = time.time()
@@ -407,6 +479,9 @@ def run_cell(args, coh, n, arm, cell, launch_info, mon_path):
         rec.update(t_measure0=round(t0, 3), t_measure1=round(t1, 3), hung=hung)
         rec["gpu"] = gpu_stats(mon_path, t0, t1)
         rec["swap_delta"] = {k: swap_counters()[k] - v for k, v in sw_before.items()}
+        cpu1 = cpu_times()
+        rec["host_cpu_busy"] = round((cpu1[0] - cpu0[0]) / max(1, cpu1[1] - cpu0[1]), 4)
+        rec["host_cores"] = os.cpu_count()
         rec["avail_mb_end"] = avail_mb()
         mk_after = marker_counts(n)
         rec["models"] = []
@@ -416,9 +491,13 @@ def run_cell(args, coh, n, arm, cell, launch_info, mon_path):
             markers = {k: v - mk_before.get(i, {}).get(k, 0)
                        for k, v in mk_after.get(i, {}).items()
                        if v - mk_before.get(i, {}).get(k, 0) > 0}
-            rec["models"].append({"i": i, "client": res[i], "metrics_delta": md,
-                                  "markers": markers})
+            rec["models"].append({
+                "i": i, "client": res[i], "metrics_delta": md,
+                "markers": {k: v for k, v in markers.items() if k in INVALID_MARKERS},
+                "warnings": {k: v for k, v in markers.items() if k in WARN_MARKERS}})
+        rec["n_failed"] = sum((r.get("summary") or {}).get("n_failed") or 0 for r in res)
         rec["ok"] = (not hung and all("error" not in r for r in res)
+                     and rec["n_failed"] == 0
                      and not any(m["markers"] for m in rec["models"]))
         for m in rec["models"]:
             s = m["client"].get("summary", {})
@@ -428,7 +507,9 @@ def run_cell(args, coh, n, arm, cell, launch_info, mon_path):
         g = rec["gpu"]
         print(f"  gpu1 smact={g.get('gpu1_sm_active_mean')} smocc={g.get('gpu1_sm_occupancy_mean')} "
               f"dram={g.get('gpu1_dram_active_mean')} fb={g.get('gpu1_fb_used_max_gib')} GiB; "
-              f"swap in/out {rec['swap_delta']}", flush=True)
+              f"swap in/out {rec['swap_delta']}; host cpu {rec['host_cpu_busy']:.2f}; "
+              f"L1 warnings {[sum(m['warnings'].values()) for m in rec['models']]}; "
+              f"ok={rec['ok']}", flush=True)
     except Exception as e:
         rec.update(ok=False, error=f"{type(e).__name__}: {e}")
         print(f"  FAILED: {rec['error']}", flush=True)
@@ -471,6 +552,7 @@ def rebuild_summaries(prefix):
                 "prefix_hit_rate": round(md.get("vllm:prefix_cache_hits_total", 0) / q, 4)
                 if q else None,
                 "preemptions": md.get("vllm:num_preemptions_total", 0.0),
+                "l1_warnings": sum((m.get("warnings") or {}).values()),
             })
 
         def col(grp, k):
@@ -482,7 +564,8 @@ def rebuild_summaries(prefix):
         g = rec.get("gpu", {})
         cell_rows.append({
             "name": rec["name"], "cohort": rec["cohort"], "cell": rec["cell"],
-            "n": rec["n"], "arm": rec["arm"], "ok": rec.get("ok"),
+            "n": rec["n"], "arm": rec["arm"], "sched": rec.get("sched", ""),
+            "ok": bool(rec.get("ok")) and not sum(s.get("n_failed") or 0 for s in ok),
             "homogeneous_kv": rec["launch"].get("homogeneous"),
             "kv_gib_min": min([x for x in rec["launch"].get("kv_grants_gib", []) if x] or [0]),
             "ws_gib_per_model": rec.get("ws_gib_per_model"),
@@ -500,6 +583,9 @@ def rebuild_summaries(prefix):
             **{k: g.get(k) for k in ("gpu1_sm_active_mean", "gpu1_sm_occupancy_mean",
                                      "gpu1_dram_active_mean", "gpu1_fb_used_max_gib")},
             "swap_in_pages": rec.get("swap_delta", {}).get("pswpin"),
+            "host_cpu_busy": rec.get("host_cpu_busy"),
+            "l1_warnings": sum(sum((m.get("warnings") or {}).values())
+                               for m in rec["models"]),
             "avail_mb_after_launch": rec["launch"].get("avail_mb_after_launch"),
             "avail_mb_end": rec.get("avail_mb_end"),
         })
@@ -529,6 +615,14 @@ def main():
     ap.add_argument("--stall-timeout", type=float, default=180.0)
     ap.add_argument("--mem-floor-mb", type=int, default=6000)
     ap.add_argument("--kv-tolerance", type=float, default=0.05)
+    ap.add_argument("--l1-gb", type=int, default=None,
+                    help="override the cohort's LMCache L1 (pinned) size per engine")
+    ap.add_argument("--pf-len", type=int, default=6144, help="prefill-only prompt length")
+    ap.add_argument("--pf-qps", type=float, default=4.0, help="prefill-only QPS per model")
+    ap.add_argument("--sched", nargs="+", default=["none"],
+                    help="prefill-only scheduler configs: none | <policy>:<k>, "
+                         "e.g. fcfs:0 fcfs:1 rr:1 prio:1")
+    ap.add_argument("--sched-port", type=int, default=8390)
     ap.add_argument("--name-suffix", default="")
     ap.add_argument("--smoke", action="store_true",
                     help="40 requests, _smoke names -- cannot clobber real data")
@@ -536,9 +630,15 @@ def main():
     if args.smoke:
         args.requests = 40
         args.name_suffix += "_smoke"
-    coh = COHORTS[args.cohort]
+    coh = dict(COHORTS[args.cohort])
+    if args.l1_gb:
+        coh["l1_gb"] = args.l1_gb
+    args.no_lmc = args.cells == ["pfill"]
+    if "pfill" in args.cells and not args.no_lmc:
+        ap.error("pfill needs its own launch (engines without LMCache): --cells pfill")
+    args.sched_active = False
     need_temp_pf = any(CELLS[c][0] for c in args.cells)
-    pop_sessions = max(coh[CELLS[c][1]] for c in args.cells)
+    pop_sessions = max((coh[CELLS[c][1]] for c in args.cells if c != "pfill"), default=0)
     ws_gib = pop_sessions * args.prefix_len * coh["kv_bytes"] / GIB
 
     for n in args.n:
@@ -549,15 +649,24 @@ def main():
         mon_path = GPUMON / f"{tag}.csv"
         mon = subprocess.Popen([sys.executable, str(REPO / "scripts/common/gpu_monitor.py"),
                                 str(mon_path)])
+        # Host side, per second, by process role (stores / EngineCores / API / clients).
+        hmon = subprocess.Popen([sys.executable, str(HERE / "host_monitor.py"),
+                                 str(GPUMON / f"{tag}_host.csv")])
         try:
             info = launch_models(args, coh, n, args.arm, need_temp_pf, pop_sessions, ws_gib)
             print(f"  all {n} up: KV grants {info['kv_grants_gib']}, RSS {info['rss_mb']}, "
                   f"avail {info['avail_mb_after_launch']} MB", flush=True)
-            for cell in args.cells:
-                rec = run_cell(args, coh, n, args.arm, cell, info, mon_path)
-                if rec.get("hung") or "heartbeat" in str(rec.get("error", "")):
-                    print("  aborting remaining cells of this launch", flush=True)
-                    break
+            if args.no_lmc:
+                for sc in args.sched:
+                    rec = run_sched_cell(args, coh, n, sc, info, mon_path)
+                    if rec.get("hung"):
+                        break
+            else:
+                for cell in args.cells:
+                    rec = run_cell(args, coh, n, args.arm, cell, info, mon_path)
+                    if rec.get("hung") or "heartbeat" in str(rec.get("error", "")):
+                        print("  aborting remaining cells of this launch", flush=True)
+                        break
         except Exception as e:
             print(f"  LAUNCH FAILED: {type(e).__name__}: {e}", flush=True)
             RAW.mkdir(parents=True, exist_ok=True)
@@ -565,6 +674,13 @@ def main():
                 {"name": tag, "error": f"{type(e).__name__}: {e}"}))
         finally:
             mon.terminate()
+            hmon.terminate()
+            # Engine logs are reused by index across launches; archive this launch's
+            # copies BEFORE teardown so per-cell warning counts stay attributable.
+            arch = LOGS / "mc_archive" / tag
+            arch.mkdir(parents=True, exist_ok=True)
+            for lg in LOGS.glob("mc_engine_*.log"):
+                (arch / lg.name).write_bytes(lg.read_bytes())
             subprocess.run(["bash", str(STOP)], capture_output=True, timeout=180)
             if args.arm in ("mps", "gate", "eager"):
                 mps_stop()

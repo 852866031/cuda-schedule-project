@@ -89,3 +89,8 @@ for tail latency.
 ## Outcomes
 
 *(annotated as measured)*
+
+- **Medium cohort = Qwen2.5-3B** (decided 2026-10-01, by the user). Qwen3-4B's 7.5 GiB of
+  weights alone fill the 6–8 GiB class (N≤3, almost no KV); Qwen2.5-3B (5.8 GiB weights,
+  36 KiB/token KV) fits ~7.5 GiB per model → N=1–4. Provisional sizing util 0.24,
+  fits = 4 sessions, offload = 14, pending a solo probe.

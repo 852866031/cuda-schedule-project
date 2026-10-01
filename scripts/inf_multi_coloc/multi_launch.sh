@@ -18,6 +18,8 @@
 #                         be: gated by cupti_gate.so (forces --enforce-eager: the CUPTI
 #                             gate's event record aborts CUDA-graph capture)
 #   MC_EAGER=1            eager without the gate (control)
+#   MC_NO_LMC=1           no store, no KV connector (prefill-only: unique prompts,
+#                         nothing to reuse; a store would only grow)
 #   MC_GATE_K / MC_GATE_MAXPEND
 # MPS: the driver exports CUDA_MPS_PIPE_DIRECTORY when an MPS arm is running; every
 # engine launched here inherits it and becomes an MPS client.
@@ -58,6 +60,7 @@ ROLE="${MC_ROLE:-plain}"
 CHUNK_SIZE="${CHUNK_SIZE:-256}"
 EPORT=$((8400 + I)); PPORT=$((8500 + I)); SPORT=$((8600 + I))
 
+NO_LMC="${MC_NO_LMC:-}"
 for p in $EPORT $SPORT; do
     if ss -ltn "sport = :$p" | grep -q ":$p"; then
         echo "REFUSING: something already listens on :$p" >&2; exit 1
@@ -86,7 +89,10 @@ YAML
 }
 
 # --- the model's own DRAM store ----------------------------------------------------
+KV_ARGS=(--kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}')
+[ -n "$NO_LMC" ] && KV_ARGS=()
 for attempt in 1 2 3; do
+    [ -n "$NO_LMC" ] && break
     "$PY" "$HERE/lmc_server_main.py" 127.0.0.1 "$SPORT" cpu > "$LOGS/mc_store_$I.log" 2>&1 &
     echo $! > "$PID_DIR/store_$I.pid"
     sleep 2
@@ -98,6 +104,7 @@ for attempt in 1 2 3; do
     [ "$attempt" = 3 ] && { echo "store :$SPORT died 3x -- see $LOGS/mc_store_$I.log" >&2; exit 1; }
 done
 lmc_yaml "/tmp/mc_lmc_$I.yaml" "$L1_GB" "$SPORT"
+[ -n "$NO_LMC" ] && rm -f "$PID_DIR/store_$I.pid"
 
 # --- role-specific env for the GPU1 engine -----------------------------------------
 GATE_DIR="$HERE/orion_gate"
@@ -132,8 +139,7 @@ CUDA_VISIBLE_DEVICES=1 LMCACHE_CONFIG_FILE="/tmp/mc_lmc_$I.yaml" env $ROLE_ENV \
 "$PY" -m vllm.entrypoints.cli.main serve "$MODEL" \
     --port "$EPORT" --gpu-memory-utilization "$UTIL" \
     --max-model-len "$MAX_LEN" --seed 0 --disable-log-requests --enable-prefix-caching $EAGER_ARG \
-    --max-num-seqs "$MAX_NUM_SEQS" \
-    --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}' \
+    --max-num-seqs "$MAX_NUM_SEQS" "${KV_ARGS[@]}" \
     > "$LOGS/mc_engine_$I.log" 2>&1 &
 echo $! > "$PID_DIR/engine_$I.pid"
 
