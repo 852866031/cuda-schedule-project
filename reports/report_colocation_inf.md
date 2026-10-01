@@ -2,378 +2,389 @@
 
 Sixth study. The [split-inference study](report_split_inference.md) left GPU1 with
 ≥1.9 GiB free beside the 8B decode at the 26 GiB budget (`split_lmcache_zipf_b26_fwd_ng`:
-TTFT p50 92.67 ms, 254.41 tok/s). The [inf+ft study](report_colocation_ft.md) filled
-that margin with a fine-tune neighbor. This study fills it with **a second inference
-model** — a Qwen2.5‑0.5B tenant — and asks what the incumbent pays and what the tenant
-gets, across three ways of placing the tenant's prefill.
+TTFT p50 92 ms, TPOT p50 28 ms, 254 tok/s). The [inf+ft study](report_colocation_ft.md)
+filled that margin with a fine-tune neighbor. **This study fills it with a second
+inference model** — a Qwen2.5-0.5B tenant — and asks a single question: *what does the 8B
+incumbent pay, and what does the tenant get, for sharing the decode GPU?*
 
-## 1. The goal
+The short answer, established over §5–§8:
 
-The 8B split stack is the fixed incumbent; every scenario keeps its configuration
-bit‑identical (same budget, router, workload, seeds), and the driver asserts the
-engine‑reported 8B KV grants match the baseline (9.77 GiB decode, 6.66 GiB prefill) on
-every launch — so any movement in the 8B's numbers is the tenant's doing, not drift.
+> At the reference 2 QPS a right-sized tenant looks almost free (−7% throughput). That
+> number lies. The honest cost is **capacity**: without MPS the tenant steals ~25% of the
+> 8B's serving ceiling, because two decode processes **time-slice GPU1** instead of
+> sharing it. **MPS fixes that** — it lets the two decodes co-reside, dropping the cost to
+> ~8% and making a resident second model about as cheap as a fine-tune neighbor. The one
+> hazard unique to an inference tenant is letting its KV **oversubscribe the VRAM margin
+> and stream from DRAM** (offload), which collapses TTFT and MPS only partly rescues.
 
-Two questions:
-1. **Incumbent cost** — how far does the 8B's TTFT/throughput move when the tenant
-   shares GPU1?
-2. **Tenant service** — what does the 0.5B get, versus running alone (solo) and across
-   prefill placements?
+---
 
-## 2. The view
+## 1. The setup
 
-The successor to the split study's Act II layout, now with a second tenant. The 8B split
-is unchanged in every scenario — prefill on GPU0 writes each session's KV to its own
-LMCache DRAM store (:8300); decode on GPU1 retrieves it and runs. The Qwen tenant is
-dropped into the **margin GPU1 leaves free** (≥1.9 GiB beside the 27 GiB decode), with
-its **own** store (:8301) so the two models share no cache state. The single most
-important object in each panel is the callout in the middle: the two stores are separate
-*processes*, but they drive the **same host copy engine** (CPU memcpy + host DRAM
-bandwidth), and that shared path — not PCIe, not GPU compute — is where the incumbent and
-the tenant actually collide (§7). What changes between scenarios is only *where the
-tenant's prefill runs and how its KV reaches GPU1*:
+### 1.1 The incumbent and the margin
 
-**A — whole Qwen on GPU1.** One Qwen engine does prefill *and* decode on GPU1; on
-oversubscription it spills to / reloads from its own store. GPU0 carries only the 8B.
+The 8B split stack is the **fixed incumbent**. Every scenario keeps its configuration
+bit-identical — same budget, router, workload, seeds — and the driver asserts the
+engine-reported 8B KV grants match the baseline (9.77 GiB decode, 6.66 GiB prefill) on
+every launch. So any movement in the 8B's numbers is the tenant's doing, not drift.
 
-![scenario A view](../figures/inf_coloc_view_A.png)
+The 8B runs **disaggregated**: prefill on GPU0 writes each session's KV to a host-DRAM
+LMCache store (:8300); decode on GPU1 retrieves it and generates. With the router's
+`--forward-first-token`, token #1 is emitted by GPU0 the instant its forward pass
+finishes — so **the 8B's TTFT is a GPU0 quantity and its TPOT is a GPU1 quantity.** Hold
+onto that split; it is the spine of every result below.
 
-**B — Qwen decode-only ("prefill from an invisible GPU").** The dashed GPU0 box is a
-*temporary* Qwen prefill that populates the store once and is then killed; during
-measurement the GPU1 engine only retrieves KV from DRAM and decodes — it never prefills.
+The Qwen tenant drops into the **margin GPU1 leaves free** (≥1.9 GiB beside the 27 GiB
+decode), with its **own** store (:8301) so the two models share no cache state.
 
-![scenario B view](../figures/inf_coloc_view_B.png)
+![scenario B system view](../figures/inf_coloc_view_B.png)
 
-**C — split Qwen (memory-deferred).** A second full split beside the 8B's: Qwen prefill
-on GPU0, decode on GPU1, its own forwarding proxy (:8001). Two complete stacks — the
-configuration that trips the pinned-memory guard (§7).
+*The three physical columns — GPU0 | host DRAM | GPU1 — in scenario B. The callout is the
+point of the whole study: the two stores are separate processes, but they drive the **same
+host copy path** (CPU memcpy + host DRAM bandwidth). That path — not PCIe, not GPU
+compute — is where the incumbent and tenant collide on the prefill (TTFT) leg. (Views for
+A and C: [A](../figures/inf_coloc_view_A.png), [C](../figures/inf_coloc_view_C.png).)*
 
-![scenario C view](../figures/inf_coloc_view_C.png)
+### 1.2 The three placements of the tenant
 
-## 3. The four placements
+What changes between scenarios is only **where the tenant's prefill runs and how its KV
+reaches GPU1.** This is the legend to keep; it recurs at every figure.
+
+| | 8B stack | Qwen prefill | Qwen decode | Qwen KV source |
+|---|---|---|---|---|
+| **solo** | absent | temp GPU0 (populate, killed) | GPU1 | DRAM store (:8301) |
+| **A** | present | **GPU1 (live)** | GPU1 | own VRAM prefix cache + DRAM spill |
+| **B** | present | temp GPU0 (populate, killed) | GPU1 | DRAM store (:8301) |
+| **C** | present | GPU0 (live) | GPU1 | forwarded + DRAM store |
+
+- **solo** — tenant alone on GPU1, decode-only. The baseline for B.
+- **A — whole Qwen on GPU1.** One engine does prefill *and* decode on GPU1; on
+  oversubscription it spills to / reloads from its own store. GPU0 carries only the 8B.
+- **B — Qwen decode-only ("prefill from an invisible GPU").** The tenant's prefixes are
+  computed once by a *temporary* GPU0 engine that writes their KV to the DRAM store and is
+  then killed. During measurement the GPU1 engine only *retrieves* KV from DRAM and
+  decodes — it never prefills. This is the disaggregated-decode case.
+- **C — split Qwen.** A second full split (prefill GPU0 + decode GPU1 + own proxy) beside
+  the 8B's. **Deferred** — it doubles the host-DRAM infrastructure and trips the
+  pinned-memory guard (§7, *Why C is deferred*).
 
 ![tenant placements](../figures/inf_coloc_layout.png)
 
-| | 8B stack | Qwen prefill | Qwen decode | Qwen KV source | client → |
-|---|---|---|---|---|---|
-| **solo** | absent | temp GPU0 (populate, killed) | GPU1 | DRAM store (:8301) | :8201 |
-| **A** | present | **GPU1 (live)** | GPU1 | own VRAM prefix cache + DRAM spill | :8201 |
-| **B** | present | temp GPU0 (populate, killed) | GPU1 | DRAM store (:8301) | :8201 |
-| **C** | present | GPU0 (live) | GPU1 | forwarded + DRAM store | :8001 (proxy) |
+*Memory placement of each scenario, boxes scaled to GiB. The 8B split (blue) is identical
+in A/B/C; the Qwen tenant (red) is the only thing that moves. Dashed = transient (the
+populate-then-kill prefill) or deferred (C).*
 
-- **solo** — tenant alone on GPU1, decode‑only. The baseline for B.
-- **A — whole Qwen on GPU1.** One engine does prefill *and* decode on GPU1, with a DRAM
-  offload tier so oversubscription spills to DRAM instead of recomputing. The tenant's
-  prefill compute lands on the shared GPU.
-- **B — Qwen decode‑only, "simulated prefill."** The tenant's prefixes are computed once
-  by a *temporary* GPU0 engine that writes their KV to the DRAM store and is then killed
-  ("prefill from an invisible GPU"). During measurement the GPU1 engine only *retrieves*
-  KV from DRAM and decodes — it never prefills. This is the disaggregated‑decode case.
-- **C — split Qwen.** A second full split (prefill GPU0 + decode GPU1 + own proxy) beside
-  the 8B's. Two complete stacks. **Deferred on this box** — it doubles the host‑DRAM
-  infrastructure and trips the pinned‑memory guard (§7).
+**Measured: solo + A + B, each at both workloads.** C is defined for completeness but is
+memory-infeasible on this box.
 
-**Measured: solo + A + B** (both workloads). C is defined here for completeness but is
-memory‑infeasible on this box (§7) — it needs a second full split beside the 8B's.
+### 1.3 The two tenant workloads
 
-### Why B's TTFT is reported as N/A
+Both models share the reference session template (6,144-token fixed prefixes, 128 forced
+output, 2 QPS open-loop, seeded). The tenant is run at two sizes — **the only difference
+between them is working-set size, and that is the whole point.**
 
-In B (and solo) there is **no prefill compute in the measured window** — the prefix KV
-already exists in DRAM, put there by the invisible‑GPU populate step. A request sends a
-whole preloaded prefix (no unique suffix), which is a 100% prefix‑cache hit, so the
-engine skips prefill entirely and only decodes. There is therefore no
-prompt→first‑token transition to time; a "TTFT" would be nothing but queue + KV copy.
-The tenant's metric in B is **decode throughput / TPOT**, and its TTFT column is N/A.
-
-## 4. The workloads
-
-Both models share the reference session template; only counts and (for the decode‑only
-tenant) the request shape differ.
-
-| | 8B (incumbent) | Qwen W‑fits | Qwen W‑offload |
+| | 8B (incumbent) | Qwen **W-fits** | Qwen **W-offload** |
 |---|---|---|---|
 | distinct prefixes / sessions | 32 | 8 | 48 |
-| prefix (fixed) | 6,144 tok | 6,144 tok | 6,144 tok |
-| unique suffix | 128 | **0 (decode‑only)** | **0 (decode‑only)** |
-| output (forced) | 128 | 128 | 128 |
-| requests | 300 | 300 | 300 |
-| arrival | 2 QPS open‑loop, Poisson | 2 QPS | 2 QPS |
-| KV / token | 128 KiB | 12 KiB | 12 KiB |
-| working set | 24.0 GiB | 0.56 GiB | 3.38 GiB |
-| vs ~1.04 GiB VRAM KV grant | — | resident | 3.2× over → DRAM spill |
+| unique suffix (prefill work) | 128 tok | **0 (decode-only)** | **0 (decode-only)** |
+| working set = **full KV** | 24.0 GiB | 0.56 GiB | 3.38 GiB |
+| **GPU VRAM KV budget** | 9.77 GiB (b26) | ~1.04 GiB (util 0.08) | ~1.04 GiB (util 0.08) |
+| working set vs that budget | 2.5× over → DRAM store | **fits → resident** | **3.2× over → DRAM spill** |
+| KV streamed from DRAM (measured, B) | — | **~0.05 GiB** | **14.6 GiB** |
 
-For the decode‑only tenant (solo, B) each request reuses one of the N distinct prefixes
-verbatim (uniform pick, no suffix), so after a one‑time warm the prefix is resident and
-every request is a pure decode. **W‑fits** (8 prefixes, 0.56 GiB) fits the VRAM grant
-entirely → zero DRAM traffic during measurement. **W‑offload** (48 prefixes, 3.38 GiB)
-overflows the grant → the engine keeps evicting and reloading prefixes from the DRAM
-store, which is the transfer load C's/B's mechanism is meant to expose. The 8B uses seed
-0 (the reference stream); Qwen uses seed 1000 so their arrivals are uncorrelated. Both
-clients run concurrently over aligned windows.
+Both Qwen workloads get the **same ~1.04 GiB VRAM KV budget** — util 0.08 is all the margin
+b26 leaves beside the 8B decode. The *working set* is the **full** KV, which lives in the
+host-DRAM store, not on the GPU (even the 8B's 24 GiB sits in DRAM and streams into its
+9.77 GiB GPU cache on demand). So:
 
-## 5. Run structure
+- **W-fits** (0.56 GiB) fits inside the 1.04 GiB VRAM budget → stays GPU-resident, **~zero
+  DRAM traffic** during measurement. This isolates the *compute/scheduling* cost of a
+  neighbor.
+- **W-offload** (3.38 GiB) is 3.2× the budget → the overflow lives in DRAM and the engine
+  evicts/reloads prefixes over the host path **every request** (14.6 GiB streamed). This
+  isolates the *memory-streaming* cost.
 
-Every run: one GPU monitor (DCGM, both GPUs) → launch → assert 8B KV grants →
-[decode‑only: populate + kill temp prefill] → 8B warmup (0.5 QPS) → Qwen warmup (resident
-the prefixes) → scrape before‑counters (per‑engine /metrics, log markers, /proc/vmstat
-swap) → **measure both clients concurrently** (8B in‑process on the exact baseline path;
-Qwen as a separate process so it cannot contend for the GIL) under a combined stall
-watchdog → after‑scrapes → per‑GPU telemetry over the overlap window → raw JSON + summary
-row → teardown.
+**Why B has no TTFT.** In B (and solo) the prefix KV already exists in DRAM, so a request
+is a 100% prefix-cache hit — the engine skips prefill and only decodes. There is no
+prompt→first-token transition to time, so the tenant's metric in B is decode
+throughput/TPOT and its own TTFT is N/A. (The *8B's* TTFT is always measured; it is the
+8B's prefill leg, unaffected by this.)
 
-**Populate (B, solo):** POST each distinct prefix once to the temporary GPU0 engine
-(6,144 tok = 24 full 256‑tok chunks, `save_unfull_chunk:false`), verify via its
-`prompt_tokens_total` and a retrieval probe against the decode engine (must return fast),
-then a PGID‑targeted kill of only that engine (heartbeat is pidfile‑gated so it does not
-false‑trip). A failed verify aborts the run rather than measuring a lie.
+### 1.4 How a run executes
 
-**Isolation guarantees:** the two models get **separate LMCache servers** (8B :8300,
-Qwen :8301 — content‑hash keys would otherwise collide) and separate L1 pools;
-`PYTHONHASHSEED=0` everywhere; a single GPU monitor (never two DCGM openers); the 8B's
-launch flags are copied byte‑for‑byte from the split study.
+One GPU monitor (DCGM, both GPUs) → launch both stacks (8B flags copied byte-for-byte from
+the split study) → assert 8B KV grants → [decode-only: populate the store from a temp GPU0
+engine, verify, then kill it] → warm up → **measure both clients concurrently** over an
+aligned window (8B in-process on the exact baseline path; Qwen as a separate process so it
+can't contend for the GIL) → per-engine /metrics deltas + per-GPU telemetry + swap
+counters → raw JSON. Experiments run **strictly serially** (one stack pair at a time) so
+pinned host memory never overcommits — the failure mode that has hard-frozen this box.
 
-## 6. Results
+---
 
-Baseline (8B alone, b26): TTFT p50 **92 ms**, TPOT p50 **28 ms**, **254 tok/s** —
-reproduced on the current box by a fresh 8B‑alone control (92.4 ms / 254.4 tok/s), so
-nothing below is box drift. Qwen solo (decode‑only, alone on GPU1): **274 tok/s** at both
-W‑fits and W‑offload — the tenant's own throughput is unharmed by 3.2× oversubscription
-because its DRAM reloads overlap with decode.
+## 2. Results — what it costs at 2 QPS, what the tenant keeps
+
+Reference points: **8B alone** (b26) TTFT 92 ms / TPOT 28 ms / **254 tok/s** — reproduced
+on the current box by a fresh control (92.4 ms / 254.4 tok/s), so nothing below is drift.
+**Qwen solo** (alone on GPU1): **274 tok/s**, the same at W-fits and W-offload.
 
 ![what the incumbent pays and what the tenant keeps](../figures/inf_coloc_result.png)
 
-*Left: the incumbent pays on both axes — TTFT p50 (orange, the GPU0 prefill leg) and TPOT
-p50 (blue, the GPU1 decode leg) as ratios to the 8B‑alone baseline (log), with absolute
-8B throughput falling on the right axis. Right: the 0.5B tenant keeps 84–99% of its solo
-decode throughput.* The measured points, per cell (8B TTFT / 8B TPOT / 8B tok/s ·
-Qwen tok/s · Qwen KV streamed from DRAM):
+*Left: the 8B incumbent's cost — TTFT (orange) and TPOT (blue) as ratios to its alone
+baseline (log), absolute throughput in green on the right axis. Right: the Qwen tenant's
+achieved throughput vs its solo ceiling. Cells are scenario × workload; fits TTFT/TPOT are
+means of n=4 with min–max bars. Legend: **A** = whole Qwen on GPU1, **B** = decode-only.*
 
-- **A/fits** (whole Qwen) — TTFT **119 ms** (n=4: 95–141) / TPOT 97 ms / 236 · 271 (99%) · 0.00 GiB
-- **B/fits** (decode‑only) — TTFT **157 ms** (n=4: 142–175) / TPOT 93 ms / 237 · 271 (99%) · 0.05 GiB
+**Observations:**
 
-The fits TTFTs were each measured **4×** (the figure shows their min–max range): A/fits
-mean 119 ms, B/fits mean 157 ms, with **non‑overlapping ranges** (A max 141 < B min 142).
-So B/fits is a **real ~40 ms above A/fits**, not run‑to‑run noise — the tenant's
-decode‑only engine queries the LMCache store on every request (its retrieval path is
-always live), while A's whole‑Qwen engine mostly hits its own VRAM prefix cache and
-touches the store less, so B loads the shared host path a little more. Both, though, sit
-far below the offload cells: with the tenant's KV resident, the 8B is within ~30–70 ms of
-its 92 ms baseline.
-- **A/offload** — 312 ms / 199 ms / 212 · 261 (95%) · 8.26 GiB
-- **B/offload** — 7.7 s / 370 ms / 175 · 230 (84%) · 14.6 GiB
+- **The tenant gets almost everything it would get alone.** Qwen keeps **99%** of its solo
+  274 tok/s when resident (fits), and **84–95%** even when oversubscribed (offload) —
+  because its own DRAM reloads overlap with its decode. Colocation is nearly free *to the
+  tenant*; the whole cost lands on the incumbent.
 
-TPOT (time‑per‑output‑token) is each request's mean inter‑token gap *including* the waits
-when it is time‑shared out — the honest decode latency. The raw single‑gap ITL median
-barely moves (~17 ms) because most gaps stay short; it is the per‑request average that
-triples (fits) to ×13 (offload) as the incumbent's decode waits behind the tenant's.
+- **The 8B's decode slows ~3.4× whenever the tenant decodes.** In every cell where Qwen
+  decodes on GPU1 (A/fits, B/fits, A/offload) the 8B's TPOT rises from 28 ms to **~95–98 ms**
+  (fits) — a 3.4× decode slowdown that is present even when the tenant touches no memory at
+  all. This is the GPU1-sharing cost, and §3 shows it is serialization.
 
-### The real price: capacity, not the 2‑QPS latency
+- **The 8B's TTFT only moves when the tenant streams KV.** TTFT tracks the tenant's DRAM
+  traffic almost perfectly: 92 → **119/157 ms** (fits, ~0 streaming) → **312 ms** (A/offload,
+  8.3 GiB) → **7.7 s** (B/offload, 14.6 GiB). The prefill leg is a host-path story, and with
+  resident KV it barely moves; with offload it collapses (§3).
 
-At the reference 2 QPS the open loop pins throughput at the offered rate while both models
-still have headroom, so the incumbent looks only ~7% down — that single point *hides* the
-cost. Sweeping the 8B's QPS (tenant fixed at 2 QPS) exposes it as a **capacity ceiling**:
+- **At fits, B's TTFT is a real ~40 ms above A's — not noise.** A/fits averages 119 ms
+  (n=4: 95–141), B/fits 157 ms (142–175); the ranges don't overlap. B's decode-only engine
+  queries the store on *every* request (its retrieval path is always live), while A's
+  whole-Qwen engine mostly hits its own VRAM prefix cache — so B loads the shared host path
+  a little more. A small effect, but a real one.
+
+- **Offload is a different regime, not a worse number.** B/offload is a *collapse*: TTFT in
+  seconds, throughput −31%, tenant down to 84%. The streaming overflow saturates the host
+  copy path and requests queue without bound. Keep this mentally separate from the fits
+  cells — §3 shows they fail for partly different reasons.
+
+- **The headline −7% at 2 QPS is the misleading one.** Throughput barely moves at fits
+  (254 → ~237) because the open loop pins it at the offered rate while both models still
+  have headroom. That single point *hides* the cost — which is why §2.1 prices it properly.
+
+### 2.1 The real price: capacity, not the 2-QPS latency
+
+Sweeping the 8B's QPS (tenant fixed at 2 QPS) turns the hidden cost into a visible ceiling.
 
 ![QPS sweep — the tenant lowers the 8B's capacity ceiling](../figures/inf_coloc_qps.png)
 
-| 8B QPS (offered tok/s) | 8B alone | 8B + tenant, no MPS | 8B + tenant, + MPS |
+| 8B QPS (offered tok/s) | 8B alone | + tenant, no MPS | + tenant, + MPS |
 |---|---|---|---|
-| 2 (256) | 254 tok/s | 237 | 254 |
+| 2 (256) | 254 | 237 | 254 |
 | 3 (384) | 317 | 245 | 300 |
 | 4 (512) | **327** (sat.) | **245** (sat.) | **298** (sat.) |
 
-The 8B alone saturates near **~327 tok/s**; with the decode‑only tenant on GPU1 **no MPS**
-it saturates near **~245** — the tenant consumes **~25% of the 8B's serving capacity**, and
-its TTFT climbs faster with load. This is the honest way to price a colocated tenant: not
-the flattering 7% at a single sub‑capacity QPS, but the QPS headroom it costs. And **MPS
-recovers most of it** — the +MPS ceiling is **~300 tok/s (only −8%)**, and its TTFT tracks
-the 8B‑alone curve (right panel). So the same MPS lever that fixes the per‑request TPOT
-(§7) also restores most of the lost capacity: the tenant's true cost, given MPS, is ~8% of
-QPS headroom, not 25%.
+**Observations:**
 
-## 7. Where the bottleneck is
+- **The tenant costs ~25% of the 8B's serving capacity (no MPS).** The 8B alone saturates
+  near 327 tok/s; with the decode-only tenant it saturates near **245**. The flattering −7%
+  at 2 QPS becomes −25% once you ask for throughput the system doesn't have spare.
 
-A request has **two legs** — the prefill leg on GPU0 (whose finish is the TTFT, thanks to
-`--forward-first-token`) and the decode leg on GPU1 (whose per‑token pace is the TPOT).
-The clean, resident‑KV (*fits*) case isolates them: there the tenant's only real cost is
-on the decode leg, and it is **GPU1 context serialization** — proven and undone by MPS
-(§ below). The *offload* case is messier: the tenant's DRAM streaming and the box's memory
-pressure pull the **prefill leg** down too, so the same GPU1 serialization ends up
-back‑pressuring TTFT as well. So the two legs are the structure; a single cause — sharing
-GPU1 without spatial partitioning — dominates both, with offload adding a host‑streaming
-residual on top.
+- **TTFT degrades faster under load, too.** With the tenant, the 8B's TTFT climbs more
+  steeply with QPS (right panel) — the queue it has to clear is longer at every offered
+  rate.
+
+- **MPS recovers most of the capacity.** The +MPS ceiling is ~**300 tok/s (−8%)**, and its
+  TTFT tracks the alone curve. The same lever that fixes per-request TPOT (§3) restores most
+  of the lost throughput: the tenant's true cost, *given MPS*, is ~8% of headroom, not 25%.
+
+---
+
+## 3. Where the bottleneck is
+
+Everything above reduces to **one mechanism with one mitigation.** A request has two legs,
+and the tenant hits each differently:
 
 ![the two legs of a request](../figures/inf_coloc_mechanism.png)
 
-*One 8B request has two legs. Token #1 (TTFT) is emitted by the prefill leg on GPU0 the
-instant its forward pass finishes and is forwarded by the proxy — so TTFT is a GPU0
-quantity that the tenant reaches only through the shared host store path. Tokens 2–128
-come from the decode leg on GPU1, shared with the Qwen decode. In the resident‑KV (fits)
-case this cleanly splits — the tenant's cost is on the decode leg (TPOT). Under offload it
-does not: the loaded decode back‑pressures the prefill pipeline, so the prefill leg's TTFT
-collapses too (see § offload below).*
+- **Decode leg (GPU1) → TPOT + throughput.** Token #2 onward comes from GPU1, shared with
+  the Qwen decode. This is where the ~3.4× fits cost lives.
+- **Prefill leg (GPU0, via the host store path) → TTFT.** Token #1 comes from GPU0. This
+  only moves when the tenant *streams KV* and loads the shared host copy path.
 
-**Axis 1 — the decode leg (GPU1): TPOT + throughput.** With `--forward-first-token`,
-token #1 comes from the prefill GPU; GPU1 only produces token #2 onward. So GPU1 sharing
-shows up in the 8B's **TPOT and throughput, not its TTFT**. Wherever the Qwen decode is
-active (A/fits, B/fits, A/offload) the 8B TPOT rises from **28 ms to ~93–97 ms** (3.3×)
-and throughput drops ~6–16%; in B/offload TPOT reaches **370 ms** (13×). The tell: GPU1's
-*mean* utilization *falls* when the tenant is added (sm 0.52→0.48, dram 0.46→0.39) — the
-8B decode is **waiting** for GPU time, not the GPU saturating (if it were HBM-bandwidth
-saturation, DRAM-active would *rise*, not fall).
+In the clean **fits** case these separate cleanly (decode-leg cost only). Under **offload**
+they don't — the loaded decode back-pressures the prefill pipeline, so TTFT collapses too.
+A single cause — **sharing GPU1 without spatial partitioning** — dominates both, with
+offload adding a host-streaming residual on top.
 
-**An MPS control settles the mechanism: it is context serialization.** Without MPS two
-processes' CUDA contexts cannot run kernels concurrently on GPU1 — they time-slice. Rerun
-under MPS (both engines become clients, verified live via the MPS server), so their
-kernels co-reside on the SMs, and the decode cost nearly vanishes:
+### 3.1 The decode-leg cost is GPU1 context serialization — MPS proves it
+
+Without MPS, two processes' CUDA contexts cannot run kernels concurrently on one GPU; they
+**time-slice.** The tell is in the telemetry: when the tenant is added, GPU1's *mean*
+utilization **falls** (SM 0.52→0.48, DRAM-active 0.46→0.39) — the 8B decode is **waiting for
+GPU turns**, not saturating a resource (HBM saturation would make DRAM-active *rise*). And
+decode runs at **<5% SM occupancy**, so there is ample room for two decodes to co-reside —
+the large penalty despite that spare capacity is the signature of coarse context
+serialization.
+
+Turn on MPS (both engines become clients; their kernels co-reside on the SMs) and the
+decode cost nearly vanishes:
 
 ![MPS collapses the decode-side cost](../figures/inf_coloc_mps.png)
 
-| fits cell | TPOT no-MPS (n=4) | TPOT +MPS | 8B tput no-MPS → +MPS |
-|---|---|---|---|
-| A/fits | 95 ms | **33 ms** | 236 → **254** |
-| B/fits | 98 ms | **34 ms** | 237 → **254** |
+Re-running the §2 results figure with MPS on — overlaid on the no-MPS points — shows the
+same collapse across the board:
 
-MPS drops TPOT from ~3.4× the 28 ms baseline back to ~1.2× and recovers throughput to the
-254 tok/s baseline, for both scenarios — and *without* hurting TTFT (still ~120–130 ms).
-Since the decode runs at only ~5% SM occupancy, there is ample room for two decodes to
-co-reside; the large no-MPS penalty despite that spare capacity is exactly the signature
-of coarse whole-context serialization, and MPS removing it is the proof. So the axis-1
-cost is **GPU1 context serialization, and MPS is its mitigation** — the same lever the
-[fine-tune study](report_colocation_ft.md) used. TPOT (which counts the waits) is what
-moves; the raw single-gap ITL median does not.
+![results under MPS, overlaid on no-MPS](../figures/inf_coloc_result_mps.png)
 
-**Axis 2 — the prefill leg (GPU0) via the host store path: TTFT.** The 8B TTFT is the
-prefill leg alone (verified: the proxy sends token #1 the instant GPU0 finishes its
-forward pass). It moves with the tenant's **DRAM streaming volume** (0→0.05→8.3→14.6 GiB
-gives 92→175→312→7700 ms), because the prefill leg's host‑side store step (retrieve on a
-prefix‑cache miss, store the computed KV back) contends on the shared host copy machinery.
-Two clarifications settle the *fits* case (A +27 ms, B +65 ms over the 92 ms baseline,
-means of n=4, with ~zero streaming):
-- **Not GPU0 compute.** The 8B‑alone control reproduces 92 ms with the identical model, so
-  the prefill compute is untouched — the extra time is entirely the host‑side store step.
-- **Not host‑DRAM bandwidth.** The 8B decode already streams ~225 GB from the store in the
-  baseline at 92 ms; W‑fits adds ~0 host traffic (Qwen KV is VRAM‑resident). No new
-  bandwidth wall is introduced. By elimination the residual is a **host‑side effect** on
-  the GIL‑bound Python‑fallback LMCache path (server + proxy) — the box bursts to 99% user
-  CPU during the run — a *measurement‑stack artifact* rather than a fundamental GPU or
-  memory limit. That B (+65) exceeds A (+27) fits this: B's decode‑only engine hits the
-  store on every request while A mostly hits VRAM, so B adds more host‑path load.
-- **What the taskset test showed (and didn't).** Pinning the 8B store server + proxy onto
-  dedicated cores 0–5 with the Qwen processes excluded (kept on 6–13) — affinity verified
-  live — moved a control B/fits of 182 ms to 152 ms, but 152 ms sits **inside** B/fits's
-  normal 142–175 range, so the effect is not distinguishable from run‑to‑run noise at n=1
-  each. So CPU isolation *from the tenant* did **not** clearly help — consistent with the
-  contention coming from total host‑CPU load (the 8B's own engine threads still span those
-  cores), not from the tenant's processes specifically. The host‑side sub‑mechanism is
-  therefore established only as *host‑side, non‑bandwidth*; the finer attribution is left
-  open rather than overclaimed.
+*Same layout as §2. Solid markers are +MPS; faded `×` are the no-MPS runs from the same
+cells. The grey arrows are the drop MPS buys. Right panel: the tenant keeps ~100% either
+way; offload's no-MPS dip (−16%) is recovered.*
 
-**The offload cells: a prefill‑leg collapse, not a clean second axis (correcting an
-earlier draft).** In offload the 8B TTFT collapses to *seconds* — on a clean box B/offload
-measured TTFT p50 **11.1 s**, and it is genuinely the prefill leg (proxy `leg1` == TTFT ==
-11.07 s), whose effective throughput has fallen to ~8000 tok/s, below the ~12.5k tok/s the
-2 QPS offered load needs, so requests queue without bound. An earlier draft called this a
-pure host‑copy‑bandwidth saturation (a "second axis" MPS could not touch). **The MPS
-experiment refutes that:** rerun under MPS, B/offload's TTFT dropped to **348 ms** and its
-prefill‑leg throughput recovered to ~10.8k tok/s — a GPU1 co‑residency fix removing most
-of a GPU0 prefill‑leg queue. So the collapse is *not* mainly a fixed host‑bandwidth wall;
-much of it rides on the same GPU1 serialization the fits cells showed, back‑pressuring the
-prefill pipeline. **But the offload comparison is confounded:** at ~57 GiB it sits at the
-box's RAM edge, and the no‑MPS control paged in 27× more (36k vs 1.3k swap‑in pages) than
-the MPS run, because run‑ordering changes the swap state. So on this box the offload
-collapse entangles GPU‑serialization back‑pressure, host‑copy streaming (14.6 GiB), and
-swap pressure, and they cannot be cleanly separated — the honest statement is that offload
-is far worse than fits and MPS helps it a lot, with a residual cost (offload+MPS still
-348 ms TTFT / 169 ms TPOT / 13 s p95) that the streaming and memory pressure impose. The
-fits result is the clean, unconfounded one.
+**Observations (with vs without MPS):**
 
-**Earlier faulty B (for the record).** A first version ran the decode engine with prefix
-caching *off*, re‑fetching the full 72 MiB prefix every request even in fits (21 GiB of
-needless copies) and collapsing the 8B. The fix — prefix caching on + whole‑prefix reuse —
-keeps the fits set VRAM‑resident (axis‑2 traffic ~0) and lets only the offload overflow
-stream. Nothing is ever recomputed (counters: 300 of 1.84 M Qwen prompt tokens computed;
-the rest cached), and it is not a PCIe limit (independent x8 links; ~5 GB/s copies under a
-~16 GB/s link).
+- **MPS collapses the decode slowdown from 3.4× to 1.2×.** A/fits TPOT 95 → **33 ms**,
+  B/fits 98 → **34 ms** — within ~20% of the 28 ms baseline — and 8B throughput returns to
+  the full 254 tok/s. The waiting was serialization; removing it removes the cost.
 
-**Telemetry attribution caveat.** DCGM is per‑GPU, not per‑process: on GPU1 the SM‑active,
-occupancy, and DRAM‑active counters blend the 8B decode and the Qwen tenant. Every
-per‑model claim rests on client‑side latencies and per‑engine /metrics deltas; the
-per‑GPU numbers bound the *combined* load. Swap counters (pswpin/pswpout) are recorded
-per run to rule host‑DRAM thrash in or out before attributing an 8B slowdown to GPU
-contention.
+- **It costs the TTFT leg nothing.** MPS leaves fits TTFT essentially where it was
+  (~120–130 ms): the decode-side fix doesn't perturb the prefill leg, confirming the two
+  legs are genuinely separate contention points in the resident case.
+
+- **It recovers the offload collapse by most of an order of magnitude.** B/offload TTFT
+  drops **7.7 s → 348 ms** and TPOT 370 → 169 ms. Even the memory-streaming regime was
+  *mostly* GPU1 serialization back-pressuring the prefill queue — not a pure host-bandwidth
+  wall, as an earlier draft wrongly claimed.
+
+- **The residual that MPS can't remove is the streaming cost itself.** Offload+MPS still
+  sits at ~4× TTFT / 6× TPOT — the genuine host-copy load of moving 14.6 GiB every window.
+  That is the inference tenant's distinctive, memory-bound cost (§4), and it is a
+  capacity-planning problem, not a scheduling one.
+
+So the decode-side cost is **GPU1 context serialization, and MPS is its mitigation** — the
+same lever the [fine-tune study](report_colocation_ft.md) relied on. TPOT (which counts the
+waits) is what moves; the raw single-gap ITL median (~17 ms) barely does, because most
+individual gaps stay short — it is the per-request *average*, inflated by the wait-outs,
+that triples.
+
+### 3.2 Three things that are *not* the bottleneck
+
+Ruled out by controls, so the attribution above is clean:
+
+- **Not GPU0 compute.** The 8B-alone control reproduces 92 ms TTFT with the identical
+  model — the prefill *compute* is untouched; the fits TTFT delta is entirely the host-side
+  store step.
+- **Not PCIe, not recomputation.** Copies run ~5 GB/s under independent ×8 links (~16 GB/s);
+  counters show only 300 of 1.84 M Qwen prompt tokens ever recomputed (prefix caching on).
+  The earlier faulty-B draft that re-fetched the 72 MiB prefix every request (21 GiB of
+  needless copies) was a prefix-caching-off bug, since fixed.
+- **Not cleanly host-DRAM *bandwidth* at fits.** W-fits adds ~0 host traffic yet still adds
+  TTFT; the residual is a host-side effect on the GIL-bound Python-fallback LMCache path
+  (the box bursts to 99% user CPU). A taskset test that isolated the 8B's store/proxy onto
+  dedicated cores moved a control B/fits only from 182→152 ms — inside the normal 142–175
+  range, so **not distinguishable from noise at n=1.** The finer host-side attribution is
+  left open rather than overclaimed.
+
+### 3.3 The offload comparison is confounded (stated honestly)
+
+At ~57 GiB the offload runs sit at the box's RAM edge, and the no-MPS control paged in **27×
+more** than the MPS run (36k vs 1.3k swap-in pages) because run-ordering changes the swap
+state. So the offload collapse entangles GPU-serialization back-pressure, host-copy
+streaming (14.6 GiB), and swap pressure — they can't be cleanly separated on this box. The
+honest statement: offload is far worse than fits, MPS helps it a lot, and a real streaming
+residual remains. **The fits result is the clean, unconfounded one.**
 
 **Why C is deferred.** C stands up a *second* full split — another prefill engine, another
-store, more pinned L1s — pushing the host into the kernel's reclaim zone; in the first
-pass its offload cell drove available RAM below the 4 GiB mem‑guard floor and the guard
-killed the engines (as designed — pinned overcommit has frozen this box before). The
-pinned total that governs the freeze (8B 2×6 + Qwen 2×1 = 13 GiB) is safe; it is the
-swappable store growth that is not, so C is left for hardware with more host RAM.
+store, more pinned L1s. In the first pass its offload cell drove available RAM below the
+mem-guard floor and the guard killed the engines (as designed — pinned overcommit has frozen
+this box before). The pinned total that governs the freeze (8B 2×6 + Qwen 2×1 = 13 GiB) is
+safe; it is the swappable store growth that is not. C is left for a box with more host RAM.
 
-## 8. Colocating inference vs colocating fine-tuning
+**Telemetry caveat.** DCGM is per-GPU, not per-process: on GPU1 the SM/occupancy/DRAM
+counters blend the 8B decode and the Qwen tenant. Every per-model claim rests on client-side
+latencies and per-engine /metrics deltas; the per-GPU numbers only bound the *combined*
+load. Swap counters are recorded per run to rule host-DRAM thrash in or out before blaming
+GPU contention.
 
-This is the sixth study; the [fifth](report_colocation_ft.md) put a **fine-tune** neighbor
-in the same GPU1 margin, at the same b26 budget, against the same reference workload. Side
-by side, the two studies answer one question: *what kind of neighbor can the decode GPU
-actually afford?*
+---
+
+## 4. Colocating inference vs colocating fine-tuning
+
+The [fifth study](report_colocation_ft.md) put a **fine-tune** neighbor in this same GPU1
+margin, at b26, against the same workload. Side by side the two studies answer: *what kind
+of neighbor can the decode GPU actually afford?*
 
 ![inference vs fine-tuning neighbor](../figures/inf_coloc_vs_ft.png)
 
 *Left: decode TPOT × the decode-alone baseline (log). The fine-tune arms ran under MPS, so
-the fair comparison is MPS‑vs‑MPS: a resident (fits) second‑model tenant with MPS costs
-**1.2×**, right alongside the fine‑tune arms' 1.2–1.7× (bracket). Without MPS the tenant
-serializes (3.5×); MPS removes that. Offload keeps a residual (6× even with MPS). Right:
-why — decode leaves ~95% of its SMs idle, so MPS lets any resident neighbor use them; the
-inference tenant reaches the binding HBM bandwidth only when it streams KV (offload).*
+the fair comparison is MPS-vs-MPS. Right: why — decode leaves ~95% of its SMs idle.*
 
-The first cut of this section drew an unfair contrast — a *no‑MPS* inference tenant
-(3.3–13×) against the *with‑MPS* fine‑tune arms (1.2–1.7×) — and concluded a second decode
-was near‑worst‑case. The MPS control corrects it. Three points:
+**Observations:**
 
-- **The decode GPU's idle resource is compute; MPS is what unlocks it.** Decode runs at
-  **SM occupancy under 5%** while **DRAM‑active sits at 45–62%** — memory‑bound, SMs nearly
-  empty. But two processes cannot use those idle SMs concurrently *without MPS* — their
-  contexts time‑slice. This bites **both** neighbors: the fine‑tune study's un‑MPS'd
-  time‑slice arm collapsed decode (TPOT 1193 ms), and the inference tenant's no‑MPS arms
-  serialize to 3.5× (fits) / 13× (offload). MPS is the shared enabler, not a fine‑tune
-  detail.
-- **With MPS, a resident right‑sized tenant is cheap either way.** A fine‑tune neighbor
-  costs **+23% TPOT** at a 10% SM cap; the resident second‑model tenant costs **+20%**
-  (34 vs 28 ms) and recovers full throughput. When the neighbor's working state fits in the
-  margin, the ~95%‑idle SMs absorb its kernels and the incumbent barely notices.
-- **The inference tenant's distinctive cost is KV streaming, not "being inference."** Its
-  one hazard the fine‑tune neighbor lacks is that its KV can oversubscribe the VRAM margin
-  and spill to DRAM (offload); that streaming loads the host path and leaves a residual MPS
-  cannot remove (offload+MPS still ~6× TPOT). A fine‑tune adapter's state stays resident, so
-  it never triggers this.
+- **The decode GPU's idle resource is compute, and MPS is what unlocks it.** Decode runs at
+  <5% SM occupancy while DRAM-active sits at 45–62% — memory-bound, SMs nearly empty. But
+  two processes can't use those idle SMs concurrently *without MPS*; they time-slice. This
+  bites **both** neighbors — the fine-tune study's un-MPS'd arm collapsed decode to 1193 ms,
+  the inference tenant's no-MPS arms serialize to 3.4× — so MPS is the shared enabler, not a
+  fine-tune detail.
 
-So the corrected lesson refines the fifth study's §3.2 thesis. It is **not** "compute‑dense
-good, a decode tenant bad." It is: **MPS is mandatory** for either neighbor to share the
-decode GPU without serializing; given MPS, a **resident, right‑sized** tenant — fine‑tune or
-a second model — costs ~20% and is very affordable; the real thing to avoid is letting the
-tenant's KV **oversubscribe the VRAM margin and stream**, which is a capacity‑planning
-problem (size the tenant to fit, per §3), not an inherent property of colocating inference.
+- **Given MPS, a resident right-sized tenant is cheap either way.** A fine-tune neighbor
+  costs **+23%** TPOT at a 10% SM cap; the resident second-model tenant costs **+20%**
+  (34 vs 28 ms) and recovers full throughput. When the neighbor's state fits the margin, the
+  idle SMs absorb its kernels and the incumbent barely notices.
+
+- **The inference tenant's one distinctive cost is KV streaming.** Its hazard the fine-tune
+  neighbor lacks is that its KV can oversubscribe the VRAM margin and spill to DRAM
+  (offload) — a host-path load MPS can't remove (offload+MPS still ~6× TPOT). A fine-tune
+  adapter's state stays resident, so it never triggers this.
+
+So the corrected lesson refines the fifth study's thesis. It is **not** "compute-dense good,
+a decode tenant bad." It is: **MPS is mandatory** for either neighbor to share the decode GPU
+without serializing; given MPS, a **resident, right-sized** tenant — fine-tune or a second
+model — costs ~20% and is very affordable; the thing to avoid is letting the tenant's KV
+**oversubscribe the VRAM margin and stream**, which is capacity planning (size the tenant to
+fit), not an inherent property of colocating inference.
+
+---
+
+## 5. Takeaways
+
+1. **A right-sized second model is affordable — but only with MPS.** Resident tenant +MPS:
+   decode +20%, throughput recovered, ~8% capacity cost. Without MPS the two decodes
+   time-slice and the cost is ~25% of capacity.
+2. **Price colocation as capacity, not 2-QPS latency.** The single sub-saturation point
+   flatters by ~3×; sweep QPS to see the real ceiling.
+3. **Keep the tenant's KV resident.** Oversubscribing the VRAM margin spills to DRAM and
+   collapses TTFT; this is the one failure mode MPS can't fully fix.
+4. **A second inference model ≈ a fine-tune neighbor, given MPS and a resident footprint.**
+   The decode GPU's spare resource is compute; both neighbors live in it equally well.
+
+---
 
 ## Reproducing
 
 ```bash
 # this study: solo baseline + A (whole Qwen) + B (decode-only from DRAM), both workloads
 .venv/bin/python scripts/inf_inf_coloc/coloc2_sweep.py --scenarios solo A B --wls fits offload
+# MPS arms: start MPS, then re-run the fits/offload cells as clients
+nvidia-cuda-mps-control -d            # export CUDA_MPS_PIPE_DIRECTORY first
+.venv/bin/python scripts/inf_inf_coloc/coloc2_sweep.py --scenarios A B --wls fits --name-suffix _mps
+echo quit | nvidia-cuda-mps-control   # teardown
 # 8B-alone control (current-box baseline, via the split harness)
 .venv/bin/python scripts/inference/split_simple/disagg_sweep.py --stack lmcache \
     --skew zipf --budgets 26 --warmup-qps 0.5 --forward-first-token --max-inflight 999 \
     --name-suffix _ctrl --tag split_ctrl
 
 # figures (run from the repo root; view them before believing them)
-.venv/bin/python scripts/plots/plot_inf_coloc_view.py         # §2 system view
-.venv/bin/python scripts/plots/plot_inf_coloc_layout.py       # §3 memory placement
-.venv/bin/python scripts/plots/plot_inf_coloc_mechanism.py    # §7 two-axis mechanism
-.venv/bin/python scripts/plots/plot_inf_inf_coloc.py          # §6 results
-.venv/bin/python scripts/plots/plot_inf_vs_ft.py              # §8 inf-vs-ft comparison
+.venv/bin/python scripts/plots/plot_inf_coloc_view.py          # §1 system view (A/B/C)
+.venv/bin/python scripts/plots/plot_inf_coloc_layout.py        # §1 memory placement (2x2)
+.venv/bin/python scripts/plots/plot_inf_inf_coloc.py           # §2 results, 2 QPS
+.venv/bin/python scripts/plots/plot_inf_coloc_qps.py           # §2.1 capacity sweep
+.venv/bin/python scripts/plots/plot_inf_coloc_mechanism.py     # §3 the two legs
+.venv/bin/python scripts/plots/plot_inf_coloc_mps.py           # §3.1 MPS collapses TPOT
+.venv/bin/python scripts/plots/plot_inf_coloc_result_mps.py    # §3.1 results under MPS
+.venv/bin/python scripts/plots/plot_inf_vs_ft.py               # §4 inf-vs-ft comparison
 ```
 
-Data: `output/summary_inf_coloc*.csv` (main solo+B, plus `_A`, and the `_iso`/`_cpu`/`_legs`
-diagnostic re-runs), raw per-request records in `output/raw/infc_*.json`, per-second GPU
-telemetry in `output/gpumon/`, engine logs in `output/logs/`. The 8B-alone control is
-`output/raw/split_lmcache_zipf_b26_ctrl.json`. `scripts/inf_inf_coloc/` is self-contained:
-`workload.py`/`client.py`/`lmc_proxy.py`/`lmc_server_main.py` are copies, and `coloc2_*.sh`
-launch/stop/heartbeat drive both stacks with a single teardown.
+Data: `output/summary_inf_coloc*.csv`, raw per-request records in `output/raw/infc_*.json`
+(fits cells have 4 repeats: `infc_{A,B}_fits` + `_r2/_r3/_r4` and `_iso/_legs/_cpu`; MPS
+arms `*_mps`; QPS arms `*_q3/_q4`), per-second GPU telemetry in `output/gpumon/`, engine
+logs in `output/logs/`. The 8B-alone control is `split_lmcache_zipf_b26_ctrl.json`.
+`scripts/inf_inf_coloc/` is self-contained (`workload.py`/`client.py`/`lmc_proxy.py`/
+`lmc_server_main.py` are copies; `coloc2_*.sh` launch/stop/heartbeat drive both stacks with
+a single teardown).

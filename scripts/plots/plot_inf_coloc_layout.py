@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Memory/placement layout of the tenant scenarios (decode+decode colocation study).
 
-Four panels: solo, A (whole Qwen on GPU1), B (Qwen decode-only, KV from DRAM), C
+2x2 panels: solo, A (whole Qwen on GPU1), B (Qwen decode-only, KV from DRAM), C
 (split Qwen). Physical columns GPU0 | host DRAM | GPU1; boxes scaled to GiB, colored by
 process family (8B = blue, Qwen = red, dashed = transient/deferred). No measured data.
 Run from the repo root.
@@ -20,25 +20,25 @@ BLUE, RED, GREY = "#1f6feb", "#c1440e", "#57606a"
 BLUE_L, RED_L = "#d6e4ff", "#f0d9cd"
 
 GPU_GIB, DRAM_GIB = 31.8, 60.0
-COL_H, COL_W = 3.0, 0.66
+COL_H, COL_W = 3.0, 0.78
 
 
 def column(ax, x, title, total_gib, boxes):
     h = COL_H * total_gib / DRAM_GIB
-    ax.add_patch(Rectangle((x, 0), COL_W, h, fill=False, ec=GREY, lw=1.1))
-    ax.text(x + COL_W / 2, -0.12, f"{title}\n{total_gib:g}", ha="center", va="top",
-            fontsize=7.2, color=GREY)
+    ax.add_patch(Rectangle((x, 0), COL_W, h, fill=False, ec=GREY, lw=1.2))
+    ax.text(x + COL_W / 2, -0.14, f"{title}\n{total_gib:g} GiB", ha="center", va="top",
+            fontsize=9.5, color=GREY)
     y = 0.0
     for label, gib, face, edge, ls in boxes:
         bh = h * gib / total_gib
         ax.add_patch(Rectangle((x + 0.02, y + 0.01), COL_W - 0.04, max(bh - 0.02, 0.03),
-                               fc=face, ec=edge, lw=1.0, ls=ls, zorder=3))
-        if bh > 0.28:
+                               fc=face, ec=edge, lw=1.1, ls=ls, zorder=3))
+        if bh > 0.30:
             ax.text(x + COL_W / 2, y + bh / 2, label, ha="center", va="center",
-                    fontsize=6.4, zorder=4)
+                    fontsize=8.6, zorder=4)
         else:
-            ax.text(x + COL_W + 0.04, y + bh / 2, label, ha="left", va="center",
-                    fontsize=6.0, zorder=4)
+            ax.text(x + COL_W + 0.05, y + bh / 2, label, ha="left", va="center",
+                    fontsize=8.0, zorder=4)
         y += bh
     return h
 
@@ -48,7 +48,7 @@ def free(gib):
 
 
 def panel(ax, scenario):
-    x0, x1, x2 = 0.0, 1.02, 2.04
+    x0, x1, x2 = 0.0, 1.16, 2.32
     has8b = scenario != "solo"
 
     # GPU0
@@ -83,27 +83,28 @@ def panel(ax, scenario):
     # KV-flow arrow: DRAM store -> GPU1 (the transfer that matters for B/C)
     if scenario in ("B", "C"):
         ax.add_patch(FancyArrowPatch((x1 + COL_W, hd * 0.55), (x2, COL_H * 0.55),
-                     arrowstyle="-|>", mutation_scale=9, color=RED, lw=1.1))
-        ax.text((x1 + COL_W + x2) / 2, COL_H * 0.62, "KV in", ha="center",
-                fontsize=5.8, color=RED)
+                     arrowstyle="-|>", mutation_scale=12, color=RED, lw=1.4))
+        ax.text((x1 + COL_W + x2) / 2, COL_H * 0.63, "KV in", ha="center",
+                fontsize=8.0, color=RED)
 
-    titles = {"solo": "solo\nQwen decode-only, no 8B",
-              "A": "A - whole Qwen on GPU1\n(prefill+decode here)",
-              "B": "B - Qwen decode-only\n(KV from DRAM, prefill invisible)",
-              "C": "C - split Qwen\n(prefill GPU0 + decode GPU1)"}
-    ax.text(1.35, COL_H + 0.28, titles[scenario], ha="center", va="bottom", fontsize=8)
-    ax.set_xlim(-0.1, 3.0)
-    ax.set_ylim(-0.5, COL_H + 0.75)
+    titles = {"solo": "solo — Qwen decode-only, no 8B",
+              "A": "A — whole Qwen on GPU1 (prefill+decode here)",
+              "B": "B — Qwen decode-only (KV from DRAM, prefill invisible)",
+              "C": "C — split Qwen (prefill GPU0 + decode GPU1)  [deferred]"}
+    ax.text(1.55, COL_H + 0.30, titles[scenario], ha="center", va="bottom",
+            fontsize=10.5, fontweight="bold", color=GREY)
+    ax.set_xlim(-0.15, 3.35)
+    ax.set_ylim(-0.6, COL_H + 0.85)
     ax.axis("off")
 
 
 def main():
-    fig, axes = plt.subplots(1, 4, figsize=(15, 4.3))
-    for ax, sc in zip(axes, ("solo", "A", "B", "C")):
+    fig, axes = plt.subplots(2, 2, figsize=(13, 9.2))
+    for ax, sc in zip(axes.ravel(), ("solo", "A", "B", "C")):
         panel(ax, sc)
-    fig.suptitle("Tenant placements (8B split stack identical in A/B/C; deferred: C by memory)",
-                 fontsize=12)
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.suptitle("Tenant placements — the 8B split stack is identical in A/B/C; "
+                 "boxes scaled to GiB  (C deferred by host memory)", fontsize=13.5)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
     FIGS.mkdir(exist_ok=True)
     fig.savefig(FIGS / "inf_coloc_layout.png", dpi=140, bbox_inches="tight")
     print("wrote figures/inf_coloc_layout.png")
