@@ -45,6 +45,32 @@ QWEN_L1_GB="${QWEN_L1_GB:-1}"
 QWEN_LMC_PORT="${QWEN_LMC_PORT:-8301}"
 QWEN_STORE_MB="${QWEN_STORE_MB:-3500}"
 
+# --- Optional idle-window gate (GATE=1): treat the Qwen tenant as best-effort. ---------
+# The 8B decode (high-priority incumbent) publishes its GPU-busy window via the hp_patch
+# sitecustomize (wraps execute_model -> /dev/shm/coloc_hp_busy). The Qwen engine (gated)
+# gets cupti_gate.so in LD_PRELOAD (COLOC_ROLE=be): a CUPTI callback delays its kernel
+# launches until the 8B is idle. Protects the 8B's TPOT at the tenant's latency cost.
+# Requires MPS on (both engines must be able to co-reside to interleave at all). The two
+# env prefixes are scoped to exactly the two GPU1 engines -- not prefill, not the stores.
+GATE="${GATE:-}"
+GATE_K="${GATE_K:-8}"
+GATE_MAXPEND="${GATE_MAXPEND:-3}"
+GATE_DIR="$REPO/scripts/inf_inf_coloc/orion_gate"
+HP_ENV=""; QWEN_GATE_ENV=""
+if [ -n "$GATE" ]; then
+    [ -f "$GATE_DIR/cupti_gate.so" ] || { echo "GATE=1 but $GATE_DIR/cupti_gate.so missing" >&2; exit 1; }
+    HP_ENV="PYTHONPATH=$GATE_DIR/hp_patch${PYTHONPATH:+:$PYTHONPATH} COLOC_HP_SIGNAL=1"
+    QWEN_GATE_ENV="LD_PRELOAD=$GATE_DIR/cupti_gate.so:/usr/lib/x86_64-linux-gnu/libstdc++.so.6 COLOC_ROLE=be COLOC_K=$GATE_K COLOC_MAXPEND=$GATE_MAXPEND"
+    echo "GATE on: 8B decode publishes busy window; Qwen engine gated (K=$GATE_K maxpend=$GATE_MAXPEND)"
+fi
+# The CUPTI gate records/awaits CUDA events on the gated engine's stream; doing so during
+# vLLM's CUDA-graph CAPTURE aborts it (cudaErrorStreamCaptureInvalidated). So a gated Qwen
+# engine must run eager. QWEN_ENFORCE_EAGER=1 also lets us run an eager-no-gate control to
+# separate the gate's effect from the eager-vs-graph penalty.
+QWEN_ENFORCE_EAGER="${QWEN_ENFORCE_EAGER:-}"
+[ -n "$GATE" ] && QWEN_ENFORCE_EAGER=1
+QWEN_EAGER_ARG=""; [ -n "$QWEN_ENFORCE_EAGER" ] && QWEN_EAGER_ARG="--enforce-eager"
+
 # Which GPU0 Qwen prefill to run: none (A), temp=populate-then-killed (solo,B),
 # persistent=serves prefill during measurement (C).
 case "$SCENARIO" in
@@ -142,7 +168,7 @@ if [ "$SCENARIO" != solo ]; then
     echo $! > /tmp/disagg_prefill.pid
 
     echo "starting 8B decode on GPU1 (util $DECODE_UTIL)..."
-    CUDA_VISIBLE_DEVICES=1 LMCACHE_CONFIG_FILE=/tmp/lmc_decode.yaml \
+    CUDA_VISIBLE_DEVICES=1 LMCACHE_CONFIG_FILE=/tmp/lmc_decode.yaml env $HP_ENV \
     "$PY" -m vllm.entrypoints.cli.main serve "$MODEL" \
         --port 8200 --gpu-memory-utilization "$DECODE_UTIL" \
         --max-model-len 8192 --seed 0 --disable-log-requests --no-enable-prefix-caching \
@@ -197,10 +223,10 @@ fi
 # VRAM-resident and is reused, NOT re-fetched every request (the bug that starved the
 # 8B). Only VRAM-evicted prefixes (the offload overflow) reload from DRAM.
 echo "starting Qwen decode on GPU1 (util $QWEN_UTIL)..."
-CUDA_VISIBLE_DEVICES=1 LMCACHE_CONFIG_FILE=/tmp/lmc_qwen_decode.yaml \
+CUDA_VISIBLE_DEVICES=1 LMCACHE_CONFIG_FILE=/tmp/lmc_qwen_decode.yaml env $QWEN_GATE_ENV \
 "$PY" -m vllm.entrypoints.cli.main serve "$QWEN_MODEL" \
     --port 8201 --gpu-memory-utilization "$QWEN_UTIL" \
-    --max-model-len 8192 --seed 0 --disable-log-requests --enable-prefix-caching \
+    --max-model-len 8192 --seed 0 --disable-log-requests --enable-prefix-caching $QWEN_EAGER_ARG \
     --max-num-seqs "$QWEN_MAX_NUM_SEQS" \
     --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}' \
     > "$LOGS/qwen_decode.log" 2>&1 &

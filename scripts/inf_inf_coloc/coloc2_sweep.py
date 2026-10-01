@@ -173,17 +173,22 @@ def gpu_stats(csv_path, t0, t1):
     per = {}
     try:
         for line in open(csv_path):
+            if "\x00" in line:           # partially-flushed row (monitor killed mid-write)
+                continue
             f = line.strip().split(",")
             if len(f) != 6 or f[0] == "ts":
                 continue
-            ts = float(f[0])
-            if not (t0 <= ts <= t1):
+            try:                         # never let a malformed telemetry row abort the run
+                ts = float(f[0])
+                if not (t0 <= ts <= t1):
+                    continue
+                g = per.setdefault(int(f[1]), {"n": 0, "smact": 0.0, "smocc": 0.0,
+                                               "drama": 0.0, "fb_max": 0.0})
+                g["n"] += 1
+                g["smact"] += float(f[2]); g["smocc"] += float(f[3]); g["drama"] += float(f[4])
+                g["fb_max"] = max(g["fb_max"], float(f[5]))
+            except ValueError:
                 continue
-            g = per.setdefault(int(f[1]), {"n": 0, "smact": 0.0, "smocc": 0.0,
-                                           "drama": 0.0, "fb_max": 0.0})
-            g["n"] += 1
-            g["smact"] += float(f[2]); g["smocc"] += float(f[3]); g["drama"] += float(f[4])
-            g["fb_max"] = max(g["fb_max"], float(f[5]))
     except OSError:
         return {}
     out = {}

@@ -7,7 +7,7 @@ filled that margin with a fine-tune neighbor. **This study fills it with a secon
 inference model** — a Qwen2.5-0.5B tenant — and asks a single question: *what does the 8B
 incumbent pay, and what does the tenant get, for sharing the decode GPU?*
 
-The short answer, established over §2–§4:
+The short answer, established over §2–§5:
 
 > At the reference 2 QPS a right-sized tenant looks almost free (−7% throughput). That
 > number lies. The honest cost is **capacity**: without MPS the tenant steals ~25% of the
@@ -257,6 +257,7 @@ way; offload's no-MPS dip (−16%) is recovered.*
 
 | cell | 8B TTFT  no-MPS → +MPS | 8B TPOT  no-MPS → +MPS | 8B tok/s  no-MPS → +MPS | Qwen tok/s  no-MPS → +MPS |
 |---|---|---|---|---|
+| **8B alone** (baseline) | 92 ms | 28 ms | 254 | — |
 | **A / fits** | 119 → 130 ms | 95 → **33 ms** | 238 → **254** | 271 → 273 |
 | **B / fits** | 157 → 123 ms | 98 → **34 ms** | 237 → **254** | 271 → 273 |
 | **B / offload** | 7.7 s → **348 ms** | 370 → **169 ms** | 175 → 221 | 230 → 271 |
@@ -278,7 +279,7 @@ way; offload's no-MPS dip (−16%) is recovered.*
 
 - **The residual that MPS can't remove is the streaming cost itself.** Offload+MPS still
   sits at ~4× TTFT / 6× TPOT — the genuine host-copy load of moving 14.6 GiB every window.
-  That is the inference tenant's distinctive, memory-bound cost (§4), and it is a
+  That is the inference tenant's distinctive, memory-bound cost (§5), and it is a
   capacity-planning problem, not a scheduling one.
 
 So the decode-side cost is **GPU1 context serialization, and MPS is its mitigation** — the
@@ -328,7 +329,81 @@ GPU contention.
 
 ---
 
-## 4. Colocating inference vs colocating fine-tuning
+## 4. Two ways to share GPU1 under MPS: fair vs prioritized
+
+§3 showed the decode-side cost is context serialization and MPS is the fix. But MPS gives
+**symmetric fair sharing** — both decodes co-reside and both pay. If the tenant is
+**best-effort** (a cheap-tier model that may yield to the 8B), a second lever exists on top
+of MPS: an **idle-window gate** that gives the 8B strict priority. This section runs both
+methods — both under MPS — and compares them.
+
+### 4.1 Method A — MPS alone (fair sharing)
+
+Covered in §3.1: both engines become MPS clients, their decode kernels co-reside on the
+~95%-idle SMs, and the 8B's cost drops from 3.4× TPOT (serialized) to ~1.2×. Symmetric —
+the tenant keeps ~99% of its throughput and the 8B pays ~20% TPOT / ~8% capacity. This is
+the right tool when the two models are **co-equal**.
+
+### 4.2 Method B — MPS + idle-window gate (tenant as best-effort)
+
+Ported from the [fine-tune study's gate](report_colocation_ft.md): the 8B decode (the
+high-priority incumbent) publishes its GPU-busy window by wrapping `execute_model`
+(`orion_gate/hp_patch`, to `/dev/shm`); the Qwen engine is the **gated best-effort** process
+— a CUPTI callback (`orion_gate/cupti_gate.so`, `COLOC_ROLE=be`, credits `K=8`) delays its
+kernel launches until the 8B is idle. Nothing in the 8B path is intercepted; only the tenant
+is gated.
+
+**One real limitation surfaced: gating forces the tenant eager.** The CUPTI gate records and
+awaits CUDA events on the gated engine's stream; doing so *during vLLM's CUDA-graph capture*
+aborts the capture (`cudaErrorStreamCaptureInvalidated`). The fine-tune trainer was eager so
+it never hit this; an inference engine captures decode graphs, so a gated tenant must run
+`--enforce-eager`. We measured the eager penalty separately (eager, no gate): **8B 128 ms /
+35 ms / 254 tok/s, Qwen 273** — identical to MPS-fair (123/34/254/273), so for this small
+tenant at these loads eager costs ~nothing and does not confound the gate result.
+
+| arm (2 QPS / 4 QPS) | 8B TTFT | 8B TPOT | 8B tok/s | Qwen tok/s |
+|---|---|---|---|---|
+| 8B alone — 2 QPS | 92 | 28 | 254 | — |
+| MPS fair — 2 QPS | 123 | 34 | 254 | 273 |
+| **MPS + gate — 2 QPS** | 103 | 35 | 254 | 272 |
+| 8B alone — 4 QPS | 256 | 181 | **327** | — |
+| MPS fair — 4 QPS | 296 | 241 | 298 | 271 |
+| **MPS + gate — 4 QPS** | **265** | **202** | **315** | 273 |
+
+### 4.3 Comparison
+
+![fair vs prioritized GPU1 sharing](../figures/inf_coloc_gate.png)
+
+*Both methods under MPS. Left: 8B decode TPOT; right: 8B throughput (Q = the tenant's
+throughput, annotated at each colocated bar). Grouped by the 8B's offered load; the tenant
+is fixed at 2 QPS.*
+
+**Observations:**
+
+- **At 2 QPS the gate ≈ MPS — there is nothing to protect.** TPOT 35 vs 34, tenant 272 vs
+  273. Under MPS the serialization is already gone and GPU1 has ample slack at 2 QPS, so
+  strict priority buys almost nothing (a possible ~20 ms TTFT edge, 103 vs 123, near the
+  ±15 ms noise floor).
+
+- **Under saturation (4 QPS) the gate recovers real 8B capacity.** Throughput **298 → 315
+  tok/s** (the tenant's cost to the 8B falls from −9% to −4% of the ceiling) and decode
+  **TPOT 241 → 202 ms**, both moving back toward the 8B-alone numbers (327 / 181). When the
+  8B actually competes for GPU1, giving it priority pays.
+
+- **The tenant is *not* sacrificed at these loads.** Qwen keeps **271–273 tok/s** in every
+  arm, gated or not. The gate is a priority mechanism, but decode leaves so much GPU1 idle
+  time that the best-effort tenant fills the gaps and keeps full throughput — the win to the
+  8B is not (yet) zero-sum. A heavier tenant, or higher load, is where the priority would
+  start costing it.
+
+- **So MPS is the floor; the gate is a load-dependent top-up.** Use **MPS alone** for
+  co-equal models; add the **gate** when the 8B is the priority tenant *and* runs near
+  saturation — there it reclaims most of the remaining capacity for free. Its cost is
+  operational: the tenant must run eager, and the gate adds host-CPU polling.
+
+---
+
+## 5. Colocating inference vs colocating fine-tuning
 
 The [fifth study](report_colocation_ft.md) put a **fine-tune** neighbor in this same GPU1
 margin, at b26, against the same workload. Side by side the two studies answer: *what kind
@@ -370,7 +445,7 @@ model — costs ~20% and is very affordable; the thing to avoid is letting the t
 **oversubscribe the VRAM margin and stream**, which is capacity planning (size the tenant to
 fit), not an inherent property of colocating inference.
 
-### 4.1 Pros and cons, side by side
+### 5.1 Pros and cons, side by side
 
 Both neighbors live in the decode GPU's spare **compute** (SMs ~95% idle) and both **require
 MPS**. They differ in what else they consume, how they fail, and what they buy you.
@@ -410,7 +485,7 @@ because that is the one failure mode fine-tuning doesn't have.
 
 ---
 
-## 5. Takeaways
+## 6. Takeaways
 
 1. **A right-sized second model is affordable — but only with MPS.** Resident tenant +MPS:
    decode +20%, throughput recovered, ~8% capacity cost. Without MPS the two decodes
@@ -421,6 +496,11 @@ because that is the one failure mode fine-tuning doesn't have.
    collapses TTFT; this is the one failure mode MPS can't fully fix.
 4. **A second inference model ≈ a fine-tune neighbor, given MPS and a resident footprint.**
    The decode GPU's spare resource is compute; both neighbors live in it equally well.
+5. **If the tenant is best-effort, add an idle-window gate on top of MPS.** At saturation it
+   reclaims most of the remaining 8B capacity (−9% → −4%) for free — the tenant keeps full
+   throughput because decode leaves GPU1 idle time. Cost: the gate forces the tenant eager
+   (CUDA-graph capture is incompatible with the CUPTI gate) and adds host-CPU polling; at low
+   load it does nothing MPS doesn't already do.
 
 ---
 
@@ -432,6 +512,11 @@ because that is the one failure mode fine-tuning doesn't have.
 # MPS arms: start MPS, then re-run the fits/offload cells as clients
 nvidia-cuda-mps-control -d            # export CUDA_MPS_PIPE_DIRECTORY first
 .venv/bin/python scripts/inf_inf_coloc/coloc2_sweep.py --scenarios A B --wls fits --name-suffix _mps
+# idle-window gate (§4.2), tenant best-effort: GATE=1 forces --enforce-eager on the Qwen
+# engine (CUPTI gate ⊥ CUDA-graph capture). Run under MPS. --qps 4 shows the saturation win.
+GATE=1 GATE_K=8 .venv/bin/python scripts/inf_inf_coloc/coloc2_sweep.py --scenarios B --wls fits --name-suffix _gate
+GATE=1 GATE_K=8 .venv/bin/python scripts/inf_inf_coloc/coloc2_sweep.py --scenarios B --wls fits --qps 4 --name-suffix _gateq4
+QWEN_ENFORCE_EAGER=1 .venv/bin/python scripts/inf_inf_coloc/coloc2_sweep.py --scenarios B --wls fits --name-suffix _eager  # eager-no-gate control
 echo quit | nvidia-cuda-mps-control   # teardown
 # 8B-alone control (current-box baseline, via the split harness)
 .venv/bin/python scripts/inference/split_simple/disagg_sweep.py --stack lmcache \
@@ -446,13 +531,17 @@ echo quit | nvidia-cuda-mps-control   # teardown
 .venv/bin/python scripts/plots/plot_inf_coloc_mechanism.py     # §3 the two legs
 .venv/bin/python scripts/plots/plot_inf_coloc_mps.py           # §3.1 MPS collapses TPOT
 .venv/bin/python scripts/plots/plot_inf_coloc_result_mps.py    # §3.1 results under MPS
-.venv/bin/python scripts/plots/plot_inf_vs_ft.py               # §4 inf-vs-ft comparison
+.venv/bin/python scripts/plots/plot_inf_coloc_gate.py          # §4.3 fair vs gated sharing
+.venv/bin/python scripts/plots/plot_inf_vs_ft.py               # §5 inf-vs-ft comparison
 ```
 
 Data: `output/summary_inf_coloc*.csv`, raw per-request records in `output/raw/infc_*.json`
 (fits cells have 4 repeats: `infc_{A,B}_fits` + `_r2/_r3/_r4` and `_iso/_legs/_cpu`; MPS
-arms `*_mps`; QPS arms `*_q3/_q4`), per-second GPU telemetry in `output/gpumon/`, engine
-logs in `output/logs/`. The 8B-alone control is `split_lmcache_zipf_b26_ctrl.json`.
+arms `*_mps`; QPS arms `*_q3/_q4`; gate arms `*_gate`/`*_gateq4` and the `*_eager` control),
+per-second GPU telemetry in `output/gpumon/`, engine logs in `output/logs/`. The 8B-alone
+control is `split_lmcache_zipf_b26_ctrl.json`. The idle-window gate lives in
+`scripts/inf_inf_coloc/orion_gate/` (copied from the fine-tune study: `hp_patch/` publishes
+the 8B busy window, `cupti_gate.so` gates the tenant; `GATE=1` in `coloc2_launch.sh`).
 `scripts/inf_inf_coloc/` is self-contained (`workload.py`/`client.py`/`lmc_proxy.py`/
 `lmc_server_main.py` are copies; `coloc2_*.sh` launch/stop/heartbeat drive both stacks with
 a single teardown).
