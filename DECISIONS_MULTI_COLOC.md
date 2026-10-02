@@ -71,7 +71,7 @@ all through the launch scripts (mem_guard + heartbeat + RAM gate).
 ## C. Overnight log
 
 *(appended as it happens)*
-- **02:20** — Queue started (`scripts/inf_multi_coloc/queue_night.sh`): E1 → E2 → E3 → E4.
+- **02:04** — Queue started (`scripts/inf_multi_coloc/queue_night.sh`): E1 → E2 → E3 → E4.
   Added `thread_sampler.py` (per-thread /proc counters for every EngineCore, every 2 s,
   started by the driver on every launch) and a `--qps` list in the driver (capacity sweep
   in one launch; `_q<qps>` names; skip higher QPS once >50% of requests fail).
@@ -82,7 +82,7 @@ all through the launch scripts (mem_guard + heartbeat + RAM gate).
   queue 4.7 s. So (a) the oversubscription collapse is not small-model-specific, and
   (b) the cap is not what makes medium N=4 loads slow — uncapped they are 14× slower.
   Raw: `mc_medium_doff_n4_mps_nocap`.
-- **02:25 — Decision: add E1b**, a cap dose-response at medium N=4 doff (OMP=2, OMP=8),
+- **02:16 — Decision: add E1b**, a cap dose-response at medium N=4 doff (OMP=2, OMP=8),
   queued after the main queue (`queue_night2.sh`). Why: E1 shows the cap is necessary but
   not whether 4 threads is too tight — whether some of the 85 → 401 ms load growth is
   thread-starved copies rather than contention. *Prediction:* OMP=2 slower loads than 401
