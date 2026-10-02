@@ -9,7 +9,9 @@ output/summary_mc_<cohort>.csv (rebuilt from raw by multi_sweep.py).
 
   (a) per-model TPOT p50 (mean over models; whiskers = worst model)
   (b) per-model TTFT p50 (log; decode-only TTFT = queue + one-token step, no prefill)
-  (c) aggregate throughput vs the offered rate (dotted), GPU1 SM-active on the right
+  (c) aggregate throughput vs the offered rate (dotted), GPU1 SM-active on the right, and
+      GPU1 memory used as a filled band at the bottom on its own offset axis -- the three
+      quantities are given disjoint vertical bands via axis limits, so nothing overlaps
 
     .venv/bin/python scripts/plots/plot_mc_scaling.py --cohort small --group fits
     .venv/bin/python scripts/plots/plot_mc_scaling.py --cohort small --group offload
@@ -25,6 +27,7 @@ import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parent.parent.parent
 OUT, FIGS = REPO / "output", REPO / "figures"
+GPU_GIB = 31.35
 GROUPS = {"fits": ("dfits", "ffits"), "offload": ("doff", "foff")}
 LABEL = {"dfits": "decode-only", "ffits": "full", "doff": "decode-only", "foff": "full"}
 COLOR = {"dfits": "#2e7d4f", "doff": "#2e7d4f", "ffits": "#8250df", "foff": "#8250df"}
@@ -67,7 +70,7 @@ def load(cohort, arm):
 
 def log_ticks(ax, lo, hi):
     from matplotlib.ticker import FixedLocator, NullLocator, ScalarFormatter
-    cands = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1e3, 1e4, 1e5]
+    cands = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1e3, 2e3, 5e3, 1e4, 2e4, 5e4, 1e5]
     ticks = [t for t in cands if lo / 1.5 <= t <= hi * 1.5] or cands
     ax.yaxis.set_major_locator(FixedLocator(ticks))
     ax.yaxis.set_minor_locator(NullLocator())
@@ -131,14 +134,50 @@ def main():
     sm.update({int(r["n"]): f(r["gpu1_sm_active_mean"])
                for r in canon.get((main_cell, ""), [])})
     sm = dict(sorted(sm.items()))
+    vram = {int(r["n"]): f(r["gpu1_fb_used_max_gib"]) for r in canon.get((main_cell, CAP), [])}
+    vram.update({int(r["n"]): f(r["gpu1_fb_used_max_gib"])
+                 for r in canon.get((main_cell, ""), [])})
+    vram = dict(sorted(vram.items()))
+
+    # Disjoint vertical bands in panel (c): memory fill in the bottom BAND_MEM of the
+    # height; throughput and SM-active start at BAND_TOP0 (their zero) and use the rest.
+    BAND_MEM, BAND_TOP0 = 0.25, 0.30
+    tp_max = max(max(f(r["tok_per_s_agg"]) or 0 for r in v) for v in data.values())
+    tp_max = max(tp_max, args.offered * max(allns)) * 1.06
+    ax_tp.set_ylim(-BAND_TOP0 / (1 - BAND_TOP0) * tp_max, tp_max)
+    ax_tp.set_yticks([t for t in ax_tp.get_yticks() if 0 <= t <= tp_max])
     if sm:
         ax2 = ax_tp.twinx()
         ax2.plot(list(sm), list(sm.values()), color="#bc4c00", lw=1.5, ls="-.",
                  marker="^", ms=6, label=f"GPU1 SM-active (decode-only·{args.group})")
-        ax2.set_ylim(0, 1.05)
-        ax2.set_ylabel("GPU1 SM-active (fraction)", color="#bc4c00")
+        span = 1.05 / (1 - BAND_TOP0)
+        ax2.set_ylim(-BAND_TOP0 * span, 1.05)
+        ax2.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+        ax2.set_ylabel("GPU1 SM-active", color="#bc4c00")
+        ax2.yaxis.set_label_coords(1.14, 0.65)
         ax2.tick_params(axis="y", colors="#bc4c00")
         ax2.legend(loc="upper left", frameon=False, fontsize=11)
+    if vram:
+        # memory shares the LEFT spine: its ticks live only in the bottom band, where the
+        # throughput axis (zero at BAND_TOP0) has none -- no third spine, no collisions
+        ax3 = ax_tp.twinx()
+        ax3.yaxis.tick_left()
+        ax3.yaxis.set_label_position("left")
+        for side in ("right", "top"):
+            ax3.spines[side].set_visible(False)
+        ns_v, gib = list(vram), list(vram.values())
+        ax3.fill_between(ns_v, 0, gib, color="#1f6feb", alpha=0.18, lw=0)
+        ax3.plot(ns_v, gib, color="#1f6feb", lw=1.2, label="GPU1 memory used")
+        ax3.axhline(GPU_GIB, color="#1f6feb", ls=":", lw=1.0)
+        ax3.text(max(allns), GPU_GIB, f"capacity {GPU_GIB:g} GiB ", color="#1f6feb",
+                 fontsize=10, va="bottom", ha="right")
+        ax3.set_ylim(0, 32 / BAND_MEM)
+        ax3.set_yticks([0, 15, 30])
+        ax3.set_ylabel("GiB", color="#1f6feb")
+        ax3.yaxis.set_label_coords(-0.13, 0.12)
+        ax3.tick_params(axis="y", colors="#1f6feb")
+        ax3.legend(loc="upper left", frameon=False, fontsize=11,
+                   bbox_to_anchor=(0.0, BAND_MEM + 0.01))
 
     # log only when the data spans >10x (offload's collapse); linear otherwise
     for ax, key, title in ((ax_tpot, "tpot", "(a) per-model TPOT p50"),
@@ -153,14 +192,14 @@ def main():
             unit = "ms"
         extra = "; whisker = worst model" if key == "tpot" else ""
         ax.set(title=title, xlabel="N models on GPU1", ylabel=unit + extra)
-    ax_tp.set(title="(c) aggregate throughput", xlabel="N models on GPU1",
-              ylabel="output tok/s (all models)")
+    ax_tp.yaxis.set_label_coords(-0.13, 0.65)
+    ax_tp.set(title="(c) throughput · SM-active · GPU1 memory", xlabel="N models on GPU1",
+              ylabel="tok/s (all models)")
 
     for ax in axes:
         ax.set_xticks(allns)
         ax.grid(alpha=0.3)
-        if ax is ax_tp:
-            ax.set_ylim(bottom=0)
+
     h, l = ax_tp.get_legend_handles_labels()
     title = {"fits": "KV resident (fits)", "offload": "KV 3× over the grant (offload)"}
     fig.suptitle(f"{args.cohort} cohort · {title[args.group]}", y=0.995, fontsize=15)
