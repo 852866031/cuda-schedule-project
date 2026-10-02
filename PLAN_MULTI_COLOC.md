@@ -94,3 +94,14 @@ for tail latency.
   weights alone fill the 6–8 GiB class (N≤3, almost no KV); Qwen2.5-3B (5.8 GiB weights,
   36 KiB/token KV) fits ~7.5 GiB per model → N=1–4. Provisional sizing util 0.24,
   fits = 4 sessions, offload = 14, pending a solo probe.
+- **P1 (small, fits) — partly wrong.** Near-linear to N=6 as predicted, knee at N≈6–8
+  (TPOT 1.6 → 3.6 → 5.7 ms; offered rate held to N=8). But the binding resource is
+  **GPU1** (SM-active plateaus ~0.8 from N=6 to N=8), not host CPU (15–30% busy).
+- **P4 (offload) — knee location right, mechanism wrong.** Decode-only offload is flat to
+  N=3 (~52 ms TTFT) and collapses at N=4 (TTFT 39–104 s, ~130 timeouts/model, GPU1 ~5%
+  busy; 3 reproductions; a 2 GiB L1 does not help). Cause is not host-copy bandwidth:
+  the per-second host trace shows the 4 **EngineCores** pinning all 32 cores (stores
+  ~0) — CPU-thread oversubscription (each engine's torch/OpenMP pool is sized to the
+  whole box). `OMP_NUM_THREADS=4` removes it entirely (52 ms TTFT, 0 failures, engines
+  2.9 cores mean). The L1-pool warnings are present and harmless at N=3 and in the
+  capped N=4 run — a red herring.

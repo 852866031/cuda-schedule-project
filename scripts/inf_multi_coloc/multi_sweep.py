@@ -74,11 +74,11 @@ COHORTS = {
     # Qwen2.5-3B: 36 layers x 2 kv heads x 128 dim -> 36 KiB/token, 0.21 GiB per 6144
     # prefix; 5.8 GiB bf16 weights. Probe at util 0.24: KV 1.09 GiB but 8.24 GiB of GPU1
     # per model (incl. ~0.72 GiB CUDA/MPS context) -> only 3 fit. util 0.22 (~7.6 GiB
-    # each, ~30.7 GiB for 4) keeps N=4 feasible at a ~0.47 GiB grant; fits/offload keep
+    # each, ~30.7 GiB for 4) keeps N=4 feasible; probe: 0.59 GiB grant. fits/offload keep
     # the small cohort's ratios (resident / ~3x over). ram_mb measured: 1.1 API + 3.6
     # EngineCore + 0.7 store overhead.
     "medium": dict(model="Qwen/Qwen2.5-3B", util=0.22, max_num_seqs=64, l1_gb=1,
-                   kv_bytes=36 * 2 * 128 * 2 * 2, fits=2, offload=7, ram_mb=5500),
+                   kv_bytes=36 * 2 * 128 * 2 * 2, fits=2, offload=9, ram_mb=5500),
 }
 
 CELLS = {   # name -> (decode_only, wl)
