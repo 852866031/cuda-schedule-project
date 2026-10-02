@@ -465,6 +465,9 @@ def run_cell(args, coh, n, arm, cell, launch_info, mon_path, name_extra=""):
            "ws_gib_per_model": round(coh[CELLS[cell][1]] * args.prefix_len
                                      * coh["kv_bytes"] / GIB, 3),
            "setup": "inf_multi_coloc", "launch": launch_info,
+           # per-engine CPU thread cap (unset = vLLM/torch default = all cores per engine;
+           # stock N=4 decode-only offload collapses from thread oversubscription)
+           "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
            "timestamp": datetime.now().isoformat(timespec="seconds")}
     try:
         wu, wu_hung = run_clients(args, coh, n, cell, "warmup", name)
