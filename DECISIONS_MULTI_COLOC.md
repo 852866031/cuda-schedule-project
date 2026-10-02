@@ -107,3 +107,34 @@ all through the launch scripts (mem_guard + heartbeat + RAM gate).
   (TPOT p50 5.60 ms). Strength: if the cap did nothing (storm rate ~50%), 0/3 has p≈0.125
   — suggestive, not conclusive alone; with E2's mechanism and N=4 (stock 4/4 collapse,
   capped 0/1) it is consistent. Raw: `mc_small_dfits_n8_mps_{r3,r4,omp4_r2,omp4_r3}`.
+- **03:12 — E4 partial (small N=1, N=4): prediction wrong for N=4.** Both keep up (≥95%
+  delivered, 0 failures) at every swept rate to **8 QPS/model** — N=4 is 32 QPS total.
+  Small N=4 TPOT 2.6 → 3.11 → 3.62 → 4.23 → 4.56 ms (2→8 QPS), worst e2e p95 0.53 →
+  0.64 s. I had predicted saturation near 6 QPS. Why it was wrong: decode cost is nearly
+  flat in batch size for a 0.5B, so more load = bigger batches, not more steps.
+  **Two report corrections follow:** (1) §2's "knee at N≈6–8" is a *latency* knee at 2
+  QPS, not a capacity limit; (2) GPU1 SM-active *falls* 0.78 → 0.68 from 4 to 8 QPS while
+  throughput doubles — it measures how often SMs are busy, not how full, so "SM-active
+  plateau = GPU saturated" must be qualified. Pending N=8; if N=8 also keeps up at 8 QPS
+  the sweep did not reach saturation and will be extended upward.
+- **03:23 — E4 small N=8: also keeps up at 8 QPS/model** (64 QPS total, ~8.2k tok/s; TPOT
+  5.6 → 9.3 ms, worst e2e p95 0.93 → 1.28 s, lowest per-model delivered 98.7 → 96.5%,
+  0 failures). The small sweep never saturated.
+- **03:23 — Decision: add E4b**, extending the small capacity sweep upward until each N
+  saturates (`queue_night3.sh`, after E1b): N=8 at 12/16, N=4 at 12/16/24, N=1 at 16/32
+  QPS/model (skip higher QPS once >50% fail). Why: the report should state a measured
+  capacity per N, not "≥ 8". *Prediction:* N=8 saturates between 8 and 12; N=4 between
+  12 and 24; N=1 above 16.
+- **03:37 — E4 medium N=1, N=2: predictions wrong (no saturation by 4 QPS).** TPOT is
+  nearly flat in load: N=1 6.78 → 6.91 ms, N=2 9.84 → 10.16 ms from 2 to 4 QPS/model;
+  lowest delivered ≥ 97.9%, 0 failures. A 3B step is dominated by reading 5.8 GB of
+  weights, which costs the same for batch 2 or 8 — batched requests are nearly free per
+  step. Note for the extension: medium engines run max_num_seqs=16 (the setting that
+  bought the 0.94 GiB grant), so at ~10+ QPS/model the sequence cap, not the GPU, may
+  bind. Extension rates decided after N=4.
+- **03:45 — E4 medium N=4: no saturation by 4 QPS** (TPOT 17.3 → 18.6 ms, lowest delivered
+  96.5%, 0 failures). E4 main queue finished 03:45.
+- **03:45 — Decision: add E4c**, medium sweep extension (`queue_night4.sh`, after E4b):
+  N=4 at 6/8, N=2 at 6/8/12, N=1 at 8/12/16 QPS/model. *Prediction:* the max_num_seqs=16
+  cap binds first, where QPS × e2e > 16 — N=4 near 6.4, N=2 near 10, N=1 near 16 QPS.
+  If instead throughput falls short with fewer than 16 running, the GPU binds first.

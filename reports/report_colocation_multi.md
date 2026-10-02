@@ -147,10 +147,15 @@ first run (0.86, same as full); the rerun's transient CPU storm (§3.2) pulls it
   request is too small to matter at 2 QPS: both cells pay the same shared decode cost at
   every N.
 
-- **The knee is GPU1 compute, at N≈6–8.** SM-active grows ~0.14 per model to N=4,
-  slows to ~0.09 per model by N=6 and is 0.86 at N=8 while TPOT keeps rising — the GPU
-  has no idle time left to absorb another model. Host CPU (15–32%) and GPU1 memory (26 of
-  31 GiB) are not binding.
+- **The latency knee is at N≈6–8, and it is GPU1 time.** SM-active grows ~0.14 per model
+  to N=4, slows to ~0.09 per model by N=6 and is 0.86 at N=8 while TPOT keeps rising —
+  each model's decode steps increasingly wait on the others'. Host CPU (15–32%) and GPU1
+  memory (26 of 31 GiB) are not binding. *This is a per-token latency knee at 2 QPS, not
+  a capacity limit:* §5.1 shows N=8 still serves 4× this load (8 QPS per model) with TPOT
+  only 5.6 → 9.3 ms, because more load means bigger batches per step, not more steps.
+  Nor is SM-active a saturation gauge — it counts how often the SMs are busy, not how
+  full they are, and at N=4 it *falls* (0.78 → 0.68) from 4 to 8 QPS while throughput
+  doubles.
 
 - **Full TTFT is flat until the knee, then moves with TPOT.** The 128-token prefill is a
   single short step: 9–10 ms to N=4, 12.5 ms at N=6, 17 ms at N=8, where every step —
@@ -417,7 +422,7 @@ on; stock threads noted where they differ):
 
 | resource | small · fits (N=8) | small · offload (N=6) | medium · fits (N=4) | medium · offload (N=4) |
 |---|---|---|---|---|
-| GPU1 compute (SM-active) | **0.86 — knee N≈6–8** | 0.73 | **0.92 — knee N≈2–3** | 0.87 |
+| GPU1 compute (SM-active at 2 QPS) | **0.86 — latency knee N≈6–8** | 0.73 | **0.92 — latency knee N≈2–3** | 0.87 |
 | GPU1 HBM bandwidth (DRAM-active) | 0.64 | 0.54 | **0.82** | 0.77 |
 | GPU1 memory | 25.7 / 31.35 GiB | 19.3 | **30.4 — no 5th model** | **30.4** |
 | host RAM | 22.7 GB available | **16.7 GB avail., 29k pages swapped in — practical ceiling** | 29.3 GB available | 28.6 GB available |
