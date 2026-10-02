@@ -35,11 +35,15 @@ GPU_GIB = 31.35
 # measured: weights (engine log), KV grant (engine log), per-model fb (DCGM, N=1 run)
 VRAM = {"small": dict(n=8, w=0.93, kv=1.04, per=3.22, label="8 × Qwen2.5-0.5B"),
         "medium": dict(n=4, w=5.76, kv=0.94, per=7.65, label="4 × Qwen2.5-3B")}
-# measured RSS (GB) per model at the offload working set: API server, EngineCore
-# (incl. 1 GiB pinned LMCache L1), store process (working set + ~0.65 GB overhead)
-HOST = {"small": dict(api=1.08, ec=3.27, store=4.04, label="0.5B, offload (48 sessions)"),
-        "medium": dict(api=1.08, ec=3.31, store=3.65, label="3B, offload (14 sessions)")}
-HOST_GIB, OS_GB, FLOOR_GB = 60.5, 4.5, 6.0
+# measured RSS (GB) per model at the largest offload run (launch RSS totals / N):
+# small N=6 (mc_small_n6_mps_omp4: API 5.76, EngineCore 16.95, stores 21.91 GB),
+# medium N=4 (mc_medium_n4_mps: 4.31 / 13.25 / 14.57 GB). EngineCore includes the 1 GiB
+# pinned LMCache L1; the store holds the working set (+ ~0.65 GB process overhead).
+HOST = {"small": dict(api=0.96, ec=2.83, store=3.65, label="0.5B, offload (48 sessions)",
+                      note="swap-backed"),
+        "medium": dict(api=1.08, ec=3.31, store=3.64, label="3B, offload (14 sessions)",
+                       note="")}
+HOST_GIB, OS_GB, FLOOR_GB = 60.5, 3.9, 6.0   # OS = 'used' at idle (measured 02:02)
 
 
 def box(ax, x, y, w, h, txt, fc, ec, fs=12, ls="-"):
@@ -124,7 +128,8 @@ def host(ax, ceilings):
                 ax.add_patch(Rectangle((j - 0.32, y), 0.64, v, facecolor=c,
                                        edgecolor="white", lw=0.6))
                 y += v
-        ax.text(j, y + 0.6, f"N={n}: {y:.0f} GB", ha="center", fontsize=12)
+        ax.text(j, y + 0.6, f"N={n}: {y:.0f} GB" + (f" ({h['note']})" if h["note"] else ""),
+                ha="center", fontsize=12)
     ax.axhline(HOST_GIB, color="#cf222e", ls="--", lw=1.5)
     ax.axhline(HOST_GIB - FLOOR_GB, color="#bc4c00", ls=":", lw=1.5)
     ax.text(1.55, HOST_GIB + 0.7, "host RAM 60.5 GiB", ha="right", color="#cf222e",

@@ -403,8 +403,50 @@ histogram deltas), summed over the N engines:
 
 ## 5. What binds first
 
-<!-- TODO: VRAM / host RAM / host CPU / GPU compute ceilings per cohort, incl. small
-offload N=5,6 with the cap (RAM ceiling) -->
+![placement and memory to scale](../figures/mc_layout.png)
+
+*(a)/(b) where each config's processes live and how KV moves; (c) GPU1 memory at the
+largest N per cohort, to scale (weights / KV grant / other); (d) host RAM at the largest
+offload N, to scale, from the measured RSS of the experiment's processes. RSS excludes
+pages already swapped out and the kernel's page cache: at small N=6 the bar reads 49 GB,
+but the box had already pushed ~4.8 GB to swap — the bar understates the pressure, it is
+not headroom.*
+
+Five resources could stop colocation. At the largest N each cohort reached (thread cap
+on; stock threads noted where they differ):
+
+| resource | small · fits (N=8) | small · offload (N=6) | medium · fits (N=4) | medium · offload (N=4) |
+|---|---|---|---|---|
+| GPU1 compute (SM-active) | **0.86 — knee N≈6–8** | 0.73 | **0.92 — knee N≈2–3** | 0.87 |
+| GPU1 HBM bandwidth (DRAM-active) | 0.64 | 0.54 | **0.82** | 0.77 |
+| GPU1 memory | 25.7 / 31.35 GiB | 19.3 | **30.4 — no 5th model** | **30.4** |
+| host RAM | 22.7 GB available | **16.7 GB avail., 29k pages swapped in — practical ceiling** | 29.3 GB available | 28.6 GB available |
+| host CPU (capped) | 20% | 16% | 13% | 17% |
+| host CPU (**stock** threads) | **storm in 2 of 4 runs** | **collapse at N=4** | — | **collapse at N=4** |
+| what binds first | GPU compute | host RAM | GPU compute ≈ VRAM | KV-load queueing, then VRAM |
+
+**Observations:**
+
+- **With stock settings the first thing to break is host CPU threads, in every cohort.**
+  It needs no GPU pressure at all: the small cohort's offload collapses at N=4 with
+  GPU1 half idle. Nothing else on this list fails that early or that hard.
+
+- **With the thread cap, the binding resource depends on the model and working set.**
+  Small resident models run out of **GPU compute** (SM-active plateaus at N≈6–8 with
+  VRAM and RAM to spare). Small offloaded models run out of **host RAM** (swap-backed at
+  N=6, GPU at 0.73). Medium models run out of **GPU compute, HBM bandwidth and VRAM
+  together** at N=4 — a fifth 3B does not fit, and two already push SM-active to 0.80.
+
+- **Medium offload hits a fourth limit before any of those: KV-load queueing.** Its
+  decode-only queue wait grows 82 ms → 4.7 s from N=1 to N=4 while GPU, VRAM and RAM all
+  still have headroom (§4.2).
+
+- **Host RAM is the offload ceiling, not the fits ceiling.** Resident cells add ~5 GB of
+  host RAM per model (API server + EngineCore incl. the 1 GiB pinned LMCache L1 + an
+  idle store); offload adds the working set in the store (3.4 GiB small, 3.0 GiB medium).
+  On this 60 GiB box that caps small offload at N≈6.
+
+<!-- capacity (E4) paragraph goes here -->
 
 ---
 
