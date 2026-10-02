@@ -103,53 +103,90 @@ load only.
 
 ## 2. Small cohort: N × 0.5B under MPS
 
-![small cohort scaling](../figures/mc_scaling_small_mps.png)
+### 2.1 KV resident (fits)
+
+![small cohort, KV resident](../figures/mc_scaling_small_mps_fits.png)
 
 *(a) per-model TPOT p50 (mean over models; whisker = worst model), (b) per-model TTFT
-p50, both log; (c) aggregate throughput against the offered rate (dotted), with GPU1
-SM-active (orange, right axis). Red rings = cells with failed requests. Stock thread
-settings throughout this figure.*
+p50, (c) aggregate throughput against the offered rate (dotted), with GPU1 SM-active
+(orange, right axis). Green = decode-only, purple = full (prefill + decode). Stock thread
+settings.*
 
-| N | decode-only·fits TTFT / TPOT | full·fits TTFT / TPOT | decode-only·offload TTFT / TPOT | full·offload TTFT / TPOT | agg tok/s (fits) | GPU1 SM-active | GPU1 used |
-|---|---|---|---|---|---|---|---|
-| 1 | 8.2 / 1.56 ms | 9.3 / 1.53 | 48 / 1.60 | 10.7 / 1.57 | 274 | 0.18 | 3.3 GiB |
-| 2 | 8.5 / 1.79 | 9.7 / 1.72 | 49 / 1.98 | 10.8 / 1.88 | 526 | 0.33 | 6.5 |
-| 3 | 8.7 / 2.19 | 9.9 / 2.19 | 52 / 2.28 | 11.2 / 2.23 | 788 | 0.47 | 9.7 |
-| 4 | 9.0 / 2.60 | 10.5 / 2.60 | **75 s / 35** ✗ | 12.9 / 2.62 | 1045 | 0.59 | 12.9 |
-| 6 | 11.2 / 3.63 | 12.5 / 3.65 | — | — | 1522 | 0.76 | 19.3 |
-| 8 | 17.9 / 5.70 | 17.3 / 5.64 | — | — | 1979 | 0.86 | 25.7 |
+| N | decode-only TTFT / TPOT | full TTFT / TPOT | agg tok/s (decode-only / full) | GPU1 SM-active | GPU1 used | host CPU |
+|---|---|---|---|---|---|---|
+| 1 | 8.2 / 1.56 ms | 9.3 / 1.53 ms | 274 / 274 | 0.18 | 3.3 GiB | — |
+| 2 | 8.5 / 1.79 | 9.7 / 1.72 | 526 / 526 | 0.33 | 6.5 | — |
+| 3 | 8.7 / 2.19 | 9.9 / 2.19 | 788 / 788 | 0.47 | 9.7 | — |
+| 4 | 9.0 / 2.60 | 10.5 / 2.60 | 1045 / 1045 | 0.59 | 12.9 | — |
+| 6 | 11.2 / 3.63 | 12.5 / 3.65 | 1522 / 1522 | 0.76 | 19.3 | 15% |
+| 8 | 17.9 / 5.70 | 17.3 / 5.64 | 1979 / 2015 | 0.86 | 25.7 | 19–32% |
 
-*TTFT/TPOT are p50, mean over the N models. ✗ = failed cell (~130 timeouts per model;
-§3). N=8 decode-only·fits latencies are the zero-failure rerun (`_r2`); the first run
-lost one request to a client-side broken pipe and otherwise agrees (16.6 / 5.6 ms). N=8
-SM-active is from the storm-free runs (first dfits, ffits: 0.86); the rerun's transient
-storm (§3.2) pulls its mean to 0.78.*
+*TTFT/TPOT are p50, mean over the N models; zero failed requests in every cell. N=8
+decode-only latencies are the zero-failure rerun (`_r2`); the first run lost one request
+to a client-side broken pipe and otherwise agrees (16.6 / 5.6 ms). SM-active is from the
+first run (0.86, same as full); the rerun's transient CPU storm (§3.2) pulls its mean to
+0.78. Host CPU was not recorded before N=6.*
 
 **Observations:**
 
 - **Every model keeps its full offered load up to N=8.** Aggregate throughput sits on
-  the offered line (256 tok/s per model) at every N with no failures in any resident
-  cell — 2,000 tok/s from eight models on one GPU.
+  the offered line (256 tok/s per model) at every N — 2,000 tok/s from eight models on
+  one GPU, no failed requests.
 
 - **The price is per-token time, and it is gradual.** TPOT climbs 1.56 → 2.6 ms by N=4
   (+67%) and 5.7 ms by N=8 (3.6×). Up to N=6 each added model costs ~0.4 ms; from N=6 to
-  N=8 the slope doubles (~1 ms per model). The four cells are indistinguishable on
-  TPOT — decode is the shared cost no matter how the KV got there.
+  N=8 the slope more than doubles (~1 ms per model).
+
+- **Decode-only and full are the same curve on TPOT.** The 128-token suffix prefill per
+  request is too small to matter at 2 QPS: both cells pay the same shared decode cost at
+  every N. Full only adds ~1 ms of TTFT for that prefill, until N=8 where queueing for a
+  step dominates both.
 
 - **The knee is GPU1 compute, at N≈6–8.** SM-active grows ~0.14 per model to N=4,
-  slows to ~0.09 per model by N=6, and is 0.86 at N=8 (storm-free runs) while TPOT keeps
-  rising — the GPU has no idle time left to
-  absorb another model, so each step waits. Host CPU is 15–30% busy at N=6–8; GPU1
-  memory is at 26 of 31 GiB. Neither is binding.
+  slows to ~0.09 per model by N=6 and is 0.86 at N=8 while TPOT keeps rising — the GPU
+  has no idle time left to absorb another model. Host CPU (15–32%) and GPU1 memory (26 of
+  31 GiB) are not binding.
 
-- **TTFT is flat until the knee, then moves with TPOT.** Resident TTFT stays at 8–11 ms
-  to N=4 and reaches ~17 ms at N=8: with no prefill in the way it is essentially one
-  queued step, so it tracks per-step time.
+- **TTFT is flat until the knee, then moves with TPOT.** With no prefill in the way,
+  decode-only TTFT is essentially one queued step: 8–9 ms to N=4, ~18 ms at N=8.
 
-- **Offload adds a constant reload cost — until it collapses.** Decode-only offload
-  pays ~40 ms of TTFT for streaming a 72 MiB prefix from DRAM (48 vs 8 ms) and is flat
-  to N=3. At N=4 it falls off a cliff (§3). Full·offload pays almost nothing extra (11 vs
-  9 ms) because zipf reuse keeps its hot prefixes resident.
+### 2.2 KV 3× over the grant (offload)
+
+![small cohort, offload](../figures/mc_scaling_small_mps_offload.png)
+
+*Same panels. Solid = stock thread settings; dashed with hollow markers = per-engine CPU
+thread cap (`OMP_NUM_THREADS=4`). Red ring = failed cell. SM-active is the decode-only
+cell's.*
+
+| N | decode-only TTFT / TPOT | full TTFT / TPOT | agg tok/s (decode-only / full) | GPU1 SM-active (decode-only) |
+|---|---|---|---|---|
+| 1 | 48 / 1.60 ms | 10.7 / 1.57 ms | 274 / 274 | 0.17 |
+| 2 | 49 / 1.98 | 10.8 / 1.88 | 526 / 526 | 0.32 |
+| 3 | 52 / 2.28 | 11.2 / 2.23 | 787 / 788 | 0.45 |
+| 4, stock | **75 s / 35 ✗** | 12.9 / 2.62 | **192** / 1043 | **0.05** |
+| 4, capped | 52 / 2.64 | — | 1045 / — | 0.57 |
+
+<!-- TODO: capped N=5,6 rows (mc_small_{doff,foff}_n{5,6}_mps_omp4) -->
+
+*✗ = ~130 of 300 requests per model timed out (reproduced 3×; §3). N≤3 decode-only
+reproduced (second runs: 51.6 ms / 2.28 ms).*
+
+**Observations:**
+
+- **Streaming a prefix from DRAM costs a constant ~40 ms of TTFT and almost no TPOT.**
+  Decode-only offload sits at 48–52 ms TTFT vs 8–9 ms resident, flat from N=1 to N=3:
+  reloading the 72 MiB prefix is a per-request fixed cost that does not grow with
+  neighbours while the system is healthy. TPOT tracks the resident curve.
+
+- **Full·offload barely pays it.** Zipf reuse keeps each model's hot prefixes resident,
+  so full·offload TTFT stays ~11–13 ms — most requests never reload.
+
+- **Decode-only offload collapses at N=4 with stock settings, and the GPU is idle when it
+  does.** TTFT jumps three orders of magnitude, aggregate throughput falls to 18% of
+  offered, and GPU1 SM-active drops to 0.05. That is not a GPU limit (§3).
+
+- **With the per-engine thread cap, N=4 is simply the next point on the curve** — 52 ms
+  TTFT, full throughput, SM-active 0.57 — exactly where N=1–3 predicted.
 
 ---
 
