@@ -99,3 +99,11 @@ all through the launch scripts (mem_guard + heartbeat + RAM gate).
   spin-wait signature. Limit: this identifies the behaviour, not the code (no stack
   samples possible without ptrace/perf). Raw: `mc_small_doff_n4_mps_thr`,
   `output/gpumon/mc_small_n4_mps_thr_threads.csv`.
+- **02:55 — E3 outcome: prediction confirmed.** Small N=8 decode-only fits, per-run storm =
+  any 2-s sample with EngineCores > 20 cores (thread sampler) / tail blow-up. Stock: **2 of
+  4** stormed (r2: ~20 s, e2e p95 8.4 s; r4: ~14 s at t≈83–96 s, e2e p95 4.4 s, peak 32.5
+  cores); first run and r3 clean (peak 10.9 cores). Capped: **0 of 3** (first, r2, r3;
+  peak 8.8 cores; e2e p95 0.93 s, TPOT p95 7.2 ms every time). Median cost identical
+  (TPOT p50 5.60 ms). Strength: if the cap did nothing (storm rate ~50%), 0/3 has p≈0.125
+  — suggestive, not conclusive alone; with E2's mechanism and N=4 (stock 4/4 collapse,
+  capped 0/1) it is consistent. Raw: `mc_small_dfits_n8_mps_{r3,r4,omp4_r2,omp4_r3}`.

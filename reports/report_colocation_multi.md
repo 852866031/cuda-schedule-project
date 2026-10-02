@@ -278,12 +278,21 @@ e2e p95 1.5–8.4 s versus 0.9 s, TPOT p95 up to 38 ms versus 7 ms in the first 
 which had no storm. With more engines the threshold
 is lower; resident KV makes the storm brief instead of permanent.
 
-With the cap, N=8 resident ran **without a storm**: TPOT p50 5.4–5.9 ms, TPOT p95 at most
-7.2 ms and e2e p95 at most 0.93 s across the eight models — the same tail as the storm-free
-stock run — and the same median cost, so the cap is free at N=8 too. One caveat: the stock
-storm showed in one of two runs, so a single clean capped run is consistent with the cap
-preventing it, not proof. (One request of 2,400 again failed with a client-side broken
-pipe, as in the first stock N=8 run — no engine error; recorded, not rerun.)
+To test whether this is a repeatable hazard and whether the cap prevents it, N=8 resident
+was run four times stock and three times capped (experiment E3), with the per-thread
+sampler on (storm = any 2 s sample where the EngineCores use > 20 cores):
+
+| N=8 decode-only fits | runs that stormed | peak EngineCore CPU | worst e2e p95 | worst TPOT p95 | TPOT p50 |
+|---|---|---|---|---|---|
+| stock threads | **2 of 4** (~20 s and ~14 s) | 32.5 cores (stormy), 10.9 (clean) | 0.93–8.4 s | 7.2–38 ms | 5.6–5.7 ms |
+| `OMP_NUM_THREADS=4` | **0 of 3** | 8.8 cores | 0.93 s (every run) | 7.2 ms (every run) | 5.6 ms |
+
+The storm is a coin-flip hazard at N=8 with stock settings, and every capped run had the
+storm-free tail at the same median cost. Three clean capped runs alone would still happen
+~12% of the time if the cap did nothing; together with the thread-level mechanism (§3.1)
+and N=4 (stock collapsed 4 of 4, capped 0 of 1) the evidence points one way. (Two
+requests in all — one of 2,400 in the first stock and the first capped N=8 run — failed
+with a client-side broken pipe and no engine error; recorded, not rerun.)
 
 **Rule for colocation:** cap each engine's CPU threads to about cores ÷ N. The stock
 defaults assume one engine per machine; at N=1 the cap costs nothing (medium N=1: all
