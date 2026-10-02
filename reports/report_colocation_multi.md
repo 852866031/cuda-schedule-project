@@ -207,21 +207,24 @@ Every capped cell has zero failed requests. Stock was not run beyond N=4.*
 
 ### 3.1 What happens at N=4
 
-Decode-only·offload at N=4 collapsed in **three of three** stock runs: ~130 of 300
+Decode-only·offload at N=4 collapsed in **four of four** stock runs: ~130 of 300
 requests per model timed out, aggregate throughput fell from the offered
 1,045 to ~185 tok/s — while GPU1 sat at ~5% SM-active. N=3 was healthy in all four runs.
 A cliff, not a slope, and the GPU is idle through it: the bottleneck is on the host.
 
 ![stock vs thread-capped N=4 offload](../figures/mc_collapse_small_n4.png)
 
-*Same cell, two runs differing only in `OMP_NUM_THREADS`. (a) host CPU cores used by the
-four EngineCores (the stores stay at ~0 in both runs and are omitted); (b) GPU1
-SM-active; (c) cumulative completed requests vs the offered arrivals.*
+*Same cell, two runs differing only in `OMP_NUM_THREADS` (stock = the 4th reproduction,
+run with every monitor). (a) host CPU cores used by the four EngineCores (the stores stay
+at ~0 in both runs and are omitted); (b) GPU1 SM-active; (c) cumulative completed
+requests vs the offered arrivals; (d) stock run only — the capped run predates the
+per-thread sampler — busy EngineCore threads and involuntary context switches (6 s
+rolling mean).*
 
 | decode-only·offload | TPOT p50 | agg tok/s | failed (of 1,200) | host CPU | EngineCore cores | GPU1 SM-active |
 |---|---|---|---|---|---|---|
 | N=3, stock (×2) | 2.3 ms | 787 | 0 | 13% | — | 0.45 |
-| N=4, stock (×3) | 23–44 ms | 179–192 | 489–537 | 93% | **31.9 / 32** (traced run) | 0.05 |
+| N=4, stock (×4) | 23–74 ms | 158–192 | 489–619 | 93–97% | **31.8–31.9 / 32** (traced runs) | 0.03–0.05 |
 | N=4, stock, 2 GiB L1 | 23 ms | 193 | 492 | 94% | — | 0.05 |
 | **N=4, `OMP_NUM_THREADS=4`** | **2.6 ms** | **1045** | **0** | **10%** | **2.9 (mean)** | 0.57 |
 
