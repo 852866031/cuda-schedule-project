@@ -244,18 +244,26 @@ SM-active; (c) cumulative completed requests vs the offered arrivals.*
   that first looked like the cause are present at N=3 (~5,000 per model) and in the
   capped N=4 run (~5,000) — both healthy — and doubling the pool does not help.
 
-**The mechanism — what is measured and what is inferred.** Measured: (1) the collapse is
-the engines' CPU use going to all 32 cores while the GPU idles; (2) capping each engine's
-torch/OpenMP pool at 4 threads, and changing nothing else, removes it; (3) the cap does
-nothing at N=1. Inferred, not profiled: each vLLM engine's pool is sized to the whole
-machine (32 threads), so N engines field 32·N threads on 32 cores; under offload every
-request runs CPU-side copy work on that pool, and once enough copies overlap, threads
-that spin-wait for their peers get descheduled by other engines' spinners, each copy
-slows, more pile up, and the box settles where all cores are busy and little completes.
-That reading explains the **cliff with hysteresis** (35 s of normal service, then a flip
-that never recovers) and why a pool that fits each engine's share of the cores
-(4 × 4 ≤ 32) removes it — but the spinning threads were not stack-sampled, so the
-spin-wait step is the one link not directly observed.
+**The mechanism — measured at the thread level.** Each vLLM engine's torch/OpenMP
+pool is sized to the whole machine (each uncapped EngineCore runs ~135 threads), so N
+engines field far more threads than cores. Stack sampling is not possible on this box
+(no ptrace/perf/sudo), so a per-thread sampler reads `/proc/<pid>/task/*` every 2 s for
+every EngineCore (experiment E2, a 4th stock reproduction):
+
+| stock N=4 decode-only offload, 4 EngineCores | threads | busy threads (>0.5 core) | user-mode CPU | kernel-mode CPU | involuntary ctx-switch/s | voluntary ctx-switch/s |
+|---|---|---|---|---|---|---|
+| before the collapse (first 14 s) | 540 | 0.5 | 5.3 cores | 0.0 | 276 | 10,437 |
+| during the collapse | 540 | **26.8** | **31.8 cores** | **0.0** | **11,542** | 4,303 |
+
+At the onset ~27 threads (~7 per engine) start burning all 32 cores **entirely in user
+mode** — no syscall time — and involuntary context switches jump 42× while voluntary ones
+fall: threads are preempted while still runnable instead of blocking. That is the
+signature of spin-waiting threads stealing cores from each other: each copy slows, more
+pile up, and the box settles where all cores spin and little completes — a **cliff with
+hysteresis** (normal service, then a flip that never recovers). Capping each engine's
+pool at 4 threads (4 × 4 ≤ 32 cores) removes it. What remains unidentified is *which*
+code spins (the sampler sees behaviour, not stacks); torch's OpenMP pool is the
+consistent candidate, since `OMP_NUM_THREADS` alone controls it.
 
 ### 3.2 It is not offload-only
 
@@ -282,7 +290,102 @@ cells within 1–3% of uncapped).
 
 ## 4. Medium cohort: N × 3B under MPS
 
-<!-- TODO: medium figure + table + observations (mc_medium_*_mps, thread cap on) -->
+Same design, a model 6× larger: Qwen2.5-3B, 0.94 GiB KV grant each, fits = 3 sessions
+(resident), offload = 14 sessions (3.1× over). Every medium cell runs with the per-engine
+thread cap (the cap is neutral at N=1: all four cells within 1–3% of uncapped).
+
+### 4.1 KV resident (fits)
+
+![medium cohort, KV resident](../figures/mc_scaling_medium_mps_fits.png)
+
+*Same panels as §2. Thread cap on throughout.*
+
+| N | decode-only TPOT | full TTFT / TPOT | agg tok/s (% of offered) | GPU1 SM-active / DRAM-active | GPU1 used | host CPU |
+|---|---|---|---|---|---|---|
+| 1 | 6.78 ms | 30.8 / 6.78 ms | 273 (99%) | 0.57 / 0.44 | 7.7 GiB | 3% |
+| 2 | 9.84 | 40.1 / 10.27 | 523 (99%) | 0.80 / 0.66 | 15.2 | 6% |
+| 3 | 13.36 | 48.9 / 14.12 | 783 (99%) | 0.89 / 0.77 | 22.8 | 10% |
+| 4 | 17.31 | 59.2 / 18.73 | 1036 (99%) | 0.92 / 0.82 | 30.4 | 13% |
+
+*p50, mean over models; zero failed requests in every cell. "% of offered" divides by
+each client's actual arrival span (end effects keep it at ~99%).*
+
+**Observations:**
+
+- **A 3B reaches the small cohort's N=8 state at N=2.** One 3B alone keeps GPU1 0.57
+  SM-active; two reach 0.80 (small needed N=6 for 0.76). Each added 3B costs ~3.5 ms of
+  TPOT — linear from N=1 (6.8 → 9.8 → 13.4 → 17.3 ms), 2.55× at N=4.
+
+- **Memory bandwidth climbs with compute.** DRAM-active rises 0.44 → 0.82 alongside
+  SM-active: a 3B decode step reads 5.8 GB of weights, so N decodes compete for HBM
+  bandwidth, not just SMs — the predicted bandwidth-bound regime (P7).
+
+- **Every model still serves its offered load at N=4** — no failures, throughput on the
+  offered line. At 2 QPS the cost is entirely per-token latency.
+
+- **VRAM binds at N=4.** 30.4 of 31.35 GiB: a fifth 3B does not fit, so for this cohort
+  VRAM and GPU compute run out together.
+
+### 4.2 KV 3× over the grant (offload)
+
+![medium cohort, offload](../figures/mc_scaling_medium_mps_offload.png)
+
+*Same panels. Decode-only TTFT is N/A (§1.2); its queueing is decomposed below from the
+engines' own metrics.*
+
+| N | decode-only TPOT | full TTFT / TPOT | agg tok/s decode-only / full (% of offered) | worst e2e p95 decode-only / full | GPU1 SM-active |
+|---|---|---|---|---|---|
+| 1 | 7.54 ms | 74 / 7.34 ms | 272 / 273 (99 / 99%) | 1.7 / 1.2 s | 0.51 |
+| 2 | 10.80 | 107 / 10.83 | 522 / 523 (99 / 99%) | 2.9 / 2.2 s | 0.75 |
+| 3 | 13.70 | 148 / 14.72 | 781 / 783 (99 / 99%) | 5.3 / 3.7 s | 0.86 |
+| 4 | 15.92 | 621 / 18.28 | **1006** / 1035 (**96** / 99%) | **21** / 7.5 s | 0.87 |
+
+**Where decode-only offload time goes** — engine-side request metrics (`/metrics`
+histogram deltas), summed over the N engines:
+
+| N | queue wait (mean) | KV load / prefill step (mean) | GPU prefix-cache hit | DRAM (LMCache) hit | running / waiting reqs, engine 0 (mean) | KV cache in use (mean) |
+|---|---|---|---|---|---|---|
+| 1 | 82 ms | 85 ms | 8% | 70% | 2.0 / 0.1 | 43% |
+| 2 | 213 ms | 104 ms | 6% | 71% | — | — |
+| 3 | 717 ms | 161 ms | 5% | 69% | 3.8 / 2.4 | 71% |
+| 4 | **4,687 ms** | **401 ms** | 4% | 69% | 2.1 / **13.6** | 43% |
+
+**Observations:**
+
+- **Offload costs the 3B far more than the 0.5B — and the cost grows with N.** Decode-only
+  e2e p95 goes 1.7 → 2.9 → 5.3 → 21 s, and at N=4 throughput finally drops below the
+  offered rate (96%). The small cohort's offload, capped, never left the resident curve.
+
+- **It is queueing, not per-token slowness.** Decode-only TPOT stays on (even slightly
+  below) the resident curve; the growth is all in the time requests wait to be
+  scheduled — 82 ms at N=1, 4.7 s at N=4.
+
+- **Nearly every request reloads its prefix.** The GPU prefix cache serves only 4–8% of
+  tokens: the 0.94 GiB grant holds ~4 of the 14 prefixes, and in-flight requests pin
+  theirs, so a request rarely finds its prefix resident. Each reload moves 216 MiB (3×
+  the 0.5B's 72 MiB).
+
+- **Up to N=3 the grant caps concurrency.** Each in-flight request holds a whole prefix in
+  KV, so the grant fits ~4.4 at once. Little's law gives the concurrency needed — 2 QPS ×
+  (load + 128 × TPOT) = 2.1 at N=1, 3.8 at N=3 — and engine 0's logs show 2.0 and 3.8
+  running with KV in use rising to 71%: as neighbours stretch TPOT, each request holds
+  its KV slot longer and the same grant serves fewer requests per second.
+
+- **At N=4 something else binds.** 13.6 requests wait while only 2.1 run and KV is 43%
+  used — the grant is no longer the constraint. What grew is the per-request KV load:
+  401 ms vs 85 ms at N=1.
+
+- **The thread cap is what keeps this N=4 cell alive at all.** Run with stock threads
+  (experiment E1), the same cell collapses exactly like the small cohort's did: 180 of
+  1,200 requests time out, throughput falls to 28% of offered, host CPU 85%, GPU1
+  0.29 SM-active, mean KV load 5.6 s and mean queue wait 204 s. So the 401 ms loads are
+  not caused by the cap — uncapped they are 14× slower — and the oversubscription
+  collapse is not specific to the small model. Whether the residual 85 → 401 ms growth is
+  contention or a cap that is too tight is tested by the cap dose-response (E1b, below).
+
+- **Full·offload degrades later.** Zipf reuse keeps hot prefixes resident (TTFT 74 →
+  148 ms to N=3), and only at N=4 does its TTFT jump (621 ms) — the same pressure, less
+  of it.
 
 ---
 

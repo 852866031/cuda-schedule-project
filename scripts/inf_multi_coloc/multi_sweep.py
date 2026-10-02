@@ -615,7 +615,9 @@ def main():
     ap.add_argument("--prefix-len", type=int, default=6144)
     ap.add_argument("--suffix-len", type=int, default=128)
     ap.add_argument("--requests", type=int, default=300)
-    ap.add_argument("--qps", type=float, default=2.0, help="per model")
+    ap.add_argument("--qps", type=float, nargs="+", default=[2.0],
+                    help="per-model QPS; several values = a capacity sweep in one launch "
+                         "(cells at QPS != 2 get a _q<qps> name suffix)")
     ap.add_argument("--max-tokens", type=int, default=128)
     ap.add_argument("--seed", type=int, default=1000)
     ap.add_argument("--timeout", type=float, default=300.0)
@@ -637,6 +639,8 @@ def main():
     if args.smoke:
         args.requests = 40
         args.name_suffix += "_smoke"
+    qps_list = list(args.qps)
+    args.qps = qps_list[0]
     coh = dict(COHORTS[args.cohort])
     if args.l1_gb:
         coh["l1_gb"] = args.l1_gb
@@ -659,6 +663,9 @@ def main():
         # Host side, per second, by process role (stores / EngineCores / API / clients).
         hmon = subprocess.Popen([sys.executable, str(HERE / "host_monitor.py"),
                                  str(GPUMON / f"{tag}_host.csv")])
+        # per-thread EngineCore CPU (spin-wait evidence; no ptrace/perf on this box)
+        tmon = subprocess.Popen([sys.executable, str(HERE / "thread_sampler.py"),
+                                 str(GPUMON / f"{tag}_threads.csv"), "2"])
         try:
             info = launch_models(args, coh, n, args.arm, need_temp_pf, pop_sessions, ws_gib)
             print(f"  all {n} up: KV grants {info['kv_grants_gib']}, RSS {info['rss_mb']}, "
@@ -669,10 +676,22 @@ def main():
                     if rec.get("hung"):
                         break
             else:
+                abort = False
                 for cell in args.cells:
-                    rec = run_cell(args, coh, n, args.arm, cell, info, mon_path)
-                    if rec.get("hung") or "heartbeat" in str(rec.get("error", "")):
-                        print("  aborting remaining cells of this launch", flush=True)
+                    for q in qps_list:
+                        args.qps = q
+                        rec = run_cell(args, coh, n, args.arm, cell, info, mon_path,
+                                       name_extra="" if q == 2.0 else f"_q{q:g}")
+                        if rec.get("hung") or "heartbeat" in str(rec.get("error", "")):
+                            print("  aborting remaining cells of this launch", flush=True)
+                            abort = True
+                            break
+                        # past saturation: >50% failed -> higher QPS can only be worse
+                        if (rec.get("n_failed") or 0) > 0.5 * args.requests * n:
+                            print(f"  >50% failed at {q} QPS -- skipping higher QPS",
+                                  flush=True)
+                            break
+                    if abort:
                         break
         except Exception as e:
             print(f"  LAUNCH FAILED: {type(e).__name__}: {e}", flush=True)
@@ -682,6 +701,7 @@ def main():
         finally:
             mon.terminate()
             hmon.terminate()
+            tmon.terminate()
             # Engine logs are reused by index across launches; archive this launch's
             # copies BEFORE teardown so per-cell warning counts stay attributable.
             arch = LOGS / "mc_archive" / tag
