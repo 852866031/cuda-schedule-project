@@ -9,15 +9,27 @@ latency and aggregate throughput move as N grows, and what binds first?**
 
 The short answer:
 
-> Under MPS, N small models share one GPU almost for free until the GPU itself runs
-> out: eight 0.5B models each still serve their full offered load, at 3.6× the solo
-> per-token time, and the knee (N≈6–8) is GPU1 compute, not memory or host CPU. A 3B
-> model reaches the same point at N≈2–3. **The failure that actually stops colocation is
-> on the host, not the GPU**: every vLLM engine sizes its CPU thread pool for the whole
-> machine, so at N=4 with DRAM-streamed KV the engines' threads spin against each other,
-> pin all 32 cores, starve the GPU, and the system collapses (throughput falls to 18% of
-> the offered load, ~130 of 300 requests per model time out).
-> Capping each engine's CPU threads removes it completely and costs nothing at N=1.
+> **Colocating N models costs per-token latency, not capacity — as long as each engine's
+> CPU threads are capped.** Under MPS, eight 0.5B models on one GPU each serve their
+> offered load at 3.6× the solo per-token time, and still serve 8× that load (16 QPS
+> each, 15k tok/s total) without queueing; four 3B models fill the GPU's memory and
+> serve theirs at 2.5×. The price is **lost batching**: the same total traffic costs ~4×
+> per token when split over eight engines instead of batched in one.
+>
+> **The failure that actually stops colocation is on the host, not the GPU.** Every vLLM
+> engine sizes its CPU thread pool for the whole machine; with N engines the threads
+> spin against each other. With DRAM-streamed KV at N=4 this pins all 32 cores, starves
+> the GPU and collapses the system (4 of 4 runs, both model sizes); at N=8 with resident
+> KV it storms transiently (2 of 4 runs). Capping each engine's threads (`OMP_NUM_THREADS`
+> ≤ cores ÷ N) removed it in every run and costs nothing.
+>
+> Past that, the limit depends on the working set: GPU compute for small resident models,
+> host RAM for small offloaded ones (N≈6 on 60 GiB), and for 3B models with offloaded KV
+> a queue of DRAM reloads that grows with N long before the GPU is full.
+
+The full decision trail — every experiment's prediction written before it ran, and its
+outcome — is in [DECISIONS_MULTI_COLOC.md](../DECISIONS_MULTI_COLOC.md); predictions for
+the study as a whole are in [PLAN_MULTI_COLOC.md](../PLAN_MULTI_COLOC.md).
 
 ---
 
@@ -397,8 +409,25 @@ histogram deltas), summed over the N engines:
   1,200 requests time out, throughput falls to 28% of offered, host CPU 85%, GPU1
   0.29 SM-active, mean KV load 5.6 s and mean queue wait 204 s. So the 401 ms loads are
   not caused by the cap — uncapped they are 14× slower — and the oversubscription
-  collapse is not specific to the small model. Whether the residual 85 → 401 ms growth is
-  contention or a cap that is too tight is tested by the cap dose-response (E1b, below).
+  collapse is not specific to the small model.
+
+- **The cap size does not matter; the residual growth is contention.** A dose-response at
+  the same cell (experiment E1b) gives identical results for 2, 4 and 8 threads per
+  engine:
+
+  | medium decode-only offload, N=4 | failed | agg tok/s | mean KV load | mean queue wait | EngineCore CPU (mean / max) |
+  |---|---|---|---|---|---|
+  | `OMP_NUM_THREADS=2` | 0 | 1005 | 420 ms | 5.0 s | 4.1 / 5.0 cores |
+  | `OMP_NUM_THREADS=4` | 0 | 1006 | 401 ms | 4.7 s | — |
+  | `OMP_NUM_THREADS=8` | 0 | 1004 | 418 ms | 4.6 s | 7.0 / 9.7 cores |
+  | stock (~135 threads / engine) | 180 | 292 | 5,612 ms | 204 s | 27.0 / 32.6 cores |
+
+  So the 85 → ~410 ms load growth from N=1 to N=4 is the N engines' prefix reloads
+  competing with their own decodes for a GPU1 that is 87% busy, not thread-starved
+  copies. Even 8 threads per engine (32 in total = the core count) stays far from the
+  cliff; the collapse needs threads ≫ cores. Which shared resource the reloads queue on —
+  copy engines, kernels under MPS, PCIe — is not separable from these runs and is left
+  open.
 
 - **Full·offload degrades later.** Zipf reuse keeps hot prefixes resident (TTFT 74 →
   148 ms to N=3), and only at N=4 does its TTFT jump (621 ms) — the same pressure, less
@@ -451,13 +480,82 @@ on; stock threads noted where they differ):
   idle store); offload adds the working set in the store (3.4 GiB small, 3.0 GiB medium).
   On this 60 GiB box that caps small offload at N≈6.
 
-<!-- capacity (E4) paragraph goes here -->
+### 5.1 Capacity: price the sharing in load, not at one rate
+
+Everything above is at 2 QPS per model, where every resident cell serves its offered
+load. The sixth study showed a single sub-saturation point can flatter sharing ~3×, so
+experiment E4 swept the per-model rate at fixed N (decode-only fits, thread cap on; the
+small 2-QPS points at N=1/4 are the stock runs, where the cap is neutral).
+
+**Capacity test.** A point "keeps up" if the engines' mean scheduler queue wait is
+< 50 ms and ≤ 1% of requests fail. Delivered/offered throughput is *not* the test: each
+client sends a fixed 300 requests, so at high QPS the window's drain tail alone pulls
+delivered/offered to ~92–94% with zero queueing (decision log, 04:04).
+
+![capacity: load sweep at fixed N](../figures/mc_capacity.png)
+
+*Top row 0.5B, bottom 3B. (a)/(d) aggregate delivered tok/s vs per-model QPS (dotted =
+offered); (b)/(e) per-model TPOT vs per-model QPS; (c)/(f) the same TPOT against the
+**total** offered QPS — equal total load, different N. Red ring = not keeping up.*
+
+| small, decode-only fits | highest QPS/model swept | keeps up? (queue wait / failed) | aggregate tok/s there | TPOT at 2 QPS → there |
+|---|---|---|---|---|
+| N=1 | 32 | yes (0.0 ms / 0%) | 4,277 | 1.56 → 1.97 ms |
+| N=4 | 24 | yes (0.0 ms / 0%) | 11,993 | 2.60 → 6.67 ms |
+| N=8 | 16 | yes (0.0 ms / 0%) | 15,324 | 5.59 → 12.81 ms |
+
+<!-- medium capacity rows (E4 + E4c) -->
+
+| small, equal total load = 32 QPS | split | TPOT p50 |
+|---|---|---|
+| N=1 | 1 × 32 QPS | **1.97 ms** |
+| N=4 | 4 × 8 QPS | 4.56 ms |
+| N=8 | 8 × 4 QPS | **7.78 ms** |
+
+**Observations:**
+
+- **No small configuration saturated within the sweep.** N=8 serves 16 QPS per model —
+  128 QPS, 15.3k tok/s from one GPU — with zero queueing. The 2-QPS "knee at N≈6–8"
+  (§2.1) is a latency knee; capacity is at least 8× the reference load. (The exact limit
+  was not located, by decision: the finding was stable across 2–16 QPS/model.)
+
+- **Load is absorbed by batching, so its price is per-token time.** More requests per
+  model mean bigger batches per decode step, not more steps: N=4 goes 2 → 24 QPS/model
+  (12×) for TPOT 2.6 → 6.7 ms (2.6×).
+
+- **The real cost of N is lost batching.** At the same total load, splitting it across
+  more models costs ~4× per token (1.97 ms for one model vs 7.78 ms for eight at 32 QPS
+  total): separate engines cannot batch together, and each runs its own small-batch step
+  at nearly the full per-step cost. Colocating N models trades latency for isolation —
+  it does not cost capacity until much higher load.
 
 ---
 
 ## 6. Takeaways
 
-<!-- TODO -->
+1. **Cap each engine's CPU threads before colocating anything.** vLLM/torch default to one
+   engine per machine: N engines × ~135 threads spin against each other on 32 cores. Stock
+   settings collapsed DRAM-offload serving at N=4 in every run (both model sizes) and
+   stormed resident serving at N=8 in half the runs. `OMP_NUM_THREADS` = 2–8 (≤ cores ÷ N)
+   prevented it in every run and was neutral everywhere else.
+2. **Under MPS, N models cost per-token latency, not capacity.** Small models: TPOT 1.6 →
+   5.7 ms at N=8 (2 QPS), yet 16 QPS per model still runs without queueing. The latency
+   knee (N≈6–8 for 0.5B, N≈2–3 for 3B) is not a capacity wall.
+3. **The cost of N is lost batching.** At equal total load, one engine batches what N
+   engines must each step separately: 32 QPS costs 1.97 ms/token on one 0.5B, 7.78 ms
+   split over eight. Colocate for isolation (separate models, tenants, versions), not
+   for efficiency.
+4. **What binds next depends on the working set.** Small + resident: GPU time. Small +
+   offloaded: host RAM (swap-backed at N=6 on 60 GiB). 3B: VRAM and GPU together at N=4,
+   and with offloaded KV a reload queue that grows with N (82 ms → 4.7 s mean wait, N=1 →
+   4) before anything else is full.
+5. **Size the KV grant before adding models.** For 3B at a fixed footprint, dropping
+   `max-num-seqs` 64 → 16 raised the grant 0.59 → 0.94 GiB; the offload penalty is set by
+   how many prefixes stay resident.
+6. **Measure capacity by queueing, not delivered/offered.** With fixed-size request
+   windows, delivered/offered falls with load even when nothing queues.
+
+<!-- medium capacity sentence for takeaway 2 (E4c) -->
 
 ---
 

@@ -138,3 +138,39 @@ all through the launch scripts (mem_guard + heartbeat + RAM gate).
   N=4 at 6/8, N=2 at 6/8/12, N=1 at 8/12/16 QPS/model. *Prediction:* the max_num_seqs=16
   cap binds first, where QPS × e2e > 16 — N=4 near 6.4, N=2 near 10, N=1 near 16 QPS.
   If instead throughput falls short with fewer than 16 running, the GPU binds first.
+- **03:58 — E1b outcome: contention-bound (half of the prediction right).** Medium N=4 doff,
+  OMP = 2 / 4 / 8: KV load 420 / 401 / 418 ms, queue 5.0 / 4.7 / 4.6 s, throughput 1005 /
+  1006 / 1004 tok/s, 0 failures each — identical within ~5%. The 85 → ~410 ms load growth
+  with N is contention (the N engines' reloads compete with their own decodes on a GPU1
+  at 0.87 SM-active), not thread-starved copies. OMP=8 (32 threads total = core count)
+  was **not** near the cliff (engine CPU mean 7.0, peak 9.7 cores) — wrong half of the
+  prediction; the collapse needs threads ≫ cores (stock ≈135 per engine: 27 cores mean,
+  205 s queue). Which shared resource the reloads queue on (copy engines / MPS kernels /
+  PCIe) is not separable from tonight's data — stated as open in the report.
+- **04:04 — Measurement correction: the 95%-delivered capacity test is biased at high QPS.**
+  Each client sends 300 requests; at 16 QPS they arrive in ~19 s and the window then
+  waits ~1.5 s for the last completion, so delivered/offered reads ~92–94% with **no
+  queueing at all**. Checked with the engines' own queue-wait metric: small N=8 has mean
+  queue wait **0.0 ms at every point up to 16 QPS/model**, and e2e p50 = 128×TPOT
+  (1,666 vs 1,640 ms at 16 QPS). By contrast medium doff N=4 (really saturated) waits
+  4.7 s. **Decision:** capacity criterion = engine queue wait < 50 ms and ≤ 1% failed;
+  delivered % is reported but not used as the test.
+- **04:04 — E4b N=8 outcome: prediction wrong (no saturation by 16 QPS/model).** 128 QPS /
+  ~15.3k tok/s total, TPOT 5.6 → 12.8 ms, 0 failures, 0 queue wait.
+- **04:04 — Decision: stop extending the small sweep after E4b.** The finding is stable
+  across 2–16 QPS/model (8× the reference rate): batching absorbs load, the price is
+  per-token time. Locating the exact cliff costs more GPU hours for little added insight.
+  E4b (N=4 to 24, N=1 to 32) and E4c (medium) are already queued and run as planned.
+- **04:11 — E4b outcome (small extension, done 04:11).** Queue-wait criterion (< 50 ms,
+  ≤ 1% failed): N=8 keeps up to **16** QPS/model (15.3k tok/s total, TPOT 12.8 ms), N=4
+  to **24** (12.0k tok/s, TPOT 6.7 ms), N=1 to **32** (see figure) — mean queue wait 0.0
+  ms at every point, 0 failures. Predictions (N=8 saturating at 8–12, N=4 at 12–24) were
+  wrong: no small configuration saturated within the swept range. Real limit not located,
+  by decision (see above); the report states lower bounds.
+- **04:11 — Analysis decision (from E4 data, no new run): compare N at equal TOTAL load.**
+  Small cohort at 32 QPS total: N=1 (1×32) TPOT 1.97 ms, N=4 (4×8) 4.56 ms, N=8 (8×4)
+  7.78 ms. The same traffic costs ~4× per token when split over 8 engines, because
+  separate engines cannot batch together and per-step cost barely depends on batch size
+  here. This reframes the headline: the price of N-way colocation is lost batching
+  (per-token latency), not lost capacity. Added a third column to the capacity figure:
+  TPOT vs total QPS, one line per N.
