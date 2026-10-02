@@ -106,7 +106,9 @@ def main():
                                else " · stock threads" if has_cap else "")
         marker = "s" if cell.startswith("f") else "o"
         ns = [int(r["n"]) for r in rows]
-        ok = [r["ok"] == "True" for r in rows]
+        # red ring = a FAILED cell: >1% of requests failed. A lone client-side broken pipe
+        # (1 of 2,400 at N=8, no engine error) is noted in the report, not ringed.
+        ok = [(f(r["n_failed_total"]) or 0) <= 0.01 * 300 * int(r["n"]) for r in rows]
         tpot = [f(r["tpot_p50_mean_ms"]) for r in rows]
         tpot_max = [f(r["tpot_p50_max_ms"]) for r in rows]
         ttft = [f(r["ttft_p50_mean_ms"]) for r in rows]
@@ -114,7 +116,11 @@ def main():
         lat["tpot"] += [x for x in tpot + tpot_max if x]
         if not cell.startswith("d"):
             lat["ttft"] += [x for x in ttft if x]
-        kw = dict(color=color, marker=marker, ls="--" if capped else "-", lw=2, ms=8,
+        # decode-only and full often coincide exactly: draw decode-only ON TOP with a
+        # smaller marker (circle inside the square) so neither hides the other
+        dec = cell.startswith("d")
+        kw = dict(color=color, marker=marker, ls="--" if capped else "-", lw=2,
+                  ms=6 if dec else 10, zorder=4 if dec else 3,
                   label=label, mfc="white" if capped else color)
         ax_tpot.plot(ns, tpot, **kw)
         ax_tpot.vlines(ns, tpot, tpot_max, color=color, lw=1.2, alpha=0.6)
@@ -134,9 +140,12 @@ def main():
     # SM-active of the decode-only cell, from the CANONICAL run (a GPU counter is not
     # invalidated by one client-side failure, while the N=8 rerun's transient CPU spin
     # storm depresses its mean): stock where measured, capped beyond -- one line
-    sm = {int(r["n"]): f(r["gpu1_sm_active_mean"]) for r in canon.get((main_cell, CAP), [])}
-    sm.update({int(r["n"]): f(r["gpu1_sm_active_mean"])
-               for r in canon.get((main_cell, ""), [])})
+    # Offload: the capped runs are the working configuration, so where they exist they
+    # define the line (the stock collapse stays visible in the throughput series).
+    first, second = ((main_cell, ""), (main_cell, CAP)) if args.group == "offload" \
+        else ((main_cell, CAP), (main_cell, ""))
+    sm = {int(r["n"]): f(r["gpu1_sm_active_mean"]) for r in canon.get(first, [])}
+    sm.update({int(r["n"]): f(r["gpu1_sm_active_mean"]) for r in canon.get(second, [])})
     sm = dict(sorted(sm.items()))
     vram = {int(r["n"]): f(r["gpu1_fb_used_max_gib"]) for r in canon.get((main_cell, CAP), [])}
     vram.update({int(r["n"]): f(r["gpu1_fb_used_max_gib"])
@@ -153,7 +162,9 @@ def main():
     if sm:
         ax2 = ax_tp.twinx()
         ax2.plot(list(sm), list(sm.values()), color="#bc4c00", lw=1.5, ls="-.",
-                 marker="^", ms=6, label=f"GPU1 SM-active (decode-only·{args.group})")
+                 marker="^", ms=6,
+                 label=f"GPU1 SM-active (decode-only·{args.group}"
+                       + (", capped)" if args.group == "offload" and has_cap else ")"))
         span = 1.05 / (1 - BAND_TOP0)
         ax2.set_ylim(-BAND_TOP0 * span, 1.05)
         ax2.set_yticks([0, 0.25, 0.5, 0.75, 1.0])

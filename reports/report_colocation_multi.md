@@ -160,40 +160,46 @@ first run (0.86, same as full); the rerun's transient CPU storm (§3.2) pulls it
 
 ![small cohort, offload](../figures/mc_scaling_small_mps_offload.png)
 
-*Same panels. Solid = stock thread settings; dashed with hollow markers = per-engine CPU
-thread cap (`OMP_NUM_THREADS=4`). Red ring = failed cell. SM-active is the decode-only
-cell's.*
+*Same panels. Solid = stock thread settings (N=1–4); dashed with hollow markers =
+per-engine CPU thread cap (`OMP_NUM_THREADS=4`, N=1–6). Where decode-only and full
+coincide, the decode-only circle sits inside the full square. Red ring = failed cell
+(>1% of requests). SM-active follows the capped decode-only runs.*
 
-| N | decode-only TPOT | full TTFT / TPOT | agg tok/s (decode-only / full) | GPU1 SM-active (decode-only) |
-|---|---|---|---|---|
-| 1 | 1.60 ms | 10.7 / 1.57 ms | 274 / 274 | 0.17 |
-| 2 | 1.98 | 10.8 / 1.88 | 526 / 526 | 0.32 |
-| 3 | 2.28 | 11.2 / 2.23 | 787 / 788 | 0.45 |
-| 4, stock | **35 ✗** | 12.9 / 2.62 | **192** / 1043 | **0.05** |
-| 4, capped | 2.64 | — | 1045 / — | 0.57 |
+| N | decode-only TPOT, stock → capped | full TTFT, stock → capped | full TPOT, stock → capped | agg tok/s, capped (decode-only / full) | GPU1 SM-active (capped) | swap-in pages (capped) |
+|---|---|---|---|---|---|---|
+| 1 | 1.60 → 1.59 ms | 10.7 → 10.8 ms | 1.57 → 1.57 ms | 274 / 274 | 0.17 | 83 |
+| 2 | 1.98 → 1.98 | 10.8 → 10.8 | 1.88 → 1.86 | 526 / 526 | 0.32 | 164 |
+| 3 | 2.28 → 2.26 | 11.2 → 11.3 | 2.23 → 2.23 | 788 / 788 | 0.45 | 33 |
+| 4 | **35 ✗** → 2.64 | 12.9 → 12.7 | 2.62 → 2.61 | 1045 / 1045 | 0.57 | 1 |
+| 5 | — → 3.12 | — → 14.4 | — → 3.11 | 1292 / 1292 | 0.68 | 142 |
+| 6 | — → 3.66 | — → 16.4 | — → 3.66 | 1520 / 1521 | 0.73 | **29,262** |
 
-<!-- TODO: capped N=5,6 rows (mc_small_{doff,foff}_n{5,6}_mps_omp4) -->
-
-*✗ = ~130 of 300 requests per model timed out (reproduced 3×; §3). N≤3 decode-only
-reproduced (second run: 2.28 ms, 787 tok/s).*
+*Stock = default threads; capped = `OMP_NUM_THREADS=4` (§3). ✗ = stock decode-only N=4:
+~130 of 300 requests per model timed out, aggregate 192 tok/s (reproduced 3×; §3).
+Every capped cell has zero failed requests. Stock was not run beyond N=4.*
 
 **Observations:**
 
-- **Streaming prefixes from DRAM costs decode-only almost nothing while healthy.** TPOT
-  and throughput track the resident curve from N=1 to N=3 (1.60 → 2.28 ms vs 1.56 →
-  2.19 ms resident): the per-request prefix reload adds no per-token cost.
+- **With the thread cap, offload scales exactly like resident KV.** Decode-only and full
+  offload both keep the full offered load to N=6, and TPOT follows the resident curve
+  (3.66 ms at N=6, same as fits) — reloading prefixes from DRAM adds no per-token cost.
 
-- **Full·offload TTFT barely moves.** Zipf reuse keeps each model's hot prefixes
-  resident, so full·offload TTFT stays ~11–13 ms (vs 9–10 ms resident) — most requests
-  never reload.
+- **The cap is free wherever stock works.** At N=1–3 capped and stock agree within
+  noise on every metric (TPOT ±0.02 ms, full TTFT ±0.1 ms). It only matters at N=4,
+  where stock decode-only collapses (§3) and capped is just the next point on the curve.
 
-- **Decode-only offload collapses at N=4 with stock settings, and the GPU is idle when it
-  does.** ~130 of 300 requests per model time out, aggregate throughput falls to 18% of
-  offered, TPOT jumps 15×, and GPU1 SM-active drops to 0.05. That is not a GPU limit
-  (§3).
+- **Full·offload TTFT rises gently, not stepwise.** 10.7 ms at N=1 to 16.4 ms at N=6:
+  zipf reuse keeps each model's hot prefixes resident, so few requests reload, and the
+  rise tracks the per-step slowdown.
 
-- **With the per-engine thread cap, N=4 is simply the next point on the curve** — TPOT
-  2.64 ms, full throughput, zero failures, SM-active 0.57 — exactly where N=1–3 predicted.
+- **Host RAM becomes the limit at N=6.** At N=6 the host is swap-backed: 29k pages
+  swapped in during the decode-only window (97k out) versus at most a few hundred below,
+  with 4.8 of 7.6 GiB swap in use — yet latency stays on trend. N=7 would leave ~9 GB
+  available, just above the launcher's RAM gate, and N=8 would be refused; offload was
+  stopped at N=6 rather than run deep into swap (§5).
+
+- **The GPU still has room.** GPU1 is at 0.73 SM-active and 19 of 31 GiB at N=6 — for
+  offload the binding resource is host memory, not the GPU.
 
 ---
 
@@ -261,7 +267,12 @@ e2e p95 1.5–8.4 s versus 0.9 s, TPOT p95 up to 38 ms versus 7 ms in the first 
 which had no storm. With more engines the threshold
 is lower; resident KV makes the storm brief instead of permanent.
 
-<!-- TODO: capped N=8 fits result (mc_small_*_n8_mps_omp4) -->
+With the cap, N=8 resident ran **without a storm**: TPOT p50 5.4–5.9 ms, TPOT p95 at most
+7.2 ms and e2e p95 at most 0.93 s across the eight models — the same tail as the storm-free
+stock run — and the same median cost, so the cap is free at N=8 too. One caveat: the stock
+storm showed in one of two runs, so a single clean capped run is consistent with the cap
+preventing it, not proof. (One request of 2,400 again failed with a client-side broken
+pipe, as in the first stock N=8 run — no engine error; recorded, not rerun.)
 
 **Rule for colocation:** cap each engine's CPU threads to about cores ÷ N. The stock
 defaults assume one engine per machine; at N=1 the cap costs nothing (medium N=1: all
