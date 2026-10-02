@@ -8,7 +8,8 @@ exists, is drawn as its own dashed, hollow-marker series next to the stock one. 
 output/summary_mc_<cohort>.csv (rebuilt from raw by multi_sweep.py).
 
   (a) per-model TPOT p50 (mean over models; whiskers = worst model)
-  (b) per-model TTFT p50 (log; decode-only TTFT = queue + one-token step, no prefill)
+  (b) per-model TTFT p50, FULL cells only: decode-only has no prefill, so its "first
+      token" time is a KV-reload/queue time, not a TTFT -- reported N/A, not drawn
   (c) aggregate throughput vs the offered rate (dotted), GPU1 SM-active on the right, and
       GPU1 memory used as a filled band at the bottom on its own offset axis -- the three
       quantities are given disjoint vertical bands via axis limits, so nothing overlaps
@@ -111,16 +112,19 @@ def main():
         ttft = [f(r["ttft_p50_mean_ms"]) for r in rows]
         tp = [f(r["tok_per_s_agg"]) for r in rows]
         lat["tpot"] += [x for x in tpot + tpot_max if x]
-        lat["ttft"] += [x for x in ttft if x]
+        if not cell.startswith("d"):
+            lat["ttft"] += [x for x in ttft if x]
         kw = dict(color=color, marker=marker, ls="--" if capped else "-", lw=2, ms=8,
                   label=label, mfc="white" if capped else color)
         ax_tpot.plot(ns, tpot, **kw)
         ax_tpot.vlines(ns, tpot, tpot_max, color=color, lw=1.2, alpha=0.6)
-        ax_ttft.plot(ns, ttft, **kw)
+        if not cell.startswith("d"):          # decode-only TTFT is N/A (no prefill)
+            ax_ttft.plot(ns, ttft, **kw)
         ax_tp.plot(ns, tp, **kw)
         for n, t, good, y in zip(ns, ttft, ok, tp):     # failed cells: hollow red ring
             if not good:
-                ax_ttft.plot(n, t, "o", ms=16, mfc="none", mec="#cf222e", mew=2)
+                if not cell.startswith("d"):
+                    ax_ttft.plot(n, t, "o", ms=16, mfc="none", mec="#cf222e", mew=2)
                 ax_tp.plot(n, y, "o", ms=16, mfc="none", mec="#cf222e", mew=2)
 
     allns = sorted({int(r["n"]) for v in data.values() for r in v})
@@ -181,7 +185,7 @@ def main():
 
     # log only when the data spans >10x (offload's collapse); linear otherwise
     for ax, key, title in ((ax_tpot, "tpot", "(a) per-model TPOT p50"),
-                           (ax_ttft, "ttft", "(b) per-model TTFT p50")):
+                           (ax_ttft, "ttft", "(b) per-model TTFT p50 — full only")):
         lo, hi = min(lat[key]), max(lat[key])
         if hi / lo > 10:
             ax.set_yscale("log")
