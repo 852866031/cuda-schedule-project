@@ -117,3 +117,18 @@ for tail latency.
   ~20 s spin storm (8 EngineCores at 31.8/32 cores, GPU1 SM-active 0.95 → 0.03, then
   self-recovered): TTFT p50 unchanged (18 ms) but p95 0.9–2.9 s. The first N=8 run had
   none. A thread-capped N=8 fits run tests whether the cap is a general rule.
+- **P1 addendum (capacity, overnight E4).** The N≈6–8 knee is a per-token *latency* knee
+  at 2 QPS, not a capacity limit: small N=8 serves 16 QPS/model (8× the reference) with
+  zero queueing. GPU1 SM-active is not a saturation gauge (it falls 0.78 → 0.68 at N=4
+  from 4 to 8 QPS while throughput doubles).
+- **P3 (full vs decode-only) — confirmed.** Same TPOT curve as decode-only at every N;
+  the 128-token suffix prefill adds ~1–2 ms of TTFT, not an earlier knee.
+- **P6 (ceilings) — partly wrong.** VRAM ceiling for 0.5B not reached (25.7 GiB at N=8);
+  host RAM binds offload at N=6 as predicted; host CPU binds first only with stock
+  thread settings (the oversubscription collapse), never by load.
+- **P7 (medium) — knee confirmed, mechanism refined.** Latency knee N≈2–3 (TPOT 6.8 →
+  9.8 → 13.4 → 17.3 ms), bandwidth-bound (DRAM-active 0.44 → 0.82), VRAM ceiling N=4.
+  Under load the binding limit is the per-engine max_num_seqs=16 cap (12 / 8 / 4
+  QPS/model at N = 1 / 2 / 4), and aggregate capacity *grows* with N.
+- **Run-level decisions and the overnight experiments (E1–E4c)** are in
+  `DECISIONS_MULTI_COLOC.md`.

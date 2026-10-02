@@ -19,13 +19,15 @@ The short answer:
 > **The failure that actually stops colocation is on the host, not the GPU.** Every vLLM
 > engine sizes its CPU thread pool for the whole machine; with N engines the threads
 > spin against each other. With DRAM-streamed KV at N=4 this pins all 32 cores, starves
-> the GPU and collapses the system (4 of 4 runs, both model sizes); at N=8 with resident
+> the GPU and collapses the system (every stock run: 4 of 4 for 0.5B, 1 of 1 for 3B); at
+> N=8 with resident
 > KV it storms transiently (2 of 4 runs). Capping each engine's threads (`OMP_NUM_THREADS`
 > ≤ cores ÷ N) removed it in every run and costs nothing.
 >
-> Past that, the limit depends on the working set: GPU compute for small resident models,
-> host RAM for small offloaded ones (N≈6 on 60 GiB), and for 3B models with offloaded KV
-> a queue of DRAM reloads that grows with N long before the GPU is full.
+> Past that, the limit depends on the model and working set: GPU time (a per-token latency
+> knee, not a capacity wall) for small resident models, host RAM for small offloaded ones
+> (N≈6 on 60 GiB), VRAM and each engine's sequence cap for 3B models, and for 3B with
+> offloaded KV a queue of DRAM reloads that grows with N long before the GPU is full.
 
 The full decision trail — every experiment's prediction written before it ran, and its
 outcome — is in [DECISIONS_MULTI_COLOC.md](../DECISIONS_MULTI_COLOC.md); predictions for
@@ -97,8 +99,8 @@ than re-measured here. No idle-window gate, no per-model SM caps.
 
 One knob turned out to matter: the **per-engine CPU thread cap**
 (`OMP_NUM_THREADS=4`). The small cohort was first run with stock threads; §3 shows why
-the cap exists. The medium cohort, the small offload runs beyond N=4, and a capped N=8
-control use it; the cap is neutral for a single model (medium N=1: all four cells within
+the cap exists. The medium cohort, the capped small offload curve (N=1–6), the N=8
+storm controls and every capacity sweep use it; the cap is neutral for a single model (medium N=1: all four cells within
 1–3% of uncapped).
 
 ### 1.4 How a run executes
@@ -192,7 +194,7 @@ coincide, the decode-only circle sits inside the full square. Red ring = failed 
 | 6 | — → 3.66 | — → 16.4 | — → 3.66 | 1520 / 1521 | 0.73 | **29,262** |
 
 *Stock = default threads; capped = `OMP_NUM_THREADS=4` (§3). ✗ = stock decode-only N=4:
-~130 of 300 requests per model timed out, aggregate 192 tok/s (reproduced 3×; §3).
+~130 of 300 requests per model timed out, aggregate 192 tok/s (reproduced 4×; §3).
 Every capped cell has zero failed requests. Stock was not run beyond N=4.*
 
 **Observations:**
@@ -226,7 +228,7 @@ Every capped cell has zero failed requests. Stock was not run beyond N=4.*
 
 Decode-only·offload at N=4 collapsed in **four of four** stock runs: ~130 of 300
 requests per model timed out, aggregate throughput fell from the offered
-1,045 to ~185 tok/s — while GPU1 sat at ~5% SM-active. N=3 was healthy in all four runs.
+1,045 to 158–192 tok/s — while GPU1 sat at 3–5% SM-active. N=3 was healthy in all four runs.
 A cliff, not a slope, and the GPU is idle through it: the bottleneck is on the host.
 
 ![stock vs thread-capped N=4 offload](../figures/mc_collapse_small_n4.png)
@@ -247,9 +249,10 @@ rolling mean).*
 
 **Observations:**
 
-- **For ~35 s the stock run is indistinguishable from the capped one** — same SM-active,
-  same completion slope. Then the EngineCores jump from ~7 to all 32 host cores within a
-  few seconds and **stay pinned until the clients time out**. At that instant GPU1 drops
+- **At first the stock run is indistinguishable from the capped one** — same SM-active,
+  same completion slope, for 14–35 s depending on the run (14 s in the run plotted).
+  Then the EngineCores jump from ~7 to all 32 host cores within a few seconds and **stay
+  pinned until the clients time out**. At that instant GPU1 drops
   to ~0 and completions flatten to a trickle.
 
 - **The CPU is burned inside the engines, not in the stores.** The four LMCache store
@@ -292,8 +295,8 @@ the eight EngineCores went from ~7 to 31.8 of 32 cores for ~20 s, GPU1 SM-active
 from 0.95 to 0.03–0.5, and then it **recovered on its own**. Median latency was
 untouched (e2e p50 0.72–0.79 s, as in the first run), but every model's tail blew up:
 e2e p95 1.5–8.4 s versus 0.9 s, TPOT p95 up to 38 ms versus 7 ms in the first N=8 run,
-which had no storm. With more engines the threshold
-is lower; resident KV makes the storm brief instead of permanent.
+which had no storm. With resident KV the storm was brief and self-recovering (in both
+stormy runs below), instead of permanent as under offload.
 
 To test whether this is a repeatable hazard and whether the cap prevents it, N=8 resident
 was run four times stock and three times capped (experiment E3), with the per-thread
@@ -352,8 +355,9 @@ each client's actual arrival span (end effects keep it at ~99%).*
 - **Every model still serves its offered load at N=4** — no failures, throughput on the
   offered line. At 2 QPS the cost is entirely per-token latency.
 
-- **VRAM binds at N=4.** 30.4 of 31.35 GiB: a fifth 3B does not fit, so for this cohort
-  VRAM and GPU compute run out together.
+- **VRAM binds at N=4.** 30.4 of 31.35 GiB: a fifth 3B does not fit, so at 2 QPS VRAM
+  and GPU time run out together. Under higher load each engine's sequence cap binds
+  first (§5.1).
 
 ### 4.2 KV 3× over the grant (offload)
 
@@ -457,7 +461,7 @@ on; stock threads noted where they differ):
 | host RAM | 22.7 GB available | **16.7 GB avail., 29k pages swapped in — practical ceiling** | 29.3 GB available | 28.6 GB available |
 | host CPU (capped) | 20% | 16% | 13% | 17% |
 | host CPU (**stock** threads) | **storm in 2 of 4 runs** | **collapse at N=4** | — | **collapse at N=4** |
-| what binds first | GPU compute | host RAM | GPU compute ≈ VRAM | KV-load queueing, then VRAM |
+| what binds first | GPU time (latency) — no capacity wall up to 16 QPS/model | host RAM | VRAM at N=4; under load the per-engine sequence cap (§5.1) | KV-reload queueing |
 
 **Observations:**
 
@@ -466,10 +470,11 @@ on; stock threads noted where they differ):
   GPU1 half idle. Nothing else on this list fails that early or that hard.
 
 - **With the thread cap, the binding resource depends on the model and working set.**
-  Small resident models run out of **GPU compute** (SM-active plateaus at N≈6–8 with
-  VRAM and RAM to spare). Small offloaded models run out of **host RAM** (swap-backed at
-  N=6, GPU at 0.73). Medium models run out of **GPU compute, HBM bandwidth and VRAM
-  together** at N=4 — a fifth 3B does not fit, and two already push SM-active to 0.80.
+  Small resident models run into **GPU time** — a per-token latency knee at N≈6–8 with
+  VRAM and RAM to spare — but no capacity wall within 16 QPS per model (§5.1). Small offloaded models run out of **host RAM** (swap-backed at
+  N=6, GPU at 0.73). Medium models run out of **VRAM** at N=4 (a fifth 3B
+  does not fit) with GPU time and HBM bandwidth close behind; under load each engine's
+  **sequence cap** binds first (§5.1).
 
 - **Medium offload hits a fourth limit before any of those: KV-load queueing.** Its
   decode-only queue wait grows 82 ms → 4.7 s from N=1 to N=4 while GPU, VRAM and RAM all
@@ -504,7 +509,16 @@ offered); (b)/(e) per-model TPOT vs per-model QPS; (c)/(f) the same TPOT against
 | N=4 | 24 | yes (0.0 ms / 0%) | 11,993 | 2.60 → 6.67 ms |
 | N=8 | 16 | yes (0.0 ms / 0%) | 15,324 | 5.59 → 12.81 ms |
 
-<!-- medium capacity rows (E4 + E4c) -->
+| medium, decode-only fits | keeps up to (QPS/model) | first saturated point | queue wait there | aggregate plateau | running reqs / engine at saturation |
+|---|---|---|---|---|---|
+| N=1 | 12 (1,581 tok/s, TPOT 7.9 ms) | 16 | 1.0 s | ~1.93k tok/s | — |
+| N=2 | 8 (2,042 tok/s, TPOT 11.2 ms) | 12 | 2.0 s | ~2.62k tok/s | — |
+| N=4 | 4 (2,048 tok/s, TPOT 18.6 ms) | 6 (8: 5.7 s) | 0.6 s | ~3.05k tok/s | max **16** = `max-num-seqs` |
+
+*Medium engines run `max-num-seqs 16` — the setting that raised the KV grant 0.59 → 0.94
+GiB (§1.1). Every medium plateau sits at the cap's ceiling, N × 16 sequences ÷ TPOT
+(≈ 2.0k / 2.8k / 3.2k tok/s): engine 0 at N=4 runs exactly 16 requests while up to 75
+wait, and TPOT barely moves (18.6 → 20.2 ms).*
 
 | small, equal total load = 32 QPS | split | TPOT p50 |
 |---|---|---|
@@ -529,6 +543,19 @@ offered); (b)/(e) per-model TPOT vs per-model QPS; (c)/(f) the same TPOT against
   at nearly the full per-step cost. Colocating N models trades latency for isolation —
   it does not cost capacity until much higher load.
 
+- **The 3B's limit is a configuration trade-off, not the GPU.** Each medium engine
+  saturates when it runs out of its 16 sequence slots — per-model capacity halves as N
+  doubles (12 → 8 → 4 QPS) while TPOT is still rising slowly. Raising the KV grant
+  (`max-num-seqs` 64 → 16) bought resident prefixes at the price of per-engine
+  concurrency.
+
+- **…and with a per-engine cap, more engines means more total capacity.** Aggregate
+  plateaus grow with N (~1.9k → 2.6k → 3.05k tok/s) because each engine brings its own
+  slots: at 16 QPS total one 3B saturates (1 s queue) while four carry it without
+  queueing, at 18.6 vs 7.9 ms per token. So for the 3B splitting trades latency for
+  concurrency; for the 0.5B, whose 64-slot cap never binds, it trades latency for
+  nothing.
+
 ---
 
 ## 6. Takeaways
@@ -540,7 +567,9 @@ offered); (b)/(e) per-model TPOT vs per-model QPS; (c)/(f) the same TPOT against
    prevented it in every run and was neutral everywhere else.
 2. **Under MPS, N models cost per-token latency, not capacity.** Small models: TPOT 1.6 →
    5.7 ms at N=8 (2 QPS), yet 16 QPS per model still runs without queueing. The latency
-   knee (N≈6–8 for 0.5B, N≈2–3 for 3B) is not a capacity wall.
+   knee (N≈6–8 for 0.5B, N≈2–3 for 3B) is not a capacity wall. For the 3B the capacity
+   wall is the per-engine sequence cap (12 / 8 / 4 QPS per model at N = 1 / 2 / 4), and
+   aggregate capacity still grows with N.
 3. **The cost of N is lost batching.** At equal total load, one engine batches what N
    engines must each step separately: 32 QPS costs 1.97 ms/token on one 0.5B, 7.78 ms
    split over eight. Colocate for isolation (separate models, tenants, versions), not
@@ -549,36 +578,51 @@ offered); (b)/(e) per-model TPOT vs per-model QPS; (c)/(f) the same TPOT against
    offloaded: host RAM (swap-backed at N=6 on 60 GiB). 3B: VRAM and GPU together at N=4,
    and with offloaded KV a reload queue that grows with N (82 ms → 4.7 s mean wait, N=1 →
    4) before anything else is full.
-5. **Size the KV grant before adding models.** For 3B at a fixed footprint, dropping
-   `max-num-seqs` 64 → 16 raised the grant 0.59 → 0.94 GiB; the offload penalty is set by
-   how many prefixes stay resident.
+5. **Size the KV grant and the sequence cap together.** For 3B at a fixed footprint,
+   dropping `max-num-seqs` 64 → 16 raised the grant 0.59 → 0.94 GiB and cut N=1
+   decode-only offload's first-token wait from 742 to 103 ms — but the same cap later
+   bounds each engine's capacity (§5.1). It is one trade-off, not two settings.
 6. **Measure capacity by queueing, not delivered/offered.** With fixed-size request
    windows, delivered/offered falls with load even when nothing queues.
 
-<!-- medium capacity sentence for takeaway 2 (E4c) -->
+
 
 ---
 
 ## Reproducing
 
 ```bash
-# small cohort, stock threads, all four cells
-.venv/bin/python scripts/inf_multi_coloc/multi_sweep.py --cohort small --n 1 2 3 4 --arm mps
-.venv/bin/python scripts/inf_multi_coloc/multi_sweep.py --cohort small --n 6 8 --arm mps --cells dfits ffits
-# the N=4 collapse and its fix
-.venv/bin/python scripts/inf_multi_coloc/multi_sweep.py --cohort small --n 4 --arm mps --cells doff --name-suffix _trace
-OMP_NUM_THREADS=4 .venv/bin/python scripts/inf_multi_coloc/multi_sweep.py --cohort small --n 4 --arm mps --cells doff --name-suffix _omp4
-# medium cohort (sizing: scripts/inf_multi_coloc/probe_kv.sh), thread cap on
-OMP_NUM_THREADS=4 .venv/bin/python scripts/inf_multi_coloc/multi_sweep.py --cohort medium --n 1 2 3 4 --arm mps
+D=scripts/inf_multi_coloc/multi_sweep.py; PY=.venv/bin/python
+# §2 small cohort, stock threads, all four cells (2 QPS/model)
+$PY $D --cohort small --n 1 2 3 4 --arm mps
+$PY $D --cohort small --n 6 8 --arm mps --cells dfits ffits
+# §2.2 / §3 the N=4 collapse (stock) and the capped offload curve
+$PY $D --cohort small --n 4 --arm mps --cells doff --name-suffix _thr        # stock, all monitors
+OMP_NUM_THREADS=4 $PY $D --cohort small --n 1 2 3 4 5 6 --arm mps --cells doff foff --name-suffix _omp4
+# §3.2 N=8 storm reproducibility (stock x4, capped x3): queue_small_{3,6}.sh, queue_night.sh E3
+# §4 medium cohort (sizing: scripts/inf_multi_coloc/probe_kv.sh), thread cap on
+OMP_NUM_THREADS=4 $PY $D --cohort medium --n 1 2 3 4 --arm mps
+$PY $D --cohort medium --n 4 --arm mps --cells doff --name-suffix _nocap     # E1: stock collapses
+OMP_NUM_THREADS=2 $PY $D --cohort medium --n 4 --arm mps --cells doff --name-suffix _omp2  # E1b
+# §5.1 capacity sweeps (E4/E4b/E4c), thread cap on
+OMP_NUM_THREADS=4 $PY $D --cohort small --n 1 4 8 --arm mps --cells dfits --qps 3 4 6 8 12 16 24 32 --name-suffix _omp4
+OMP_NUM_THREADS=4 $PY $D --cohort medium --n 1 2 4 --arm mps --cells dfits --qps 2.5 3 4 6 8 12 16
+# (the exact overnight order is scripts/inf_multi_coloc/queue_night{,2,3,4}.sh)
 
 # figures (view them before believing them)
-.venv/bin/python scripts/plots/plot_mc_scaling.py --cohort small
-.venv/bin/python scripts/plots/plot_mc_collapse.py
+for c in small medium; do for g in fits offload; do
+  $PY scripts/plots/plot_mc_scaling.py --cohort $c --group $g; done; done
+$PY scripts/plots/plot_mc_collapse.py
+$PY scripts/plots/plot_mc_layout.py
+$PY scripts/plots/plot_mc_capacity.py
 ```
 
 The driver starts/stops its own MPS daemon (`/tmp/mc_mps_pipe`). Data: per-cell summaries
 `output/summary_mc_{small,medium}.csv` and per-model `*_models.csv` (rebuilt from raw on
-every run); raw records `output/raw/mc_*.json` (gitignored); per-second GPU and host
-telemetry `output/gpumon/mc_*{,_host}.csv`; engine logs archived per launch under
-`output/logs/mc_archive/`. Variants kept under distinct names: `_r2` reruns, `_trace` /
-`_l1x2` / `_omp4` collapse diagnostics, medium `_thin` (0.59 GiB grant) and `_nocap`.
+every run); raw records `output/raw/mc_*.json` (gitignored); per-model client outputs
+`output/inf_multi_coloc/`; per-second telemetry `output/gpumon/mc_*.csv` (GPU, DCGM),
+`*_host.csv` (CPU cores by process role, RAM, swap) and `*_threads.csv` (per-thread
+EngineCore counters); engine logs archived per launch under `output/logs/mc_archive/`.
+Name suffixes: `_r2.._r4` reruns; `_q<qps>` capacity points; `_omp2/_omp4/_omp8` thread
+caps; `_nocap` stock threads where the default is capped; `_trace`, `_thr`, `_l1x2`
+collapse diagnostics; medium `_thin` (0.59 GiB grant).

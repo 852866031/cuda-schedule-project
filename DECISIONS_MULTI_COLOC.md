@@ -174,3 +174,43 @@ all through the launch scripts (mem_guard + heartbeat + RAM gate).
   here. This reframes the headline: the price of N-way colocation is lost batching
   (per-token latency), not lost capacity. Added a third column to the capacity figure:
   TPOT vs total QPS, one line per N.
+- **04:17 — E4c medium N=4: prediction confirmed (sequence cap binds, ~4–6 QPS/model).**
+  Mean queue wait 6 ms at 4 QPS, **605 ms at 6**, **5.7 s at 8**; aggregate throughput
+  plateaus at ~3,050 tok/s (offered 4,096 at 8 QPS); engine 0 running maxes at exactly
+  **16 = max_num_seqs** while waiting grows (mean 32.8, max 75 at 8 QPS); TPOT only 18.6
+  → 20.2 ms (GPU not slowing). Ceiling arithmetic: 4 engines × 16 seqs / 20 ms ≈ 3.2k
+  tok/s vs 3.05k measured. Consequence for the report: the medium capacity limit is a
+  **configuration trade-off** made at 21:00 — max_num_seqs 64 → 16 bought 0.94 GiB of KV
+  per model at the cost of per-model concurrency.
+- **04:25 — E4c outcome (done 04:24): prediction confirmed for all three N.** Per-model
+  capacity (queue wait < 50 ms, ≤ 1% failed): medium N=1 **12** QPS (saturates at 16:
+  1.0 s queue, plateau ~1.93k tok/s vs cap ceiling 16/7.9 ms ≈ 2.0k), N=2 **8** (12: 2.0 s,
+  ~2.6k vs ~2.8k), N=4 **4** (6: 0.6 s, 8: 5.7 s, ~3.05k vs ~3.2k). The max_num_seqs=16
+  cap binds every time. Per-model capacity halves as N doubles, but **aggregate capacity
+  grows with N** (each engine brings its own 16 slots): at 16 QPS total one 3B
+  saturates while four carry it without queueing (TPOT 18.6 vs 7.9 ms). So for the 3B the
+  equal-load trade is latency for concurrency; for the 0.5B (cap 64 never binds) it is
+  latency only.
+- **04:25 — Overnight experiments complete. Machine idle, all stacks down.** Remaining work
+  is write-up only (report §5.1 medium rows, takeaways, plan outcomes, figures).
+
+## D. Overnight close-out (04:27)
+
+| exp | prediction (before running) | outcome |
+|---|---|---|
+| E1 | medium N=4 doff, stock threads, collapses | **right** — 180/1,200 timeouts, 28% throughput, CPU 85% |
+| E1b | cap size 2 vs 4 no different (contention); 8 near the cliff | **half right** — 2/4/8 identical (contention); 8 nowhere near the cliff |
+| E2 | many busy threads, user-mode, involuntary switches | **right** — 26.8 busy threads, 31.8 user cores, 0 sys, 42× involuntary |
+| E3 | stock storms ≥1/2, capped 0/2 | **right** — stock 2/4, capped 0/3 (p≈0.125 by itself) |
+| E4/E4b small | saturation N=8 ≈3, N=4 ≈6, N=1 >8 QPS/model | **wrong** — none saturated (N=8 to 16, N=4 to 24, N=1 to 32) |
+| E4/E4c medium | N=1 ≈4–5, N=2 ≈3, N=4 ≈2.5 (first guess); then seq-cap ≈16/10/6.4 | first guess **wrong**; seq-cap prediction **right** (12/8/4 keep up; saturate at 16/12/6) |
+
+Corrections the night forced into the report: (1) the 2-QPS knee is a latency knee, not
+a capacity limit; (2) SM-active is not a saturation gauge; (3) delivered/offered is biased
+at high QPS — capacity is judged by engine queue wait; (4) the price of N is lost
+batching; (5) the 3B capacity limit is the max_num_seqs trade-off made at 21:00; (6) the
+collapse mechanism is now measured at the thread level, not inferred.
+
+Not done, by decision: locating the exact small-cohort capacity cliff; separating which
+shared resource medium offload reloads queue on (copy engines / MPS kernels / PCIe);
+stack-level identification of the spinning code (no ptrace/perf/sudo on this box).
