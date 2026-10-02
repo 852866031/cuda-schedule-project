@@ -18,6 +18,8 @@
 #                         be: gated by cupti_gate.so (forces --enforce-eager: the CUPTI
 #                             gate's event record aborts CUDA-graph capture)
 #   MC_EAGER=1            eager without the gate (control)
+#   MC_MAX_BATCHED=<n>    --max-num-batched-tokens for the GPU1 engine (default: vLLM's
+#                         2048) -- smaller lowers the profiled activation peak -> more KV
 #   MC_NO_LMC=1           no store, no KV connector (prefill-only: unique prompts,
 #                         nothing to reuse; a store would only grow)
 #   MC_GATE_K / MC_GATE_MAXPEND
@@ -57,6 +59,7 @@ MAX_NUM_SEQS="${MC_MAX_NUM_SEQS:-64}"
 L1_GB="${MC_L1_GB:-1}"
 MAX_LEN="${MC_MAX_LEN:-8192}"
 ROLE="${MC_ROLE:-plain}"
+BATCHED_ARG=""; [ -n "${MC_MAX_BATCHED:-}" ] && BATCHED_ARG="--max-num-batched-tokens $MC_MAX_BATCHED"
 CHUNK_SIZE="${CHUNK_SIZE:-256}"
 EPORT=$((8400 + I)); PPORT=$((8500 + I)); SPORT=$((8600 + I))
 
@@ -139,7 +142,7 @@ CUDA_VISIBLE_DEVICES=1 LMCACHE_CONFIG_FILE="/tmp/mc_lmc_$I.yaml" env $ROLE_ENV \
 "$PY" -m vllm.entrypoints.cli.main serve "$MODEL" \
     --port "$EPORT" --gpu-memory-utilization "$UTIL" \
     --max-model-len "$MAX_LEN" --seed 0 --disable-log-requests --enable-prefix-caching $EAGER_ARG \
-    --max-num-seqs "$MAX_NUM_SEQS" "${KV_ARGS[@]}" \
+    --max-num-seqs "$MAX_NUM_SEQS" $BATCHED_ARG "${KV_ARGS[@]}" \
     > "$LOGS/mc_engine_$I.log" 2>&1 &
 echo $! > "$PID_DIR/engine_$I.pid"
 

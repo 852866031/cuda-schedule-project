@@ -1,0 +1,10 @@
+util,max_num_seqs,max_batched,kv_gib,gpu1_used_mib,startup_s
+0.22,64,default,0.59,7899,26
+0.22,16,default,0.9,7807,34
+0.22,16,1024,0.48,7367,37
+0.22,8,1024,0.98,7775,26
+util,max_num_seqs,max_batched,kv_gib,gpu1_used_mib,startup_s
+0.22,16,1024,0.94,7827,23
+0.22,16,default,0.9,7807,24
+0.22,8,default,0.9,7715,34
+0.22,16,1024,0.94,7827,35

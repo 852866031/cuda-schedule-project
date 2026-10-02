@@ -72,13 +72,15 @@ COHORTS = {
     "small": dict(model="Qwen/Qwen2.5-0.5B", util=0.08, max_num_seqs=64, l1_gb=1,
                   kv_bytes=24 * 2 * 64 * 2 * 2, fits=8, offload=48, ram_mb=5000),
     # Qwen2.5-3B: 36 layers x 2 kv heads x 128 dim -> 36 KiB/token, 0.21 GiB per 6144
-    # prefix; 5.8 GiB bf16 weights. Probe at util 0.24: KV 1.09 GiB but 8.24 GiB of GPU1
-    # per model (incl. ~0.72 GiB CUDA/MPS context) -> only 3 fit. util 0.22 (~7.6 GiB
-    # each, ~30.7 GiB for 4) keeps N=4 feasible; probe: 0.59 GiB grant. fits/offload keep
-    # the small cohort's ratios (resident / ~3x over). ram_mb measured: 1.1 API + 3.6
-    # EngineCore + 0.7 store overhead.
-    "medium": dict(model="Qwen/Qwen2.5-3B", util=0.22, max_num_seqs=64, l1_gb=1,
-                   kv_bytes=36 * 2 * 128 * 2 * 2, fits=2, offload=9, ram_mb=5500),
+    # prefix; 5.8 GiB bf16 weights. util 0.24 fits only 3 on GPU1 (8.24 GiB each);
+    # util 0.22 keeps N=4 (7.8 GiB each, ~31 GiB for 4). At util 0.22 the KV grant is set
+    # by non-KV overhead: max_num_seqs 64 -> 0.59 GiB, 16 + batched 1024 -> 0.94 GiB
+    # (probe_kv.sh; same footprint). 16 seqs ~3x the in-flight per model at 2 QPS.
+    # fits = 3 sessions (0.63 GiB, 67% of grant); offload = 14 (2.95 GiB, 3.1x over),
+    # matching the small cohort's ratios. ram_mb measured: 1.1 API + 3.6 EngineCore +
+    # 0.7 store overhead. The earlier 0.59 GiB runs are kept as *_thin.
+    "medium": dict(model="Qwen/Qwen2.5-3B", util=0.22, max_num_seqs=16, max_batched=1024,
+                   l1_gb=1, kv_bytes=36 * 2 * 128 * 2 * 2, fits=3, offload=14, ram_mb=5500),
 }
 
 CELLS = {   # name -> (decode_only, wl)
@@ -344,6 +346,8 @@ def launch_models(args, coh, n, arm, need_temp_pf, populate_sessions, ws_gib):
                 "MC_ROLE": role}
         if args.no_lmc:
             menv["MC_NO_LMC"] = "1"
+        if coh.get("max_batched"):
+            menv["MC_MAX_BATCHED"] = str(coh["max_batched"])
         if arm == "eager" and i > 0:
             menv["MC_EAGER"] = "1"
         t0 = time.time()
