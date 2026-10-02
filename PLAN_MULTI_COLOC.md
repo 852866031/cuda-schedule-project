@@ -92,8 +92,11 @@ for tail latency.
 
 - **Medium cohort = Qwen2.5-3B** (decided 2026-10-01, by the user). Qwen3-4B's 7.5 GiB of
   weights alone fill the 6–8 GiB class (N≤3, almost no KV); Qwen2.5-3B (5.8 GiB weights,
-  36 KiB/token KV) fits ~7.5 GiB per model → N=1–4. Provisional sizing util 0.24,
-  fits = 4 sessions, offload = 14, pending a solo probe.
+  36 KiB/token KV) fits ~7.5 GiB per model → N=1–4. Final sizing (probes): util 0.22
+  (util 0.24 fits only 3: 8.24 GiB each incl. context); max_num_seqs 16 + batched 1024
+  raise the KV grant 0.59 → 0.94 GiB at the same 7.8 GiB footprint; fits = 3 sessions,
+  offload = 14. Medium runs use the CPU-thread cap (OMP_NUM_THREADS=4), which is
+  neutral at N=1 (all four cells within 1–3% of uncapped).
 - **P1 (small, fits) — partly wrong.** Near-linear to N=6 as predicted, knee at N≈6–8
   (TPOT 1.6 → 3.6 → 5.7 ms; offered rate held to N=8). But the binding resource is
   **GPU1** (SM-active plateaus ~0.8 from N=6 to N=8), not host CPU (15–30% busy).
@@ -105,3 +108,12 @@ for tail latency.
   whole box). `OMP_NUM_THREADS=4` removes it entirely (52 ms TTFT, 0 failures, engines
   2.9 cores mean). The L1-pool warnings are present and harmless at N=3 and in the
   capped N=4 run — a red herring.
+- **P2 (no MPS), P5 (gate), P8 (prefill-only + external scheduler) — not measured**, by
+  the user's decision (2026-10-01): co-located models are equal priority (no gate) and
+  every arm runs under MPS with the default equal share. The no-MPS cost is carried over
+  from the sixth study (2 decodes: ~3.4× TPOT, −25% capacity), not re-measured vs N.
+  The scheduler (`mc_scheduler.py`) and the `pfill` cell exist but were never run.
+- **Thread oversubscription is not offload-only.** The stock N=8 *fits* rerun had one
+  ~20 s spin storm (8 EngineCores at 31.8/32 cores, GPU1 SM-active 0.95 → 0.03, then
+  self-recovered): TTFT p50 unchanged (18 ms) but p95 0.9–2.9 s. The first N=8 run had
+  none. A thread-capped N=8 fits run tests whether the cap is a general rule.
