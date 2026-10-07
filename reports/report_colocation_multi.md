@@ -125,7 +125,7 @@ load only.
 
 ### 2.1 KV resident (fits)
 
-![small cohort, KV resident](../figures/mc_scaling_small_mps_fits_stock.png)
+![small model, KV resident](../figures/mc_scaling_small_mps_fits_stock.png)
 
 *(a) per-model TPOT p50 (mean over models; whisker = worst model), (b) per-model TTFT
 p50 of the full cells (decode-only TTFT is N/A), (c) aggregate throughput against the
@@ -184,7 +184,7 @@ fails for a reason that has nothing to do with the GPU.
 
 #### Stock thread settings: collapse at N=4
 
-![small cohort, offload, stock threads](../figures/mc_scaling_small_mps_offload_stock.png)
+![small model, offload, stock threads](../figures/mc_scaling_small_mps_offload_stock.png)
 
 *Same panels as §2.1. Red ring = failed cell (>1% of requests). SM-active is the
 decode-only cell's.*
@@ -215,7 +215,7 @@ and the controls that rule out the alternatives — is in [Appendix A](#appendix
 Capping each engine's pool at 4 threads (4 × 4 ≤ 32 cores) removes the collapse and
 changes nothing else: at N=1–3, where stock works, capped and stock agree within noise.
 
-![small cohort, offload, thread cap](../figures/mc_scaling_small_mps_offload_capped.png)
+![small model, offload, thread cap](../figures/mc_scaling_small_mps_offload_capped.png)
 
 *Same panels, every engine started with `OMP_NUM_THREADS=4`.*
 
@@ -263,7 +263,7 @@ thread cap (the cap is neutral at N=1: all four cells within 1–3% of uncapped)
 
 ### 3.1 KV resident (fits)
 
-![medium cohort, KV resident](../figures/mc_scaling_medium_mps_fits.png)
+![medium model, KV resident](../figures/mc_scaling_medium_mps_fits.png)
 
 *Same panels as §2. Thread cap on throughout.*
 
@@ -296,7 +296,7 @@ each client's actual arrival span (end effects keep it at ~99%).*
 
 ### 3.2 KV 3× over the grant (offload)
 
-![medium cohort, offload](../figures/mc_scaling_medium_mps_offload.png)
+![medium model, offload](../figures/mc_scaling_medium_mps_offload.png)
 
 *Same panels. Decode-only TTFT is N/A (§1.2); its queueing is decomposed below from the
 engines' own metrics.*

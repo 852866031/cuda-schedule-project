@@ -234,7 +234,7 @@ def main():
     title = {"fits": "KV resident (fits)", "offload": "KV 3× over the grant (offload)"}
     thr = {"both": "", "stock": " · stock threads",
            "capped": " · thread cap (OMP_NUM_THREADS=4)"}[args.threads]
-    fig.suptitle(f"{args.cohort} cohort · {title[args.group]}{thr}", y=0.995, fontsize=15)
+    fig.suptitle(f"{args.cohort} model · {title[args.group]}{thr}", y=0.995, fontsize=15)
     fig.legend(h, l, loc="upper center", ncol=5, frameon=False, bbox_to_anchor=(0.5, 0.955))
     fig.tight_layout(rect=(0, 0, 1, 0.9))
     sfx = "" if args.threads == "both" else f"_{args.threads}"
