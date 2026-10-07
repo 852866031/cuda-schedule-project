@@ -1,52 +1,53 @@
-<title>一张 GPU 放 N 个模型</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&display=swap">
+<title>N Models on One GPU</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* layout: one reading column (~38em) with figures allowed to run wider; cool paper, ink text, chart blue as the only accent */
+/* layout: one reading column (~46rem), figures and tables may run wider; cool paper, ink text, chart blue as the only accent */
 :root{
   --bg:#f5f7fa; --surface:#ffffff; --ink:#18212f; --ink2:#465166; --muted:#77818f; --line:#dde2ea; --line2:#b9c1cd;
   --accent:#2a78d6; --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --bad:#cf3a3a; --good:#178a58;
-  --tint:#eaf1fb; --badtint:#fbecec; --goodtint:#e7f5ee;
-  --display:"Noto Serif SC","Songti SC","SimSun",serif;
-  --body:-apple-system,"PingFang SC","Noto Sans SC","Microsoft YaHei","Segoe UI",sans-serif;
-  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --tint:#eaf1fb; --badtint:#fbecec; --goodtint:#e7f5ee; --w:#8a94a3; --kv:#1baf7a; --oth:#cfd6e0;
+  --display:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --body:"IBM Plex Sans",-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#11141a; --surface:#1a1e26; --ink:#eef1f6; --ink2:#bcc4d0; --muted:#8892a2; --line:#2a303b; --line2:#465063;
   --accent:#5a9bea; --s1:#3987e5; --s2:#d95926; --s3:#199e70; --bad:#e66767; --good:#3fb886;
-  --tint:#18263a; --badtint:#34191b; --goodtint:#143024; color-scheme:dark}}
+  --tint:#18263a; --badtint:#34191b; --goodtint:#143024; --w:#6f7a8b; --kv:#199e70; --oth:#3a4250; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#11141a; --surface:#1a1e26; --ink:#eef1f6; --ink2:#bcc4d0; --muted:#8892a2; --line:#2a303b; --line2:#465063;
   --accent:#5a9bea; --s1:#3987e5; --s2:#d95926; --s3:#199e70; --bad:#e66767; --good:#3fb886;
-  --tint:#18263a; --badtint:#34191b; --goodtint:#143024; color-scheme:dark}
-body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.8;padding-inline:20px;padding-block:0}
+  --tint:#18263a; --badtint:#34191b; --goodtint:#143024; --w:#6f7a8b; --kv:#199e70; --oth:#3a4250; color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16.5px;line-height:1.65;padding-inline:20px;padding-block:0}
 .wrap{max-width:46rem;margin-inline:auto;padding-block:48px 96px}
-h1{font-family:var(--display);font-size:clamp(1.9rem,5vw,2.7rem);line-height:1.25;margin:0 0 .5em;text-wrap:balance}
-h2{font-family:var(--display);font-size:1.55rem;line-height:1.35;margin:3.2em 0 .6em;text-wrap:balance}
-h3{font-size:1.08rem;margin:2em 0 .4em}
-p{margin:.9em 0;color:var(--ink)}
-.lede{font-size:1.12rem;color:var(--ink2)}
-.kicker{font-size:.8rem;letter-spacing:.14em;color:var(--accent);font-weight:600;margin:0 0 1em}
-.step{font-size:.8rem;letter-spacing:.1em;color:var(--muted);font-weight:600;display:block;margin-bottom:.2em}
-strong{font-weight:650}
-code{font-family:var(--mono);font-size:.88em;background:var(--tint);padding:.08em .35em;border-radius:4px}
-a{color:var(--accent)}
-.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:14px;margin:2em 0}
-.fact{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
-.fact b{display:block;font-family:var(--display);font-size:1.9rem;line-height:1.2;font-variant-numeric:tabular-nums}
-.fact span{font-size:.9rem;color:var(--ink2);line-height:1.55;display:block;margin-top:.3em}
-figure{margin:1.8em 0;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 18px 14px}
-figure.wide{margin-inline:calc(-1 * min(4rem, max(0px, (100vw - 46rem - 40px) / 2)))}
-figcaption{font-size:.88rem;color:var(--ink2);line-height:1.65;margin-top:10px}
+h1{font-family:var(--display);font-size:clamp(1.9rem,5vw,2.6rem);line-height:1.2;margin:0 0 .45em;text-wrap:balance}
+h2{font-family:var(--display);font-size:1.5rem;line-height:1.3;margin:3em 0 .5em;text-wrap:balance}
+h3{font-size:1.05rem;margin:1.9em 0 .4em}
+p{margin:.85em 0}
+.lede{font-size:1.08rem;color:var(--ink2)}
+.kicker{font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 1em}
+.sec{font-size:.76rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600;display:block;margin-bottom:.25em;font-family:var(--body)}
+strong{font-weight:600}
+code{font-family:var(--mono);font-size:.86em;background:var(--tint);padding:.08em .35em;border-radius:4px}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(10.5rem,1fr));gap:12px;margin:1.8em 0}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.fact b{display:block;font-family:var(--display);font-size:1.7rem;line-height:1.2;font-variant-numeric:tabular-nums}
+.fact span{font-size:.86rem;color:var(--ink2);line-height:1.5;display:block;margin-top:.3em}
+figure{margin:1.6em 0;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 18px 14px}
+.wide{margin-inline:calc(-1 * min(5rem, max(0px, (100vw - 46rem - 40px) / 2)))}
+figcaption{font-size:.86rem;color:var(--ink2);line-height:1.6;margin-top:10px}
 figcaption b{color:var(--ink)}
-.ftitle{font-weight:650;font-size:1rem;margin:0 0 2px}
-.fsub{font-size:.86rem;color:var(--muted);margin:0 0 10px}
+.ftitle{font-weight:600;font-size:1rem;margin:0 0 2px}
+.fsub{font-size:.84rem;color:var(--muted);margin:0 0 10px}
 svg{display:block;max-width:100%;height:auto}
 .scroll{overflow-x:auto}
-.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.86rem;color:var(--ink2);margin:0 0 6px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.84rem;color:var(--ink2);margin:0 0 6px}
 .legend i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
-.legend i.dash{background:repeating-linear-gradient(90deg,currentColor 0 5px,transparent 5px 8px);height:3px}
+.legend i.sq{width:11px;height:11px;border-radius:2px}
 .chart{position:relative}
-.tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);font-size:.8rem;line-height:1.5;padding:6px 9px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-110%);z-index:2}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:8px 22px}
+.two>div{min-width:0}
+.tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);font-size:.78rem;line-height:1.5;padding:6px 9px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-110%);z-index:2}
 .ax{fill:var(--muted);font-size:12px;font-family:var(--body)}
 .axt{fill:var(--ink2);font-size:12.5px;font-family:var(--body)}
 .lab{fill:var(--ink);font-size:12.5px;font-family:var(--body);font-weight:600}
@@ -56,324 +57,375 @@ svg{display:block;max-width:100%;height:auto}
 .d-bad{fill:var(--badtint);stroke:var(--bad);stroke-width:1.2}
 .d-good{fill:var(--goodtint);stroke:var(--good);stroke-width:1.2}
 .d-zone{fill:none;stroke:var(--line2);stroke-width:1.2;stroke-dasharray:5 4}
-.d-t{fill:var(--ink);font-size:13px;font-family:var(--body)}
-.d-b{fill:var(--ink);font-size:13.5px;font-family:var(--body);font-weight:650}
-.d-m{fill:var(--muted);font-size:12px;font-family:var(--body)}
-.d-a{fill:var(--accent);font-size:12px;font-family:var(--body);font-weight:600}
+.d-t{fill:var(--ink);font-size:12.5px;font-family:var(--body)}
+.d-b{fill:var(--ink);font-size:13px;font-family:var(--body);font-weight:600}
+.d-m{fill:var(--muted);font-size:11.5px;font-family:var(--body)}
 .d-r{fill:var(--bad);font-size:12px;font-family:var(--body);font-weight:600}
 .d-g{fill:var(--good);font-size:12px;font-family:var(--body);font-weight:600}
 .d-ln{stroke:var(--ink2);stroke-width:1.5;fill:none}
-.d-lna{stroke:var(--accent);stroke-width:1.6;fill:none}
-.bars{display:grid;gap:10px;margin:6px 0 2px}
-.bar{display:grid;grid-template-columns:minmax(7.5rem,11rem) 1fr;gap:12px;align-items:center;font-size:.92rem}
-.bar .t{color:var(--ink2);line-height:1.4}
+.bars{display:grid;gap:9px;margin:6px 0 2px}
+.bar{display:grid;grid-template-columns:minmax(8rem,13rem) 1fr;gap:12px;align-items:center;font-size:.9rem}
+.bar .t{color:var(--ink2);line-height:1.35}
 .bar .track{display:flex;align-items:center;gap:8px;min-width:0}
-.bar .fill{height:20px;border-radius:0 4px 4px 0;background:var(--s1);flex:0 0 auto}
-.bar .fill.bad{background:var(--bad)} .bar .fill.alt{background:var(--s2)}
+.bar .fill{height:18px;border-radius:0 4px 4px 0;background:var(--s1);flex:0 0 auto}
+.bar .fill.alt{background:var(--s2)}
 .bar .v{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
-table{border-collapse:collapse;width:100%;font-size:.92rem;font-variant-numeric:tabular-nums}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-th{color:var(--ink2);font-weight:600;font-size:.84rem}
-.note{background:var(--tint);border-radius:10px;padding:14px 18px;margin:1.6em 0;font-size:.95rem;color:var(--ink)}
+.stack{display:flex;height:22px;gap:2px;flex:1 1 auto;min-width:0}
+.stack span{display:block;height:100%}
+.stack .w{background:var(--w)} .stack .k{background:var(--kv)} .stack .o{background:var(--oth)} .stack .free{background:transparent;border:1px dashed var(--line2);box-sizing:border-box}
+table{border-collapse:collapse;width:100%;font-size:.86rem;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--ink2);font-weight:600;font-size:.8rem}
+td.n,th.n{text-align:right}
+tr.hl td{background:var(--badtint)} tr.ok td{background:var(--goodtint)}
+.note{background:var(--tint);border-radius:10px;padding:13px 17px;margin:1.5em 0;font-size:.93rem}
 .note.bad{background:var(--badtint)} .note.good{background:var(--goodtint)}
 .note p{margin:.3em 0}
-.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:14px;margin:1.4em 0}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-size:.94rem;line-height:1.65}
-.card h4{margin:0 0 .3em;font-size:1rem}
-.card p{margin:.3em 0;color:var(--ink2)}
-.pill{display:inline-block;font-size:.76rem;font-weight:650;padding:.1em .6em;border-radius:99px;margin-right:.4em;vertical-align:.08em}
-.pill.bad{background:var(--badtint);color:var(--bad)} .pill.good{background:var(--goodtint);color:var(--good)} .pill.n{background:var(--tint);color:var(--accent)}
-ol.check{padding-left:1.3em} ol.check li{margin:.7em 0}
-dl{display:grid;grid-template-columns:minmax(6.5rem,9rem) 1fr;gap:8px 16px;font-size:.94rem}
-dt{font-weight:650} dd{margin:0;color:var(--ink2)}
-.foot{margin-top:4em;padding-top:1.4em;border-top:1px solid var(--line);font-size:.86rem;color:var(--muted)}
-@media (max-width:520px){body{font-size:16px} dl{grid-template-columns:1fr;gap:2px 0} dd{margin-bottom:.7em} .bar{grid-template-columns:1fr;gap:3px}}
+.pill{display:inline-block;font-size:.74rem;font-weight:600;padding:.1em .6em;border-radius:99px;margin-right:.3em;white-space:nowrap}
+.pill.bad{background:var(--badtint);color:var(--bad)} .pill.n{background:var(--tint);color:var(--accent)}
+ol.check{padding-left:1.3em} ol.check li{margin:.6em 0}
+ul li{margin:.4em 0}
+.foot{margin-top:4em;padding-top:1.4em;border-top:1px solid var(--line);font-size:.84rem;color:var(--muted)}
+@media (max-width:520px){body{font-size:15.5px} .bar{grid-template-columns:1fr;gap:3px}}
 </style>
 
 <div class="wrap">
-<p class="kicker">GPU 共享实验 · 第七个研究</p>
-<h1>一张 GPU 放 N 个模型，会发生什么</h1>
-<p class="lede">我们想在同一张显卡上同时运行很多个模型。这份报告用尽量少的术语讲清楚三件事：我们做了什么实验，模型变多之后先出问题的是什么，以及如果你也要这么做该注意什么。</p>
+<p class="kicker">VRAM-limit study 7 · GPU sharing</p>
+<h1>N homogeneous LLMs on one GPU: what scales, what breaks</h1>
+<p class="lede">We colocated N identical vLLM engines on a single RTX 5090 under MPS and scaled N until something ran out, for a 0.5B and a 3B model, with KV caches that fit in VRAM and with KV 3× oversubscribed to host DRAM. This page gives the configuration, the measurements, and the mechanisms we could verify.</p>
 
 <div class="facts">
-  <div class="fact"><b>8 个</b><span>小模型同时跑在一张 GPU 上，每个都能完整服务自己的请求，没有请求超时或排队。</span></div>
-  <div class="fact"><b>3.6×</b><span>代价是变慢：8 个模型时，每个模型吐出一个字的时间是单独跑时的 3.6 倍。</span></div>
-  <div class="fact"><b>4 个</b><span>模型就能让系统崩溃，原因不在 GPU，在 CPU 的一个默认设置。改一个参数就好。</span></div>
+  <div class="fact"><b>3.6×</b><span>TPOT at N=8 for the 0.5B (1.56 → 5.70 ms) at 2 QPS per model; all requests served.</span></div>
+  <div class="fact"><b>≥ 8×</b><span>load headroom at N=8: 16 QPS per model, 15.3k tok/s total, zero scheduler queueing.</span></div>
+  <div class="fact"><b>4 / 4</b><span>stock-config runs collapsed at N=4 with DRAM-offloaded KV. Cause: CPU thread oversubscription.</span></div>
+  <div class="fact"><b>~4×</b><span>TPOT penalty for splitting the same 32 QPS across 8 engines instead of batching in one.</span></div>
 </div>
 
-<div class="note"><p><strong>一句话结论：</strong>多个模型共用一张 GPU 是可行的。付出的主要是“每个字出得更慢”，能承受的总请求量比预想的大得多。最容易踩的坑在主机 CPU 上，而且很容易避开。</p></div>
+<div class="note"><p><strong>Summary.</strong> Under MPS, colocation costs per-token latency, not capacity, provided each engine's CPU thread pool is capped. With stock settings the first failure is on the host: N engines × ~135 threads spin-wait on 32 cores, starve the GPU, and the system collapses. With the cap, the binding resource depends on model size and KV working set: GPU time, host RAM, VRAM, the per-engine sequence cap, or a queue of KV reloads.</p></div>
 
-<h2><span class="step">背景</span>为什么这件事不简单</h2>
-<p>一个模型用不满一张 GPU 是常事：一张 32 GB 的显卡，放一个 1 GB 的小模型，大部分时间都闲着。很自然的想法是多放几个。问题在于，多个模型会同时争抢好几样东西，而且哪一样先不够用，事先并不知道。</p>
-<figure class="wide">
-<p class="ftitle">模型们会争抢的五样东西</p>
-<p class="fsub">两样在主机上，三样在 GPU 上</p>
-<div class="scroll"><svg viewBox="0 0 780 300" role="img" aria-label="主机上有 CPU 和内存，GPU 上有显存、算力和显存带宽，N 个模型同时使用它们">
-  <rect class="d-zone" x="10" y="30" width="330" height="250" rx="10"/><text class="d-b" x="26" y="54">主机</text>
-  <rect class="d-zone" x="370" y="30" width="400" height="250" rx="10"/><text class="d-b" x="386" y="54">GPU（显卡）</text>
-  <rect class="d-box" x="30" y="76" width="290" height="80" rx="8"/><text class="d-b" x="46" y="102">① CPU：32 个核</text><text class="d-m" x="46" y="124">每个模型都有一个调度程序在这里跑</text><text class="d-m" x="46" y="142">搬运数据也靠它</text>
-  <rect class="d-box" x="30" y="176" width="290" height="80" rx="8"/><text class="d-b" x="46" y="202">② 内存：60 GB</text><text class="d-m" x="46" y="224">显存放不下的“记忆”暂存在这里</text><text class="d-m" x="46" y="242">每个模型的程序本身也要占 5 GB 左右</text>
-  <rect class="d-box" x="390" y="76" width="170" height="180" rx="8"/><text class="d-b" x="406" y="102">③ 显存：31 GB</text><text class="d-m" x="406" y="124">放模型本身</text><text class="d-m" x="406" y="142">和对话的“记忆”</text>
-  <rect class="d-soft" x="402" y="160" width="146" height="22" rx="4"/><text class="d-t" x="412" y="176">模型 1</text>
-  <rect class="d-soft" x="402" y="186" width="146" height="22" rx="4"/><text class="d-t" x="412" y="202">模型 2</text>
-  <rect class="d-soft" x="402" y="212" width="146" height="22" rx="4"/><text class="d-t" x="412" y="228">…… 模型 N</text>
-  <rect class="d-box" x="580" y="76" width="170" height="80" rx="8"/><text class="d-b" x="596" y="102">④ 算力</text><text class="d-m" x="596" y="124">同一时刻能做</text><text class="d-m" x="596" y="142">多少计算</text>
-  <rect class="d-box" x="580" y="176" width="170" height="80" rx="8"/><text class="d-b" x="596" y="202">⑤ 显存带宽</text><text class="d-m" x="596" y="224">每秒能从显存</text><text class="d-m" x="596" y="242">读出多少数据</text>
-</svg></div>
-<figcaption>实验的核心问题：模型数量 N 一点点加大时，这五样里<b>哪一样先用完</b>，用完时表现成什么样。</figcaption>
-</figure>
-
-<h2><span class="step">三个概念</span>读懂后面内容需要的全部背景</h2>
-<p>后面的结论都建立在三个概念上。每个只需要一段话。</p>
-<h3>1. 模型是一个字一个字往外吐的</h3>
-<p>模型回答问题分两步。先把你的问题整个读一遍，这一步叫 <strong>prefill</strong>。然后一个字（准确说是一个 token）一个字地生成回答，这一步叫<strong>解码</strong>。我们最关心的速度指标是<strong>“出一个字要多久”</strong>，后文记作<strong>每字耗时</strong>（英文缩写 TPOT），单位是毫秒。</p>
-<h3>2. 模型有“记忆”，记忆要占显存</h3>
-<p>模型读过的内容会存成一份中间结果，叫 <strong>KV 缓存</strong>。有了它，同一段开头（比如同一份长文档）再次出现时不用重读。KV 缓存放在显存里，很占地方。显存放不下时，可以把一部分挪到主机内存，用到时再搬回来，这叫<strong>溢出</strong>。</p>
-<h3>3. 一起算比分开算划算</h3>
-<p>同一个模型同时收到好几个请求时，可以把它们合成一批，一步同时为所有请求各出一个字。这叫<strong>批处理</strong>。对小模型来说，一批算 2 个请求和算 8 个请求，花的时间几乎一样。记住这一点，它是后面最重要的一个结论的来源。</p>
-<figure class="wide">
-<p class="ftitle">一个请求的一生</p>
-<div class="scroll"><svg viewBox="0 0 780 210" role="img" aria-label="请求先 prefill 生成 KV 缓存，再循环解码，每步出一个字">
-  <defs><marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--ink2)"/></marker></defs>
-  <rect class="d-box" x="10" y="50" width="130" height="64" rx="8"/><text class="d-b" x="24" y="76">你的问题</text><text class="d-m" x="24" y="96">很长的一段文字</text>
-  <path class="d-ln" d="M140 82 H190" marker-end="url(#ar)"/>
-  <rect class="d-soft" x="192" y="50" width="150" height="64" rx="8"/><text class="d-b" x="206" y="76">prefill</text><text class="d-m" x="206" y="96">整段读一遍</text>
-  <path class="d-ln" d="M342 82 H392" marker-end="url(#ar)"/>
-  <rect class="d-soft" x="394" y="50" width="190" height="64" rx="8"/><text class="d-b" x="408" y="76">解码</text><text class="d-m" x="408" y="96">每一步出一个字，重复很多步</text>
-  <path class="d-ln" d="M560 50 C560 20 440 20 440 48" marker-end="url(#ar)"/><text class="d-a" x="462" y="18">每步的耗时 = 每字耗时</text>
-  <path class="d-ln" d="M584 82 H634" marker-end="url(#ar)"/>
-  <rect class="d-box" x="636" y="50" width="134" height="64" rx="8"/><text class="d-b" x="650" y="76">回答</text><text class="d-m" x="650" y="96">一个字一个字出来</text>
-  <rect class="d-good" x="192" y="150" width="392" height="44" rx="8"/><text class="d-b" x="206" y="170">KV 缓存（模型的记忆）</text><text class="d-m" x="206" y="187">prefill 写入，解码每一步都要读；默认放在显存里</text>
-  <path class="d-ln" d="M267 114 V148" marker-end="url(#ar)"/><path class="d-ln" d="M489 148 V116" marker-end="url(#ar)"/>
-</svg></div>
-<figcaption>首字时间（TTFT）是从发出请求到第一个字出来的时间，主要花在 prefill 上。之后每个字的间隔就是<b>每字耗时</b>。</figcaption>
-</figure>
-
-<h2><span class="step">实验设计</span>我们是怎么测的</h2>
-<p>机器有两张 RTX 5090 显卡（每张 32 GB 显存）、32 核 CPU 和 60 GB 内存。我们把 N 个<strong>一模一样</strong>的模型全部放在其中一张显卡上，然后让 N 一点点变大。每个模型都有自己的客户端，按固定速率发请求：每秒 2 个请求，每个请求带一段很长的开头（约 6000 个 token），生成 128 个 token 的回答。</p>
-<div class="pair">
-  <div class="card"><h4>小模型：Qwen2.5-0.5B</h4><p>模型本身约 1 GB，加上记忆等共占 3.2 GB 显存。</p><p>测了 N = 1、2、3、4、6、8。</p></div>
-  <div class="card"><h4>中号模型：Qwen2.5-3B</h4><p>模型本身约 5.8 GB，共占 7.7 GB 显存。</p><p>一张卡最多放 4 个，测了 N = 1、2、3、4。</p></div>
-</div>
-<p>每组模型都在两种“记忆压力”下各测一遍。区别只有一个：需要记住的内容是否放得进显存。</p>
-<figure class="wide">
-<p class="ftitle">两种情况：记忆放得下，和放不下</p>
-<div class="scroll"><svg viewBox="0 0 780 250" role="img" aria-label="放得下时所有前缀都在显存，放不下时大部分在内存，需要时搬回显存">
-  <defs><marker id="ar2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--bad)"/></marker></defs>
-  <text class="d-b" x="20" y="24">放得下</text><text class="d-m" x="80" y="24">要记住的内容比显存里的位置少</text>
-  <rect class="d-zone" x="20" y="40" width="340" height="190" rx="10"/><text class="d-m" x="34" y="62">显存里留给记忆的位置</text>
-  <g><rect class="d-good" x="34" y="76" width="70" height="34" rx="5"/><rect class="d-good" x="112" y="76" width="70" height="34" rx="5"/><rect class="d-good" x="190" y="76" width="70" height="34" rx="5"/><rect class="d-good" x="268" y="76" width="70" height="34" rx="5"/>
-  <rect class="d-good" x="34" y="118" width="70" height="34" rx="5"/><rect class="d-good" x="112" y="118" width="70" height="34" rx="5"/><rect class="d-good" x="190" y="118" width="70" height="34" rx="5"/><rect class="d-good" x="268" y="118" width="70" height="34" rx="5"/></g>
-  <text class="d-g" x="34" y="184">全部在显存里，随用随取</text><text class="d-m" x="34" y="206">不需要和主机内存来回搬运</text>
-  <text class="d-b" x="420" y="24">放不下（溢出）</text><text class="d-m" x="536" y="24">内容是位置的 3 倍</text>
-  <rect class="d-zone" x="420" y="40" width="160" height="190" rx="10"/><text class="d-m" x="434" y="62">显存</text>
-  <rect class="d-good" x="434" y="76" width="62" height="34" rx="5"/><rect class="d-good" x="504" y="76" width="62" height="34" rx="5"/><rect class="d-good" x="434" y="118" width="62" height="34" rx="5"/><rect class="d-good" x="504" y="118" width="62" height="34" rx="5"/>
-  <text class="d-m" x="434" y="184">只放得下一小部分</text>
-  <rect class="d-zone" x="620" y="40" width="150" height="190" rx="10"/><text class="d-m" x="634" y="62">主机内存</text>
-  <g><rect class="d-box" x="634" y="76" width="56" height="26" rx="4"/><rect class="d-box" x="698" y="76" width="56" height="26" rx="4"/><rect class="d-box" x="634" y="108" width="56" height="26" rx="4"/><rect class="d-box" x="698" y="108" width="56" height="26" rx="4"/><rect class="d-box" x="634" y="140" width="56" height="26" rx="4"/><rect class="d-box" x="698" y="140" width="56" height="26" rx="4"/><rect class="d-box" x="634" y="172" width="56" height="26" rx="4"/><rect class="d-box" x="698" y="172" width="56" height="26" rx="4"/></g>
-  <path d="M632 120 H584" stroke="var(--bad)" stroke-width="1.8" fill="none" marker-end="url(#ar2)"/><text class="d-r" x="566" y="212" text-anchor="middle">用到时搬回显存</text><text class="d-r" x="566" y="228" text-anchor="middle">这一步要靠 CPU</text>
-</svg></div>
-<figcaption>“放不下”的情况更接近真实服务：用户多、对话长，显存总是不够。这时每个请求都可能要先从内存把记忆搬回显存，<b>搬运由 CPU 完成</b>。</figcaption>
-</figure>
-<p>另外，所有模型地位平等，没有谁优先。GPU 上开了一个叫 MPS 的共享模式，它让多个程序可以真正同时使用 GPU，否则它们只能轮流用。之前的研究已经确认：不开 MPS，两个模型就会互相拖慢到 3 倍以上。</p>
-
-<h2><span class="step">发现一</span>模型越多，每个字出得越慢，但都跟得上</h2>
-<p>先看最干净的情况：记忆放得下。模型从 1 个加到 8 个，<strong>每个模型都完整处理了自己的请求，没有请求超时或排队</strong>。8 个小模型合起来每秒输出约 2000 个 token。</p>
-<p>代价体现在速度上。下面的图把“单独跑时的每字耗时”记为 1，看模型变多后慢了多少倍。</p>
-<figure class="wide">
-<p class="ftitle">每个模型慢了多少倍</p>
-<p class="fsub">每字耗时相对于 N=1 的倍数（记忆放得下，每个模型每秒 2 个请求）</p>
-<div class="legend"><span><i style="background:var(--s1)"></i>小模型 0.5B</span><span><i style="background:var(--s2)"></i>中号模型 3B</span></div>
-<div class="chart" id="c1"></div>
-<figcaption>小模型到 8 个时慢到 3.6 倍（1.6 → 5.7 毫秒）。中号模型更重，<b>2 个的拖慢程度就接近 3–4 个小模型</b>，4 个时慢到 2.5 倍（6.8 → 17.3 毫秒），同时显存也用到了 30.4 / 31.4 GB，第 5 个放不进去。</figcaption>
-</figure>
-<p>这一步看起来很温和：慢是慢了，但是平滑、可预期。直到我们换到“记忆放不下”的情况。</p>
-
-<h2><span class="step">发现二</span>真正让系统崩掉的，是 CPU 上的一个默认设置</h2>
-<p>在“记忆放不下”的情况下，3 个小模型一切正常。加到第 4 个，系统突然崩溃：每个模型 300 个请求里约有 130 个超时，总输出掉到应有的 18%。</p>
-<p>奇怪的是，<strong>崩溃时 GPU 几乎是闲着的</strong>，主机 CPU 却被占到 93% 以上。GPU 没事可做，是因为数据卡在了 CPU 这一侧。</p>
-<figure class="wide">
-<p class="ftitle">崩溃现场：同一组实验，只差一个设置</p>
-<p class="fsub">4 个小模型，记忆放不下。横轴是开始测量后的秒数</p>
-<div class="legend"><span><i style="background:var(--bad)"></i>默认设置</span><span><i style="background:var(--s3)"></i>限制每个模型的 CPU 线程数</span></div>
-<p class="fsub" style="margin:8px 0 0"><b style="color:var(--ink)">模型程序占用的 CPU 核数</b>（机器一共 32 个核）</p>
-<div class="chart" id="c3a"></div>
-<p class="fsub" style="margin:8px 0 0"><b style="color:var(--ink)">GPU 忙碌程度</b>（1 = 一直在忙）</p>
-<div class="chart" id="c3b"></div>
-<p class="fsub" style="margin:8px 0 0"><b style="color:var(--ink)">累计完成的请求数</b>（应完成 1200 个）</p>
-<div class="chart" id="c3c"></div>
-<figcaption>默认设置下，开始十几秒后 CPU 突然被占满 32 核，GPU 随即停工，完成的请求几乎不再增长。加了限制后，CPU 只用 3 核左右，1200 个请求全部按时完成。默认设置我们一共跑了 4 次，<b>4 次都崩</b>。</figcaption>
-</figure>
-<h3>原因：线程比 CPU 核多太多</h3>
-<p>每个模型的程序里都有一组负责 CPU 计算的工作线程。默认情况下，程序会按“整台机器都归我用”来开线程，这台 32 核的机器上每个模型开了约 135 个。只跑一个模型时没问题。跑 4 个模型，就是 540 个线程抢 32 个核。</p>
-<p>更糟的是，这些线程在等同伴时不会让出 CPU，而是原地“空转”。于是真正要干活的线程抢不到核，搬运记忆越来越慢，积压越来越多，最后所有核都在空转，系统卡死。记忆放不下时每个请求都要 CPU 搬运数据，所以最先中招。</p>
-<figure class="wide">
-<p class="ftitle">线程数和核数的对比</p>
-<div class="scroll"><svg viewBox="0 0 780 190" role="img" aria-label="默认设置 4 个模型共约 540 个线程抢 32 个核；限制后 4 个模型共 16 个线程">
-  <text class="d-b" x="20" y="26">默认设置</text>
-  <rect class="d-bad" x="20" y="40" width="80" height="40" rx="6"/><rect class="d-bad" x="108" y="40" width="80" height="40" rx="6"/><rect class="d-bad" x="196" y="40" width="80" height="40" rx="6"/><rect class="d-bad" x="284" y="40" width="80" height="40" rx="6"/>
-  <text class="d-t" x="60" y="65" text-anchor="middle">135 线程</text><text class="d-t" x="148" y="65" text-anchor="middle">135 线程</text><text class="d-t" x="236" y="65" text-anchor="middle">135 线程</text><text class="d-t" x="324" y="65" text-anchor="middle">135 线程</text>
-  <text class="d-r" x="20" y="104">4 个模型 ≈ 540 个线程</text><text class="d-m" x="20" y="124">抢 32 个核，互相空转，系统卡死</text>
-  <text class="d-b" x="420" y="26">限制为每个模型 4 个线程</text>
-  <rect class="d-good" x="420" y="40" width="80" height="40" rx="6"/><rect class="d-good" x="508" y="40" width="80" height="40" rx="6"/><rect class="d-good" x="596" y="40" width="80" height="40" rx="6"/><rect class="d-good" x="684" y="40" width="80" height="40" rx="6"/>
-  <text class="d-t" x="460" y="65" text-anchor="middle">4 线程</text><text class="d-t" x="548" y="65" text-anchor="middle">4 线程</text><text class="d-t" x="636" y="65" text-anchor="middle">4 线程</text><text class="d-t" x="724" y="65" text-anchor="middle">4 线程</text>
-  <text class="d-g" x="420" y="104">4 个模型 = 16 个线程</text><text class="d-m" x="420" y="124">少于 32 个核，各干各的</text>
-  <text class="d-m" x="20" y="162">机器的 32 个核：</text>
-  <g id="cores"></g>
-</svg></div>
-<figcaption>修复只需要一个环境变量：<code>OMP_NUM_THREADS=4</code>。规则是<b>每个模型的线程数 ≈ 核数 ÷ 模型数</b>。</figcaption>
-</figure>
-<h3>我们怎么确认是它</h3>
-<div class="pair">
-  <div class="card"><h4>排除了其他嫌疑</h4><p>负责存记忆的后台程序几乎不占 CPU。一个看起来可疑的缓冲区报警，在正常运行时也大量出现；把缓冲区加大一倍也没用。</p></div>
-  <div class="card"><h4>只改一个变量</h4><p>其他完全不变，只限制线程数：崩溃消失，0 个请求失败。线程数设成 2、4、8，结果都一样。</p></div>
-  <div class="card"><h4>看到了“空转”本身</h4><p>逐个线程采样：崩溃瞬间约 27 个线程占满 32 核，全部在空转，被系统强行打断的次数涨了 42 倍。</p></div>
-  <div class="card"><h4>换模型也一样</h4><p>中号模型在 4 个、记忆放不下、不加限制时同样崩溃：1200 个请求里 180 个超时。</p></div>
-</div>
-<div class="note bad"><p><strong>不只是“记忆放不下”时才出事。</strong>8 个小模型、记忆放得下时，默认设置下 4 次运行里有 2 次出现了十几秒的同类卡顿。它会自己恢复，平均速度看不出问题，但最慢的那批请求从 0.9 秒拖到了最长 8.4 秒。加了限制后跑了 3 次，一次都没出现。</p></div>
-<div class="note good"><p><strong>限制线程没有代价。</strong>单个模型时加不加限制，各项结果相差不到 3%。</p></div>
-
-<h2><span class="step">发现三</span>能承受的请求量，比“每秒 2 个”大得多</h2>
-<p>前面都是在每个模型每秒 2 个请求下测的。在这个负载下所有模型都跟得上，所以只能看出“慢了多少”，看不出“离撑不住还有多远”。于是我们固定模型数量，不断加大每个模型的请求速率，直到请求开始排队。</p>
-<figure class="wide">
-<p class="ftitle">小模型：一直加到 8 倍、16 倍负载，都没有排队</p>
-<p class="fsub">所有模型合计每秒输出的 token 数，随每个模型的请求速率变化（记忆放得下，已限制线程）</p>
-<div class="legend"><span><i style="background:var(--s3)"></i>1 个模型</span><span><i style="background:var(--s1)"></i>4 个模型</span><span><i style="background:var(--s2)"></i>8 个模型</span></div>
-<div class="chart" id="c5"></div>
-<figcaption>三条线都是直线往上走，说明给多少请求就处理多少。8 个小模型每个能扛每秒 16 个请求（基准的 8 倍），合计每秒约 15000 个 token，排队时间为 0。我们没有继续往上找极限。</figcaption>
-</figure>
-<p>原因就是前面说的批处理：请求变多时，模型只是把更多请求塞进同一步一起算，而每一步的耗时涨得很慢。所以发现一里“8 个模型慢了 3.6 倍”说的是<strong>速度</strong>，不是<strong>容量</strong>。</p>
-<figure class="wide">
-<p class="ftitle">中号模型：会到顶，但顶在一个参数上</p>
-<p class="fsub">同样的图，换成 3B 模型。空心红圈表示请求开始排队</p>
-<div class="legend"><span><i style="background:var(--s3)"></i>1 个模型</span><span><i style="background:var(--s1)"></i>2 个模型</span><span><i style="background:var(--s2)"></i>4 个模型</span></div>
-<div class="chart" id="c6"></div>
-<figcaption>每个模型最多撑到每秒 12 / 8 / 4 个请求（1 / 2 / 4 个模型时），再往上就排队。限制它的是我们给每个模型设的“最多同时处理 16 个请求”，GPU 本身还没到极限。另外可以看到：<b>模型越多，合计的上限反而越高</b>，因为每个模型各带 16 个名额。</figcaption>
-</figure>
-<div class="note"><p><strong>这个上限是我们自己做的取舍。</strong>为了让每个中号模型多留些显存放记忆，我们把“同时处理的请求数”从 64 调到了 16。多出来的记忆空间，是拿并发能力换的。这两个设置要放在一起考虑。</p></div>
-
-<h2><span class="step">发现四</span>多模型的真实代价：批处理被拆散了</h2>
-<p>把同样多的请求（合计每秒 32 个）用三种方式分配，看每个字要多久：</p>
-<figure>
-<p class="ftitle">同样的总请求量，分给越多模型，每个字越慢</p>
-<p class="fsub">小模型，合计每秒 32 个请求时的每字耗时（毫秒）</p>
-<div class="bars">
-  <div class="bar"><div class="t">1 个模型独自处理</div><div class="track"><div class="fill" style="width:20%"></div><span class="v">1.97 ms</span></div></div>
-  <div class="bar"><div class="t">分给 4 个模型</div><div class="track"><div class="fill" style="width:46.9%"></div><span class="v">4.56 ms</span></div></div>
-  <div class="bar"><div class="t">分给 8 个模型</div><div class="track"><div class="fill" style="width:80%"></div><span class="v">7.78 ms</span></div></div>
-</div>
-<figcaption>总工作量一样，分给 8 个模型慢了约 4 倍。</figcaption>
-</figure>
-<figure class="wide">
-<p class="ftitle">为什么：不同模型之间不能拼成一批</p>
-<div class="scroll"><svg viewBox="0 0 780 200" role="img" aria-label="一个模型把 8 个请求合成一批一步算完；8 个模型各算各的，每个都要付一次单步开销">
-  <text class="d-b" x="20" y="24">1 个模型，8 个请求</text>
-  <rect class="d-good" x="20" y="40" width="330" height="70" rx="8"/><text class="d-m" x="34" y="60">一步</text>
-  <g><rect class="d-box" x="34" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="72" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="110" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="148" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="186" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="224" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="262" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="300" y="70" width="32" height="28" rx="4"/></g>
-  <text class="d-g" x="20" y="136">8 个请求合成一批，付一次开销</text>
-  <text class="d-b" x="420" y="24">8 个模型，每个 1 个请求</text>
-  <g><rect class="d-bad" x="420" y="40" width="78" height="32" rx="6"/><rect class="d-bad" x="506" y="40" width="78" height="32" rx="6"/><rect class="d-bad" x="592" y="40" width="78" height="32" rx="6"/><rect class="d-bad" x="678" y="40" width="78" height="32" rx="6"/><rect class="d-bad" x="420" y="78" width="78" height="32" rx="6"/><rect class="d-bad" x="506" y="78" width="78" height="32" rx="6"/><rect class="d-bad" x="592" y="78" width="78" height="32" rx="6"/><rect class="d-bad" x="678" y="78" width="78" height="32" rx="6"/></g>
-  <g><rect class="d-box" x="444" y="44" width="30" height="24" rx="4"/><rect class="d-box" x="530" y="44" width="30" height="24" rx="4"/><rect class="d-box" x="616" y="44" width="30" height="24" rx="4"/><rect class="d-box" x="702" y="44" width="30" height="24" rx="4"/><rect class="d-box" x="444" y="82" width="30" height="24" rx="4"/><rect class="d-box" x="530" y="82" width="30" height="24" rx="4"/><rect class="d-box" x="616" y="82" width="30" height="24" rx="4"/><rect class="d-box" x="702" y="82" width="30" height="24" rx="4"/></g>
-  <text class="d-r" x="420" y="136">8 个小批，付 8 次开销，还要在 GPU 上互相等</text>
-  <text class="d-m" x="20" y="172">小方块 = 一个请求在这一步要出的那个字；色块 = 一次“算一步”</text>
-</svg></div>
-<figcaption>所以多模型共用 GPU 换来的是<b>隔离</b>（不同模型、不同团队、不同版本各跑各的），而不是效率。如果只是同一个模型想多扛流量，应该让一个模型做大批处理。</figcaption>
-</figure>
-
-<h2><span class="step">发现五</span>记忆放不下时：小模型没事，中号模型要排队</h2>
-<p>解决了线程问题之后，再回头看“记忆放不下”的情况。</p>
-<figure class="wide">
-<p class="ftitle">小模型：限制线程后，一路平稳到 6 个</p>
-<p class="fsub">实际输出占应输出的百分比（小模型，记忆放不下）</p>
-<div class="legend"><span><i style="background:var(--bad)"></i>默认设置</span><span><i style="background:var(--s3)"></i>限制线程</span></div>
-<div class="chart" id="c2"></div>
-<figcaption>默认设置在第 4 个模型处崩溃。限制线程后，速度和“记忆放得下”时几乎一样。到 6 个模型时，<b>主机内存先不够了</b>（开始使用硬盘上的交换空间），而这时 GPU 只用了七成。</figcaption>
-</figure>
-<p>中号模型不一样。它的记忆单份就有 0.21 GB，是小模型的 3 倍，显存里只留得下 4 份左右。几乎每个请求都要先把自己的记忆从内存搬回来，于是请求开始排队，而且模型越多排得越久：</p>
-<figure>
-<p class="ftitle">中号模型：请求平均排队多久</p>
-<p class="fsub">记忆放不下时，一个请求开始被处理前的平均等待（已限制线程）</p>
-<div class="bars">
-  <div class="bar"><div class="t">1 个模型</div><div class="track"><div class="fill alt" style="width:1.4%"></div><span class="v">0.08 秒</span></div></div>
-  <div class="bar"><div class="t">2 个模型</div><div class="track"><div class="fill alt" style="width:3.6%"></div><span class="v">0.21 秒</span></div></div>
-  <div class="bar"><div class="t">3 个模型</div><div class="track"><div class="fill alt" style="width:12.2%"></div><span class="v">0.72 秒</span></div></div>
-  <div class="bar"><div class="t">4 个模型</div><div class="track"><div class="fill alt" style="width:80%"></div><span class="v">4.7 秒</span></div></div>
-</div>
-<figcaption>每个字的生成速度并没有变差，时间都花在“等着被处理”上。原因有两层：显存里的记忆位置限制了同时能处理的请求数；到 4 个模型时，搬一次记忆也从 0.09 秒变成了 0.4 秒，因为搬运要和 4 个模型自己的解码抢 GPU。</figcaption>
-</figure>
-
-<h2><span class="step">汇总</span>到底什么先用完</h2>
-<p>回到开头的问题。答案取决于模型大小和记忆压力，但第一行对所有情况都成立。</p>
+<h2><span class="sec">1 · Setup</span>Testbed and configuration</h2>
 <figure class="wide"><div class="scroll">
 <table>
-<tr><th>情况</th><th>最先出问题的</th><th>表现</th><th>我们测到的位置</th></tr>
-<tr><td><b>任何情况，默认设置</b></td><td><span class="pill bad">CPU 线程</span></td><td>系统卡死或间歇卡顿，GPU 却闲着</td><td>记忆放不下：4 个模型必崩<br>记忆放得下：8 个模型有一半概率卡顿</td></tr>
-<tr><td>小模型，记忆放得下</td><td><span class="pill n">GPU 时间</span></td><td>每个字变慢，但请求不排队</td><td>6–8 个模型后变慢加快；8 个模型仍可扛 8 倍负载</td></tr>
-<tr><td>小模型，记忆放不下</td><td><span class="pill n">主机内存</span></td><td>开始用硬盘交换空间</td><td>6 个模型（60 GB 内存）</td></tr>
-<tr><td>中号模型，记忆放得下</td><td><span class="pill n">显存</span> <span class="pill n">并发名额</span></td><td>放不进第 5 个；高负载时请求排队</td><td>4 个模型占 30.4 / 31.4 GB</td></tr>
-<tr><td>中号模型，记忆放不下</td><td><span class="pill n">搬运记忆的排队</span></td><td>请求等待时间随模型数快速变长</td><td>4 个模型时平均等 4.7 秒</td></tr>
+<tr><th>Component</th><th>Configuration</th></tr>
+<tr><td>GPUs</td><td>2× RTX 5090, 32 GB (31.35 GiB usable), PCIe Gen4 ×8, no P2P. <b>All N engines on GPU1</b>; GPU0 hosts only temporary prefill engines.</td></tr>
+<tr><td>Host</td><td>32 logical cores, 60.5 GiB RAM, 7.6 GiB swap.</td></tr>
+<tr><td>Serving</td><td>vLLM 0.15.1, one engine process per model (separate CUDA context), prefix caching on, CUDA graphs on.</td></tr>
+<tr><td>KV offload</td><td>LMCache 0.4.4 (Python fallback copy path), one DRAM store process per model, 1 GiB pinned L1 per engine, 256-token chunks. No cache state shared between models.</td></tr>
+<tr><td>GPU sharing</td><td>CUDA MPS, default equal share, no per-client SM cap, no priorities. (Without MPS two decodes time-slice: ~3.4× TPOT in the previous study; not re-measured here.)</td></tr>
+<tr><td>Bring-up</td><td>Engines started one at a time; the driver asserts identical engine-reported KV grants across the N engines.</td></tr>
+<tr><td>Workload</td><td>Per model: open-loop Poisson, <b>2 QPS</b>, 6144-token fixed session prefixes, 128 forced output tokens, 300 requests, seeded (distinct prefixes and arrivals per model). All N clients start at the same instant.</td></tr>
+<tr><td>Telemetry</td><td>Client latencies; per-engine <code>/metrics</code> deltas; DCGM per-GPU counters at 1 Hz; host CPU by process role at 1 Hz; per-thread EngineCore counters at 0.5 Hz.</td></tr>
+</table></div></figure>
+
+<h3>Models and per-engine memory budget</h3>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th></th><th>Small cohort</th><th>Medium cohort</th></tr>
+<tr><td>Model</td><td>Qwen2.5-0.5B (494M params, bf16)</td><td>Qwen2.5-3B (3.09B params, bf16)</td></tr>
+<tr><td>Layers / KV heads / head dim</td><td>24 / 2 / 64</td><td>36 / 2 / 128</td></tr>
+<tr><td>Weights in VRAM</td><td class="n">0.92 GiB</td><td class="n">5.76 GiB</td></tr>
+<tr><td>KV per token</td><td class="n">12 KiB</td><td class="n">36 KiB</td></tr>
+<tr><td>KV of one 6144-token prefix</td><td class="n">72 MiB</td><td class="n">216 MiB</td></tr>
+<tr><td><code>--gpu-memory-utilization</code></td><td class="n">0.08 (2.51 GiB)</td><td class="n">0.22 (6.90 GiB)</td></tr>
+<tr><td><code>--max-num-seqs</code> / batched tokens</td><td class="n">64 / 2048</td><td class="n">16 / 1024</td></tr>
+<tr><td><b>KV grant (engine-reported)</b></td><td class="n"><b>1.04 GiB = 90,624 tokens</b></td><td class="n"><b>0.94 GiB = 27,248 tokens</b></td></tr>
+<tr><td>Prefixes that fit in the grant</td><td class="n">14.7</td><td class="n">4.4</td></tr>
+<tr><td>GPU1 footprint per engine (DCGM, incl. CUDA/MPS context)</td><td class="n">3.22 GiB</td><td class="n">7.65 GiB</td></tr>
+<tr><td>Host RSS per model: API server / EngineCore / store</td><td class="n">1.08 / 3.27 / 0.6 + working set GB</td><td class="n">1.08 / 3.31 / 0.7 + working set GB</td></tr>
+<tr><td>N swept</td><td>1, 2, 3, 4, 6, 8 (offload: 1–6)</td><td>1, 2, 3, 4</td></tr>
 </table></div>
-<figcaption>除第一行外，其余都是在限制线程之后测到的。</figcaption>
+<figcaption>Medium sizing was set by probes. At util 0.24 a 3B engine gets 1.09 GiB of KV but occupies 8.24 GiB, so only three fit. At util 0.22 four fit, and the grant is set by non-KV overhead: <code>max-num-seqs</code> 64 → 16 raises it from 0.59 to 0.94 GiB at the same footprint. That choice returns in §4.</figcaption>
 </figure>
 
-<h2><span class="step">建议</span>如果你也要在一张 GPU 上放多个模型</h2>
-<ol class="check">
-<li><strong>先限制每个模型的 CPU 线程数。</strong>设 <code>OMP_NUM_THREADS</code>，取值不超过“CPU 核数 ÷ 模型数”。这一条没有代价，却能避免最严重的故障。</li>
-<li><strong>打开 MPS。</strong>否则多个模型只能轮流使用 GPU。</li>
-<li><strong>预期每个字会变慢，而不是服务不过来。</strong>小模型 8 个时慢 3.6 倍，中号模型 4 个时慢 2.5 倍。能不能接受，取决于你的延迟要求。</li>
-<li><strong>为了隔离才拆成多个模型。</strong>同一个模型想扛更多流量，交给一个实例做批处理更快。</li>
-<li><strong>尽量让记忆留在显存里。</strong>放不下时，小模型问题不大，大一点的模型会明显排队。</li>
-<li><strong>算内存，不只算显存。</strong>每个模型的程序自己要占约 5 GB 主机内存，溢出的记忆还要另算。</li>
-<li><strong>“留给记忆的显存”和“同时处理的请求数”一起定。</strong>它们此消彼长。</li>
-<li><strong>判断是否撑得住，看请求有没有排队。</strong>GPU 的“忙碌程度”读数会误导人：负载翻倍时它甚至可能下降。</li>
-</ol>
+<figure class="wide">
+<p class="ftitle">GPU1 memory at the largest N, to scale</p>
+<p class="fsub">Each block is one engine: weights, KV grant, other (activations, CUDA graphs, CUDA/MPS context). Full width = 31.35 GiB.</p>
+<div class="legend"><span><i class="sq" style="background:var(--w)"></i>weights</span><span><i class="sq" style="background:var(--kv)"></i>KV grant</span><span><i class="sq" style="background:var(--oth)"></i>other</span></div>
+<div class="bars">
+  <div class="bar"><div class="t">8 × 0.5B</div><div class="track"><div class="stack" id="vr1"></div><span class="v">25.7 GiB</span></div></div>
+  <div class="bar"><div class="t">4 × 3B</div><div class="track"><div class="stack" id="vr2"></div><span class="v">30.4 GiB</span></div></div>
+</div>
+<figcaption>The 0.5B engine is dominated by overhead (1.26 GiB of 3.22 is neither weights nor KV), so about nine would fit. The 3B cohort fills the card at N=4.</figcaption>
+</figure>
 
-<h2><span class="step">局限</span>这次没有回答的问题</h2>
+<h3>Serving cells</h3>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>Cell</th><th>Prefill in the measured window</th><th>Sessions (0.5B / 3B)</th><th>KV working set</th><th>vs KV grant</th><th>GPU / DRAM prefix-hit at N=1</th></tr>
+<tr><td><b>decode-only · fits</b></td><td>none (a temporary GPU0 engine populated the store, then was killed); 100% prefix hits, uniform sessions</td><td>8 / 3</td><td>0.56 / 0.63 GiB</td><td>54% / 67%</td><td>99.7% / 0.2% (both)</td></tr>
+<tr><td><b>decode-only · offload</b></td><td>none</td><td>48 / 14</td><td>3.38 / 2.95 GiB</td><td>3.2× / 3.1×</td><td>0.5B: 30.5% / 69.5%<br>3B: 7.7% / 70.1%</td></tr>
+<tr><td><b>full · fits</b></td><td>128-token unique suffix per request on GPU1; zipf-1.1 sessions</td><td>8 / 3</td><td>same</td><td>resident</td><td>—</td></tr>
+<tr><td><b>full · offload</b></td><td>same</td><td>48 / 14</td><td>same</td><td>3.2× / 3.1×</td><td>—</td></tr>
+</table></div>
+<figcaption>Decode-only TTFT is reported as N/A throughout: with no prefill it is queueing plus (under offload) a KV reload from DRAM, not a time-to-first-token. Decode-only cells are judged on TPOT, throughput, failed requests and the engine's queue-wait metric. A cell passes only with zero failed requests.</figcaption>
+</figure>
+
+<figure class="wide">
+<p class="ftitle">Placement and KV data flow</p>
+<div class="scroll"><svg viewBox="0 0 780 250" role="img" aria-label="Temporary prefill engines on GPU0 write prefixes into per-model DRAM stores; N engines on GPU1 reload KV from their own store on a miss">
+  <defs><marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--ink2)"/></marker></defs>
+  <rect class="d-zone" x="10" y="30" width="200" height="205" rx="10"/><text class="d-b" x="24" y="52">GPU0</text>
+  <rect class="d-zone" x="250" y="30" width="230" height="205" rx="10"/><text class="d-b" x="264" y="52">Host DRAM (60.5 GiB), 32 cores</text>
+  <rect class="d-zone" x="520" y="30" width="250" height="205" rx="10"/><text class="d-b" x="534" y="52">GPU1 (shared, MPS)</text>
+  <g><rect class="d-box" x="26" y="68" width="168" height="34" rx="6" stroke-dasharray="5 4"/><text class="d-t" x="110" y="90" text-anchor="middle">temp prefill 1</text>
+  <rect class="d-box" x="26" y="112" width="168" height="34" rx="6" stroke-dasharray="5 4"/><text class="d-t" x="110" y="134" text-anchor="middle">temp prefill 2</text>
+  <rect class="d-box" x="26" y="176" width="168" height="34" rx="6" stroke-dasharray="5 4"/><text class="d-t" x="110" y="198" text-anchor="middle">temp prefill N</text></g>
+  <text class="d-m" x="110" y="228" text-anchor="middle">decode-only cells: killed before measuring</text>
+  <g><rect class="d-soft" x="270" y="68" width="190" height="34" rx="6"/><text class="d-t" x="365" y="90" text-anchor="middle">LMCache store 1</text>
+  <rect class="d-soft" x="270" y="112" width="190" height="34" rx="6"/><text class="d-t" x="365" y="134" text-anchor="middle">LMCache store 2</text>
+  <rect class="d-soft" x="270" y="176" width="190" height="34" rx="6"/><text class="d-t" x="365" y="198" text-anchor="middle">LMCache store N</text></g>
+  <g><rect class="d-good" x="540" y="68" width="210" height="34" rx="6"/><text class="d-t" x="645" y="90" text-anchor="middle">engine 1: weights + KV grant</text>
+  <rect class="d-good" x="540" y="112" width="210" height="34" rx="6"/><text class="d-t" x="645" y="134" text-anchor="middle">engine 2</text>
+  <rect class="d-good" x="540" y="176" width="210" height="34" rx="6"/><text class="d-t" x="645" y="198" text-anchor="middle">engine N</text></g>
+  <text class="d-m" x="110" y="166" text-anchor="middle">⋮</text><text class="d-m" x="365" y="166" text-anchor="middle">⋮</text><text class="d-m" x="645" y="166" text-anchor="middle">⋮</text>
+  <path class="d-ln" d="M194 85 H268" marker-end="url(#ar)"/><path class="d-ln" d="M194 129 H268" marker-end="url(#ar)"/><path class="d-ln" d="M194 193 H268" marker-end="url(#ar)"/>
+  <path class="d-ln" d="M460 85 H538" marker-end="url(#ar)"/><path class="d-ln" d="M460 129 H538" marker-end="url(#ar)"/><path class="d-ln" d="M460 193 H538" marker-end="url(#ar)"/>
+  <text class="d-m" x="231" y="62" text-anchor="middle">populate</text><text class="d-m" x="499" y="62" text-anchor="middle">reload on miss</text>
+  <text class="d-m" x="645" y="228" text-anchor="middle">full cells also spill evicted KV back</text>
+</svg></div>
+<figcaption>Reloads run on each engine's CPU-side copy path (EngineCore process), not in the store server. That matters in §3.</figcaption>
+</figure>
+
+<h2><span class="sec">2 · Scaling at 2 QPS</span>Resident KV: latency rises smoothly, throughput holds</h2>
+<p>With KV resident, every engine serves its offered load at every N (256 tok/s per model). The cost is per-token time. Decode-only and full cells share one TPOT curve: the 128-token suffix prefill is too small to matter at this rate.</p>
+<figure class="wide">
+<p class="ftitle">Per-model TPOT vs N</p>
+<p class="fsub">Decode-only · fits, TPOT p50 (mean over the N models), relative to N=1. Stock threads for 0.5B; thread cap for 3B.</p>
+<div class="legend"><span><i style="background:var(--s1)"></i>Qwen2.5-0.5B</span><span><i style="background:var(--s2)"></i>Qwen2.5-3B</span></div>
+<div class="chart" id="c1"></div>
+</figure>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>Qwen2.5-0.5B</th><th class="n">N=1</th><th class="n">2</th><th class="n">3</th><th class="n">4</th><th class="n">6</th><th class="n">8</th></tr>
+<tr><td>Decode-only TPOT p50 (ms)</td><td class="n">1.56</td><td class="n">1.79</td><td class="n">2.19</td><td class="n">2.60</td><td class="n">3.63</td><td class="n">5.70</td></tr>
+<tr><td>Full TPOT p50 (ms)</td><td class="n">1.53</td><td class="n">1.72</td><td class="n">2.19</td><td class="n">2.60</td><td class="n">3.65</td><td class="n">5.64</td></tr>
+<tr><td>Full TTFT p50 (ms)</td><td class="n">9.3</td><td class="n">9.7</td><td class="n">9.9</td><td class="n">10.5</td><td class="n">12.5</td><td class="n">17.3</td></tr>
+<tr><td>Aggregate tok/s</td><td class="n">274</td><td class="n">526</td><td class="n">788</td><td class="n">1,045</td><td class="n">1,522</td><td class="n">1,979</td></tr>
+<tr><td>GPU1 SM-active</td><td class="n">0.18</td><td class="n">0.33</td><td class="n">0.47</td><td class="n">0.59</td><td class="n">0.76</td><td class="n">0.86</td></tr>
+<tr><td>GPU1 DRAM-active (HBM)</td><td class="n">0.12</td><td class="n">0.23</td><td class="n">0.33</td><td class="n">0.42</td><td class="n">0.56</td><td class="n">0.64</td></tr>
+<tr><td>GPU1 memory used (GiB)</td><td class="n">3.28</td><td class="n">6.49</td><td class="n">9.70</td><td class="n">12.91</td><td class="n">19.32</td><td class="n">25.74</td></tr>
+</table></div></figure>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>Qwen2.5-3B (thread cap on)</th><th class="n">N=1</th><th class="n">2</th><th class="n">3</th><th class="n">4</th></tr>
+<tr><td>Decode-only TPOT p50 (ms)</td><td class="n">6.78</td><td class="n">9.84</td><td class="n">13.36</td><td class="n">17.31</td></tr>
+<tr><td>Full TPOT p50 (ms)</td><td class="n">6.78</td><td class="n">10.27</td><td class="n">14.12</td><td class="n">18.73</td></tr>
+<tr><td>Full TTFT p50 (ms)</td><td class="n">30.8</td><td class="n">40.1</td><td class="n">48.9</td><td class="n">59.2</td></tr>
+<tr><td>Aggregate tok/s</td><td class="n">273</td><td class="n">523</td><td class="n">783</td><td class="n">1,036</td></tr>
+<tr><td>GPU1 SM-active</td><td class="n">0.57</td><td class="n">0.80</td><td class="n">0.89</td><td class="n">0.92</td></tr>
+<tr><td>GPU1 DRAM-active (HBM)</td><td class="n">0.44</td><td class="n">0.66</td><td class="n">0.77</td><td class="n">0.82</td></tr>
+<tr><td>GPU1 memory used (GiB)</td><td class="n">7.65</td><td class="n">15.22</td><td class="n">22.79</td><td class="n">30.36</td></tr>
+<tr><td>Host CPU busy</td><td class="n">3%</td><td class="n">6%</td><td class="n">10%</td><td class="n">13%</td></tr>
+</table></div>
+<figcaption>p50 values, mean over the N models; zero failed requests in every cell (N=8 0.5B uses the zero-failure rerun). The 0.5B slope steepens after N=6 (+0.4 ms per model before, +1 ms after). The 3B adds ~3.5 ms per model from N=1, and HBM activity climbs with it: each decode step reads 5.8 GB of weights.</figcaption>
+</figure>
+<div class="note"><p><strong>Read SM-active with care.</strong> It counts how often SMs are busy, not how full they are. In the capacity sweep (§4) it falls from 0.78 to 0.68 at N=4 while throughput doubles. The knee visible here is a per-token latency knee at 2 QPS, not a capacity limit.</p></div>
+
+<h2><span class="sec">3 · The failure</span>CPU thread oversubscription collapses the system at N=4</h2>
+<p>With stock settings and offloaded KV, the 0.5B cohort is healthy at N=3 and collapses at N=4 in <strong>four of four</strong> runs: 489–619 of 1,200 requests time out (300 s), aggregate throughput falls to 158–192 tok/s (15–18% of offered), and GPU1 sits at 0.03–0.05 SM-active while host CPU is 93–97% busy.</p>
+<figure class="wide">
+<p class="ftitle">Same cell, one variable changed</p>
+<p class="fsub">4 × 0.5B, decode-only · offload. Seconds since measurement start (4 s bins).</p>
+<div class="legend"><span><i style="background:var(--bad)"></i>stock threads</span><span><i style="background:var(--s3)"></i><code>OMP_NUM_THREADS=4</code></span></div>
+<p class="fsub" style="margin:8px 0 0"><b style="color:var(--ink)">CPU cores used by the 4 EngineCore processes</b> (32 available)</p>
+<div class="chart" id="c3a"></div>
+<p class="fsub" style="margin:8px 0 0"><b style="color:var(--ink)">GPU1 SM-active</b></p>
+<div class="chart" id="c3b"></div>
+<p class="fsub" style="margin:8px 0 0"><b style="color:var(--ink)">Cumulative completed requests</b> (1,200 offered over 150 s)</p>
+<div class="chart" id="c3c"></div>
+<figcaption>The stock run tracks the capped run for the first seconds (14 s here, up to 35 s in other runs), then the EngineCores jump to all 32 cores and stay there. The four LMCache store processes stay near 0 cores in both runs.</figcaption>
+</figure>
+
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>0.5B decode-only · offload</th><th class="n">TPOT p50</th><th class="n">Agg tok/s</th><th class="n">Failed / 1,200</th><th class="n">Host CPU</th><th class="n">EngineCore cores</th><th class="n">GPU1 SM-active</th></tr>
+<tr><td>N=3, stock (2 runs)</td><td class="n">2.3 ms</td><td class="n">787</td><td class="n">0</td><td class="n">13%</td><td class="n">—</td><td class="n">0.45</td></tr>
+<tr class="hl"><td>N=4, stock (4 runs)</td><td class="n">23–74 ms</td><td class="n">158–192</td><td class="n">489–619</td><td class="n">93–97%</td><td class="n">31.8–31.9</td><td class="n">0.03–0.05</td></tr>
+<tr class="hl"><td>N=4, stock, L1 pool 2 GiB</td><td class="n">23 ms</td><td class="n">193</td><td class="n">492</td><td class="n">94%</td><td class="n">—</td><td class="n">0.05</td></tr>
+<tr class="ok"><td>N=4, <code>OMP_NUM_THREADS=4</code></td><td class="n">2.6 ms</td><td class="n">1,045</td><td class="n">0</td><td class="n">10%</td><td class="n">2.9 mean</td><td class="n">0.57</td></tr>
+</table></div></figure>
+
+<h3>Mechanism, measured at the thread level</h3>
+<p>Each uncapped EngineCore runs ~135 threads; its torch/OpenMP pool is sized for the whole machine. Stack sampling was not possible (no ptrace, perf or sudo), so we sampled <code>/proc/&lt;pid&gt;/task/*</code> for every EngineCore every 2 s during a fourth stock reproduction.</p>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>4 EngineCores, stock, N=4 offload</th><th class="n">Threads</th><th class="n">Busy (&gt;0.5 core)</th><th class="n">User CPU</th><th class="n">Kernel CPU</th><th class="n">Involuntary ctx-sw/s</th><th class="n">Voluntary ctx-sw/s</th></tr>
+<tr><td>Before onset (first 14 s)</td><td class="n">540</td><td class="n">0.5</td><td class="n">5.3 cores</td><td class="n">0.0</td><td class="n">276</td><td class="n">10,437</td></tr>
+<tr class="hl"><td>During the collapse</td><td class="n">540</td><td class="n">26.8</td><td class="n">31.8 cores</td><td class="n">0.0</td><td class="n">11,542</td><td class="n">4,303</td></tr>
+</table></div>
+<figcaption>About 27 threads burn all 32 cores entirely in user mode, involuntary switches rise 42× and voluntary ones fall: threads are preempted while runnable instead of blocking. That is the signature of spin-waiting threads stealing cores from each other. The sampler identifies the behaviour, not the code; torch's OpenMP pool is the consistent candidate because <code>OMP_NUM_THREADS</code> alone controls it.</figcaption>
+</figure>
+<figure class="wide">
+<p class="ftitle">Threads vs cores</p>
+<div class="scroll"><svg viewBox="0 0 780 150" role="img" aria-label="Stock: 4 engines field about 540 threads on 32 cores. Capped: 16 threads">
+  <text class="d-b" x="20" y="22">Stock</text>
+  <rect class="d-bad" x="20" y="34" width="80" height="36" rx="6"/><rect class="d-bad" x="108" y="34" width="80" height="36" rx="6"/><rect class="d-bad" x="196" y="34" width="80" height="36" rx="6"/><rect class="d-bad" x="284" y="34" width="80" height="36" rx="6"/>
+  <text class="d-t" x="60" y="57" text-anchor="middle">~135 thr</text><text class="d-t" x="148" y="57" text-anchor="middle">~135 thr</text><text class="d-t" x="236" y="57" text-anchor="middle">~135 thr</text><text class="d-t" x="324" y="57" text-anchor="middle">~135 thr</text>
+  <text class="d-r" x="20" y="92">4 engines ≈ 540 threads on 32 cores</text>
+  <text class="d-b" x="420" y="22">OMP_NUM_THREADS=4</text>
+  <rect class="d-good" x="420" y="34" width="80" height="36" rx="6"/><rect class="d-good" x="508" y="34" width="80" height="36" rx="6"/><rect class="d-good" x="596" y="34" width="80" height="36" rx="6"/><rect class="d-good" x="684" y="34" width="80" height="36" rx="6"/>
+  <text class="d-t" x="460" y="57" text-anchor="middle">4 pool thr</text><text class="d-t" x="548" y="57" text-anchor="middle">4 pool thr</text><text class="d-t" x="636" y="57" text-anchor="middle">4 pool thr</text><text class="d-t" x="724" y="57" text-anchor="middle">4 pool thr</text>
+  <text class="d-g" x="420" y="92">4 engines = 16 pool threads</text>
+  <text class="d-m" x="20" y="128">32 cores:</text><g id="cores"></g>
+</svg></div>
+</figure>
+
+<h3>Controls</h3>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>Question</th><th>Experiment</th><th>Result</th></tr>
+<tr><td>Is it the LMCache pinned L1 pool? (thousands of "failed to allocate" warnings)</td><td>Count warnings in healthy runs; double the pool to 2 GiB</td><td>~5,000 warnings per model at healthy N=3 and in the capped N=4 run; 2 GiB still collapses. Not the cause.</td></tr>
+<tr><td>Is it the store servers?</td><td>CPU by process role at 1 Hz</td><td>Stores stay near 0 cores; EngineCores take 31.9 of 32.</td></tr>
+<tr><td>Does the cap cost anything?</td><td>Capped vs stock where stock is healthy</td><td>3B N=1, all four cells: within 1–3%. 0.5B offload N=1–3: TPOT within 0.02 ms.</td></tr>
+<tr><td>Is it specific to the 0.5B?</td><td>3B, N=4, decode-only · offload, stock threads</td><td>Collapses: 180 / 1,200 time out, 292 tok/s (28% of offered), host CPU 85%, mean KV load 5.6 s, mean queue wait 204 s.</td></tr>
+<tr><td>Does the cap size matter?</td><td>3B, N=4, offload, <code>OMP_NUM_THREADS</code> = 2 / 4 / 8</td><td>Identical: 1,005 / 1,006 / 1,004 tok/s, KV load 420 / 401 / 418 ms, 0 failures. EngineCore peak 5.0 and 9.7 cores at 2 and 8.</td></tr>
+<tr><td>Is it offload-only?</td><td>0.5B, N=8, decode-only · fits: 4 stock runs, 3 capped runs</td><td>Stock: 2 of 4 runs had a 14–20 s storm (EngineCores at 32.5 cores, GPU SM-active 0.95 → 0.03), self-recovering; e2e p95 0.93 → 4.4–8.4 s, TPOT p95 7 → 22–38 ms, medians unchanged. Capped: 0 of 3, peak 8.8 cores.</td></tr>
+</table></div>
+<figcaption>Three clean capped N=8 runs alone would occur ~12% of the time if the cap did nothing; together with the thread-level signature and N=4 (stock 4/4, capped 0/1 for 0.5B; stock 1/1 for 3B) the evidence points one way. Stock was not run beyond N=4 under offload.</figcaption>
+</figure>
+<div class="note good"><p><strong>Rule.</strong> Cap each engine's CPU thread pool at or below cores ÷ N. vLLM and torch default to one engine per machine. The cap removed the failure in every run and was neutral everywhere else.</p></div>
+
+<h2><span class="sec">4 · Capacity</span>Load sweeps at fixed N</h2>
+<p>At 2 QPS every resident cell keeps up, which hides how much headroom is left. We swept the per-model rate at fixed N (decode-only · fits, thread cap on). A point keeps up if the engines' mean scheduler queue wait is under 50 ms and at most 1% of requests fail.</p>
+<div class="note"><p><strong>Why not delivered/offered.</strong> Each client sends a fixed 300 requests. At 16 QPS they arrive in ~19 s and the window then waits ~1.5 s for the last completion, so delivered/offered reads 92–94% with zero queueing. Queue wait from <code>vllm:request_queue_time_seconds</code> does not have this bias. The short windows also mean these points show no queueing over 10–20 s, not sustained stability.</p></div>
+<figure class="wide">
+<p class="ftitle">Qwen2.5-0.5B: no saturation within the sweep</p>
+<div class="legend"><span><i style="background:var(--s3)"></i>N=1</span><span><i style="background:var(--s1)"></i>N=4</span><span><i style="background:var(--s2)"></i>N=8</span></div>
+<div class="two">
+  <div><p class="fsub" style="margin:6px 0 0"><b style="color:var(--ink)">Aggregate output tok/s</b></p><div class="chart" id="c5a"></div></div>
+  <div><p class="fsub" style="margin:6px 0 0"><b style="color:var(--ink)">Per-model TPOT p50 (ms)</b></p><div class="chart" id="c5b"></div></div>
+</div>
+<figcaption>Mean queue wait is 0.0 ms at every point. N=8 serves 16 QPS per model (128 QPS, 15.3k tok/s); N=4 serves 24 (12.0k tok/s); N=1 serves 32 (4.3k tok/s). The limit was not located. Load is absorbed by larger batches: N=4 goes 2 → 24 QPS per model (12×) for TPOT 2.60 → 6.67 ms (2.6×).</figcaption>
+</figure>
+<figure class="wide">
+<p class="ftitle">Qwen2.5-3B: saturates at the per-engine sequence cap</p>
+<p class="fsub">Red ring = mean queue wait ≥ 50 ms</p>
+<div class="legend"><span><i style="background:var(--s3)"></i>N=1</span><span><i style="background:var(--s1)"></i>N=2</span><span><i style="background:var(--s2)"></i>N=4</span></div>
+<div class="two">
+  <div><p class="fsub" style="margin:6px 0 0"><b style="color:var(--ink)">Aggregate output tok/s</b></p><div class="chart" id="c6a"></div></div>
+  <div><p class="fsub" style="margin:6px 0 0"><b style="color:var(--ink)">Per-model TPOT p50 (ms)</b></p><div class="chart" id="c6b"></div></div>
+</div>
+</figure>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>3B, decode-only · fits</th><th class="n">Keeps up to</th><th class="n">TPOT there</th><th class="n">First saturated rate</th><th class="n">Queue wait there</th><th class="n">Throughput plateau</th><th class="n">N × 16 ÷ TPOT</th></tr>
+<tr><td>N=1</td><td class="n">12 QPS (1,581 tok/s)</td><td class="n">7.89 ms</td><td class="n">16 QPS</td><td class="n">1.03 s</td><td class="n">1,931 tok/s</td><td class="n">≈ 2.0k</td></tr>
+<tr><td>N=2</td><td class="n">8 QPS (2,042 tok/s)</td><td class="n">11.21 ms</td><td class="n">12 QPS</td><td class="n">2.03 s</td><td class="n">2,617 tok/s</td><td class="n">≈ 2.8k</td></tr>
+<tr><td>N=4</td><td class="n">4 QPS (2,048 tok/s)</td><td class="n">18.57 ms</td><td class="n">6 QPS (8 QPS: 5.66 s)</td><td class="n">0.60 s</td><td class="n">3,047 tok/s</td><td class="n">≈ 3.2k</td></tr>
+</table></div>
+<figcaption>At saturation engine 0 runs exactly 16 requests (<code>max-num-seqs</code>) while up to 75 wait, and TPOT barely moves (18.6 → 20.2 ms at N=4), so the GPU is not the limit. Every plateau sits at the cap's ceiling. Per-model capacity halves as N doubles, but aggregate capacity grows with N because each engine brings its own 16 slots.</figcaption>
+</figure>
+<div class="note"><p><strong>A configuration trade-off.</strong> Lowering <code>max-num-seqs</code> from 64 to 16 is what raised the 3B's KV grant from 0.59 to 0.94 GiB (§1). It cut N=1 decode-only offload first-token wait from 742 to 103 ms, and it is also what bounds each engine's capacity here. The GPU-bound capacity of the 3B was not measured.</p></div>
+
+<h3>The cost of N at equal total load</h3>
+<figure>
+<p class="ftitle">32 QPS total, split three ways (0.5B)</p>
+<p class="fsub">Per-model TPOT p50</p>
+<div class="bars">
+  <div class="bar"><div class="t">1 engine × 32 QPS</div><div class="track"><div class="fill" style="width:20.3%"></div><span class="v">1.97 ms</span></div></div>
+  <div class="bar"><div class="t">4 engines × 8 QPS</div><div class="track"><div class="fill" style="width:46.9%"></div><span class="v">4.56 ms</span></div></div>
+  <div class="bar"><div class="t">8 engines × 4 QPS</div><div class="track"><div class="fill" style="width:80%"></div><span class="v">7.78 ms</span></div></div>
+</div>
+<figcaption>Separate engines cannot batch together. Each runs its own small-batch decode step at close to the full per-step cost, and the steps contend on the GPU. For the 3B with its 16-slot cap the trade is different: at 16 QPS total one engine saturates (1.03 s queue) while four carry it without queueing, at 18.6 vs 7.9 ms per token.</figcaption>
+</figure>
+
+<h2><span class="sec">5 · Offloaded KV</span>Small models are unaffected; the 3B queues on reloads</h2>
+<figure class="wide">
+<p class="ftitle">Qwen2.5-0.5B, KV 3.2× over the grant</p>
+<p class="fsub">Aggregate throughput as % of offered, decode-only · offload</p>
+<div class="legend"><span><i style="background:var(--bad)"></i>stock threads</span><span><i style="background:var(--s3)"></i>thread cap</span></div>
+<div class="chart" id="c2"></div>
+</figure>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>0.5B offload</th><th class="n">N=1</th><th class="n">2</th><th class="n">3</th><th class="n">4</th><th class="n">5</th><th class="n">6</th></tr>
+<tr><td>Decode-only TPOT, stock (ms)</td><td class="n">1.60</td><td class="n">1.98</td><td class="n">2.28</td><td class="n">35 ✗</td><td class="n">—</td><td class="n">—</td></tr>
+<tr><td>Decode-only TPOT, capped (ms)</td><td class="n">1.59</td><td class="n">1.98</td><td class="n">2.26</td><td class="n">2.64</td><td class="n">3.12</td><td class="n">3.66</td></tr>
+<tr><td>Full TPOT, capped (ms)</td><td class="n">1.57</td><td class="n">1.86</td><td class="n">2.23</td><td class="n">2.61</td><td class="n">3.11</td><td class="n">3.66</td></tr>
+<tr><td>Full TTFT, capped (ms)</td><td class="n">10.8</td><td class="n">10.8</td><td class="n">11.3</td><td class="n">12.7</td><td class="n">14.4</td><td class="n">16.4</td></tr>
+<tr><td>GPU1 SM-active, capped</td><td class="n">0.17</td><td class="n">0.32</td><td class="n">0.45</td><td class="n">0.57</td><td class="n">0.68</td><td class="n">0.73</td></tr>
+<tr><td>Swap-in pages during window, capped</td><td class="n">83</td><td class="n">164</td><td class="n">33</td><td class="n">1</td><td class="n">142</td><td class="n">29,262</td></tr>
+</table></div>
+<figcaption>Capped offload follows the resident curve (3.66 ms at N=6 vs 3.63 ms resident): reloading 72 MiB prefixes adds no per-token cost. At N=6 the host is swap-backed (4.8 of 7.6 GiB swap in use, 97k pages swapped out during the window) with latency still on trend; GPU1 is at 0.73 SM-active and 19.3 GiB. Host RAM is the ceiling. We stopped at N=6.</figcaption>
+</figure>
+
+<h3>Qwen2.5-3B: queueing grows with N</h3>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>3B offload (thread cap)</th><th class="n">N=1</th><th class="n">2</th><th class="n">3</th><th class="n">4</th></tr>
+<tr><td>Decode-only TPOT p50 (ms)</td><td class="n">7.54</td><td class="n">10.80</td><td class="n">13.70</td><td class="n">15.92</td></tr>
+<tr><td>Decode-only worst e2e p95 (s)</td><td class="n">1.7</td><td class="n">2.9</td><td class="n">5.3</td><td class="n">21</td></tr>
+<tr><td>Decode-only throughput (% of offered)</td><td class="n">99</td><td class="n">99</td><td class="n">99</td><td class="n">96</td></tr>
+<tr><td><b>Mean queue wait (ms)</b></td><td class="n">82</td><td class="n">213</td><td class="n">717</td><td class="n"><b>4,687</b></td></tr>
+<tr><td><b>Mean KV load / prefill step (ms)</b></td><td class="n">85</td><td class="n">104</td><td class="n">161</td><td class="n"><b>401</b></td></tr>
+<tr><td>GPU prefix-cache hit</td><td class="n">8%</td><td class="n">6%</td><td class="n">5%</td><td class="n">4%</td></tr>
+<tr><td>Engine 0 running / waiting (mean)</td><td class="n">2.0 / 0.1</td><td class="n">—</td><td class="n">3.8 / 2.4</td><td class="n">2.1 / 13.6</td></tr>
+<tr><td>Engine 0 KV cache in use (mean)</td><td class="n">43%</td><td class="n">—</td><td class="n">71%</td><td class="n">43%</td></tr>
+<tr><td>Full TTFT p50 (ms)</td><td class="n">74</td><td class="n">107</td><td class="n">148</td><td class="n">621</td></tr>
+<tr><td>Full TPOT p50 (ms)</td><td class="n">7.34</td><td class="n">10.83</td><td class="n">14.72</td><td class="n">18.28</td></tr>
+</table></div>
+<figcaption>TPOT stays on the resident curve; the growth is all in queue wait. Nearly every request reloads its 216 MiB prefix (the grant holds ~4.4 prefixes and in-flight requests pin theirs).</figcaption>
+</figure>
 <ul>
-<li>小模型的容量极限在哪里。我们加到了基准的 8–16 倍都没有排队，没有继续往上找。高负载下的每次测量只有十几秒，还不能说明能长时间稳定。</li>
-<li>大多数数据点只跑了一次。崩溃（4 次）和 8 个模型的卡顿（共 7 次）是重复验证过的。</li>
-<li>中号模型搬运记忆时，具体卡在 GPU 的哪个环节，还没有分清。</li>
-<li>是哪一段代码在空转，没有定位到。机器没有相应的调试权限，只能确认空转这个行为。</li>
-<li>没有测的情况：大小模型混着放、模型之间分优先级、只做 prefill 的服务方式、不开 MPS 时随模型数的变化。</li>
-<li>8 个小模型的 7 次运行里，有 2 次各出现 1 个请求（每次共 2400 个）因客户端连接中断而失败，模型一侧没有报错，原因没有查。</li>
-<li>只在这一台机器、一种请求形态上测过。</li>
+<li><strong>N ≤ 3: the KV grant bounds concurrency.</strong> Each in-flight request holds a full prefix, so ~4.4 fit. Little's law gives the concurrency needed, 2 QPS × (load + 128 × TPOT) = 2.1 at N=1 and 3.8 at N=3, matching the 2.0 and 3.8 requests observed running, with KV use rising to 71%. Neighbours stretch TPOT, each request holds its slot longer, and the same grant serves fewer requests per second.</li>
+<li><strong>N = 4: the reload itself is the bottleneck.</strong> 13.6 requests wait while 2.1 run and KV is 43% used. The mean KV load is 401 ms against 85 ms at N=1. The thread-cap dose-response (§3) shows this is not thread starvation. Which shared resource the reloads queue on (copy engines, kernels under MPS, PCIe) is not separated by these runs.</li>
+<li><strong>Full · offload degrades later</strong> (TTFT 74 → 148 ms to N=3, 621 ms at N=4). The full cells use zipf sessions and the decode-only cells uniform ones, so the gap between them is confounded by skew; we did not run the decode-only + zipf control.</li>
 </ul>
 
-<h2><span class="step">名词表</span>文中出现的术语</h2>
-<dl>
-<dt>token</dt><dd>模型处理文字的基本单位，大致相当于一个字或半个词。</dd>
-<dt>每字耗时（TPOT）</dt><dd>生成相邻两个 token 之间的时间。越小越快。</dd>
-<dt>首字时间（TTFT）</dt><dd>从发出请求到第一个 token 出来的时间。</dd>
-<dt>prefill / 解码</dt><dd>先整段读入问题（prefill），再逐个 token 生成回答（解码）。</dd>
-<dt>KV 缓存</dt><dd>模型读过内容后留下的中间结果，文中称“记忆”。占显存，可以复用。</dd>
-<dt>溢出（offload）</dt><dd>显存放不下的 KV 缓存挪到主机内存，用到时再搬回显存。</dd>
-<dt>批处理</dt><dd>同一个模型把多个请求合在一步里一起计算。</dd>
-<dt>MPS</dt><dd>NVIDIA 的多进程共享模式，让多个程序真正同时使用一张 GPU。</dd>
-<dt>线程</dt><dd>程序里并行干活的执行单元。线程数远多于 CPU 核数时会互相妨碍。</dd>
-<dt>QPS</dt><dd>每秒请求数。本文基准是每个模型每秒 2 个。</dd>
-</dl>
+<h2><span class="sec">6 · Synthesis</span>What binds first</h2>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>Configuration</th><th>First limit</th><th>Signature</th><th>Where we measured it</th></tr>
+<tr><td><b>Any, stock threads</b></td><td><span class="pill bad">host CPU threads</span></td><td>EngineCores at 32 cores, GPU idle, timeouts or tail blow-up</td><td>Offload: N=4, every run (0.5B 4/4, 3B 1/1). Resident: N=8, 2 of 4 runs.</td></tr>
+<tr><td>0.5B, resident</td><td><span class="pill n">GPU time</span></td><td>TPOT rises; no queueing</td><td>Slope change at N≈6–8; N=8 still serves 16 QPS per model.</td></tr>
+<tr><td>0.5B, offload</td><td><span class="pill n">host RAM</span></td><td>Swap activity; latency on trend</td><td>N=6 on 60.5 GiB (~7.4 GB RSS per model).</td></tr>
+<tr><td>3B, resident</td><td><span class="pill n">VRAM</span> <span class="pill n">sequence cap</span></td><td>No fifth model; queueing at 16 running per engine</td><td>N=4 at 30.4 / 31.35 GiB; 12 / 8 / 4 QPS per model at N = 1 / 2 / 4.</td></tr>
+<tr><td>3B, offload</td><td><span class="pill n">KV-reload queue</span></td><td>Queue wait grows with N; TPOT unchanged</td><td>82 ms → 4.7 s mean wait from N=1 to 4.</td></tr>
+</table></div>
+<figcaption>All rows except the first are with the thread cap.</figcaption>
+</figure>
 
-<p class="foot">数据来自 2026 年 10 月 1–2 日在一台双 RTX 5090 工作站上的实验，所有图表由实测数据绘制。完整技术报告、每个决定的记录和原始数据见代码仓库中的 <code>reports/report_colocation_multi.md</code> 与 <code>DECISIONS_MULTI_COLOC.md</code>。</p>
+<h3>Practical guidance</h3>
+<ol class="check">
+<li><strong>Set <code>OMP_NUM_THREADS</code> ≤ cores ÷ N for every engine.</strong> Values of 2, 4 and 8 behaved identically at N=4.</li>
+<li><strong>Run under MPS.</strong></li>
+<li><strong>Budget latency, not capacity.</strong> 3.6× TPOT at N=8 for 0.5B, 2.55× at N=4 for 3B, at 2 QPS per model.</li>
+<li><strong>Colocate for isolation, not efficiency.</strong> One engine batching the same traffic is ~4× faster per token than eight.</li>
+<li><strong>Size the KV grant and <code>max-num-seqs</code> together.</strong> They trade against each other at a fixed footprint.</li>
+<li><strong>Budget host RAM.</strong> ~5 GB per engine before any offloaded working set.</li>
+<li><strong>Judge capacity by scheduler queue wait.</strong> Neither SM-active nor delivered/offered over a fixed request count is reliable.</li>
+</ol>
+
+<h2><span class="sec">7 · Limitations</span>What this does not establish</h2>
+<ul>
+<li><strong>Mostly single runs.</strong> Repeated: the N=4 collapse (4 stock runs), N=8 resident (4 stock, 3 capped), 0.5B offload N=3 (2). Other points are n=1; curves are smooth and monotone but carry no error bars.</li>
+<li><strong>Capacity windows are short</strong> (300 requests, 10–20 s at the highest rates) and cover decode-only · fits only. The 0.5B limit was not located; the 3B limit is the sequence cap, not the GPU.</li>
+<li><strong>Mixed thread settings.</strong> The 0.5B resident curve at N=1–6 used stock threads; capped runs exist for N=8 and all offload points.</li>
+<li><strong>Unidentified:</strong> which code spins; which resource 3B reloads queue on; the cause of two client-side broken-pipe failures (1 of 2,400 requests in two of seven N=8 runs, no engine error).</li>
+<li><strong>Per-GPU telemetry.</strong> DCGM counters blend all N engines; per-model claims rest on client latencies and per-engine metrics.</li>
+<li><strong>Not measured:</strong> no-MPS scaling with N, priority or gating between models, mixed model sizes, a prefill-only configuration, other hardware or workload shapes.</li>
+</ul>
+
+<p class="foot">Measured 1–2 October 2026 on a 2× RTX 5090 workstation. Charts are drawn from the measured data; hover for values. Full technical report, per-experiment predictions and outcomes, and raw data are in the repository: <code>reports/report_colocation_multi.md</code>, <code>DECISIONS_MULTI_COLOC.md</code>, <code>PLAN_MULTI_COLOC.md</code>.</p>
 </div>
 
 <script>
 const D = {"stock":{"cpu":[[0,0.48],[4,6.17],[8,5.6],[12,24.81],[16,31.9],[20,31.89],[24,31.89],[28,31.89],[32,31.91],[36,31.88],[40,31.89],[44,31.93],[48,31.9],[52,30.41],[56,31.89],[60,31.9],[64,31.9],[68,31.85],[72,31.92],[76,31.89],[80,31.84],[84,31.94],[88,31.86],[92,31.88],[96,31.93],[100,31.89],[104,31.9],[108,31.89],[112,31.86],[116,31.96],[120,31.9],[124,31.91],[128,31.9],[132,31.87],[136,31.91],[140,31.88],[144,30.57],[148,31.87],[152,31.9],[156,31.92],[160,31.91],[164,31.93],[168,31.93],[172,31.91],[176,31.9],[180,31.88],[184,31.95],[188,31.91],[192,31.9],[196,29.54]],"gpu":[[0,0.09],[4,0.53],[8,0.56],[12,0.36],[16,0.01],[20,0.0],[24,0.0],[28,0.0],[32,0.0],[36,0.0],[40,0.0],[44,0.0],[48,0.01],[52,0.06],[56,0.15],[60,0.0],[64,0.0],[68,0.0],[72,0.0],[76,0.0],[80,0.03],[84,0.02],[88,0.0],[92,0.05],[96,0.05],[100,0.05],[104,0.0],[108,0.0],[112,0.0],[116,0.0],[120,0.0],[124,0.0],[128,0.0],[132,0.03],[136,0.0],[140,0.02],[144,0.21],[148,0.0],[152,0.0],[156,0.0],[160,0.0],[164,0.0],[168,0.0],[172,0.0],[176,0.0],[180,0.0],[184,0.0],[188,0.0],[192,0.05],[196,0.17]],"done":[[0,0],[4,10],[8,41],[12,71],[16,81],[20,81],[24,81],[28,81],[32,81],[36,81],[40,81],[44,81],[48,81],[52,82],[56,123],[60,125],[64,131],[68,131],[72,143],[76,155],[80,155],[84,160],[88,166],[92,167],[96,174],[100,175],[104,188],[108,190],[112,196],[116,206],[120,206],[124,214],[128,223],[132,223],[136,224],[140,230],[144,230],[148,262],[152,266],[156,266],[160,280],[164,294],[168,294],[172,294],[176,294],[180,301],[184,305],[188,305],[192,305],[196,321],[200,340]]},"capped":{"cpu":[[0,0.51],[4,2.66],[8,2.85],[12,3.42],[16,2.69],[20,3.72],[24,2.67],[28,3.07],[32,2.89],[36,4.02],[40,2.71],[44,3.67],[48,3.56],[52,3.37],[56,2.47],[60,2.86],[64,2.93],[68,3.39],[72,2.22],[76,3.53],[80,3.58],[84,3.31],[88,2.51],[92,2.65],[96,3.65],[100,2.54],[104,2.57],[108,3.14],[112,3.03],[116,3.95],[120,3.52],[124,3.07],[128,2.74],[132,3.73],[136,3.08],[140,3.5],[144,3.11],[148,1.33],[152,1.09],[156,0.09]],"gpu":[[0,0.0],[4,0.47],[8,0.59],[12,0.62],[16,0.54],[20,0.68],[24,0.63],[28,0.62],[32,0.56],[36,0.75],[40,0.49],[44,0.67],[48,0.71],[52,0.64],[56,0.55],[60,0.59],[64,0.54],[68,0.67],[72,0.53],[76,0.59],[80,0.7],[84,0.62],[88,0.62],[92,0.48],[96,0.78],[100,0.51],[104,0.52],[108,0.68],[112,0.57],[116,0.62],[120,0.73],[124,0.55],[128,0.6],[132,0.65],[136,0.66],[140,0.64],[144,0.62],[148,0.42],[152,0.25],[156,0.06]],"done":[[0,0],[4,10],[8,41],[12,71],[16,111],[20,141],[24,181],[28,213],[32,243],[36,275],[40,306],[44,334],[48,376],[52,409],[56,446],[60,472],[64,500],[68,529],[72,568],[76,588],[80,625],[84,664],[88,698],[92,724],[96,752],[100,789],[104,814],[108,844],[112,876],[116,907],[120,948],[124,982],[128,1011],[132,1038],[136,1077],[140,1109],[144,1149],[148,1174],[152,1193],[156,1200],[160,1200],[164,1200],[168,1200],[172,1200],[176,1200],[180,1200],[184,1200],[188,1200],[192,1200],[196,1200],[200,1200]]},"cap":{"small1":[[2,274,1.56,0],[3,411,1.59,0],[4,547,1.62,0],[6,819,1.64,0],[8,1091,1.66,0],[16,2168,1.74,0],[32,4277,1.97,0]],"small4":[[2,1045,2.6,0],[3,1565,3.11,0],[4,2085,3.62,0],[6,3118,4.23,0],[8,4144,4.56,0],[12,6173,4.93,0],[16,8171,5.35,0],[24,11993,6.67,0]],"small8":[[2,2014,5.59,0],[3,3015,7.07,0],[4,4011,7.78,0],[6,5983,8.59,0],[8,7930,9.27,0],[12,11705,11.51,0],[16,15324,12.81,0]],"medium1":[[2,273,6.78,0],[2.5,340,6.81,0],[3,408,6.84,0],[4,542,6.91,0],[8,1069,7.51,2],[12,1581,7.89,27],[16,1931,7.94,1029]],"medium2":[[2,523,9.84,0],[2.5,652,9.94,0],[3,781,9.98,0],[4,1037,10.16,0],[6,1543,10.79,2],[8,2042,11.21,23],[12,2617,11.62,2026]],"medium4":[[2,1036,17.31,0],[2.5,1292,17.55,0],[3,1546,17.93,0],[4,2048,18.57,6],[6,2974,19.98,605],[8,3047,20.15,5657]]}};
 const NS = "http://www.w3.org/2000/svg";
 function el(tag, attrs, parent, text){ const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; if (parent) parent.appendChild(e); return e; }
-// Multi-series line chart with direct end labels, optional failure rings, crosshair + tooltip.
+// Multi-series line chart: direct end labels, optional failure rings, crosshair + tooltip.
 function lineChart(id, c){
   const host = document.getElementById(id); if (!host) return;
-  const W = 760, H = c.h || 300, m = {l:58, r:c.r == null ? 96 : c.r, t:14, b:44};
+  const W = c.w || 760, H = c.h || 300, m = {l:c.l || 52, r:c.r == null ? 96 : c.r, t:14, b:c.xl ? 44 : 28};
   const svg = el("svg", {viewBox:`0 0 ${W} ${H}`, role:"img", "aria-label":c.aria || ""}, null);
   const X = v => m.l + (v - c.x[0]) / (c.x[1] - c.x[0]) * (W - m.l - m.r);
   const Y = v => H - m.b - (v / c.ymax) * (H - m.t - m.b);
   c.yt.forEach(v => { el("line", {class:"grid", x1:m.l, x2:W - m.r, y1:Y(v), y2:Y(v)}, svg); el("text", {class:"ax", x:m.l - 8, y:Y(v) + 4, "text-anchor":"end"}, svg, c.yf ? c.yf(v) : v); });
   c.xt.forEach(v => el("text", {class:"ax", x:X(v), y:H - m.b + 18, "text-anchor":"middle"}, svg, c.xf ? c.xf(v) : v));
   if (c.xl) el("text", {class:"axt", x:(m.l + W - m.r) / 2, y:H - 6, "text-anchor":"middle"}, svg, c.xl);
-  if (c.ref) el("path", {d:c.ref.p.map((p,i) => (i ? "L" : "M") + X(p[0]) + " " + Y(p[1])).join(""), fill:"none", stroke:"var(--muted)", "stroke-width":1.2, "stroke-dasharray":"2 4"}, svg);
   c.series.forEach(s => {
     el("path", {d:s.p.map((p,i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(Math.min(p[1], c.ymax)).toFixed(1)).join(""), fill:"none", stroke:s.c, "stroke-width":2, "stroke-linejoin":"round", "stroke-linecap":"round"}, svg);
-    if (!c.nodots) s.p.forEach((p,i) => { el("circle", {cx:X(p[0]), cy:Y(p[1]), r:4, fill:s.c, stroke:"var(--surface)", "stroke-width":2}, svg);
+    if (!c.nodots) s.p.forEach(p => { el("circle", {cx:X(p[0]), cy:Y(p[1]), r:4, fill:s.c, stroke:"var(--surface)", "stroke-width":2}, svg);
       if (s.ring && s.ring(p)) el("circle", {cx:X(p[0]), cy:Y(p[1]), r:9, fill:"none", stroke:"var(--bad)", "stroke-width":2}, svg); });
     if (s.lab){ const p = s.p[s.p.length - 1]; el("text", {class:"lab", x:X(p[0]) + (s.ring && s.ring(p) ? 16 : 9), y:Y(Math.min(p[1], c.ymax)) + 4 + (s.dy || 0)}, svg, s.lab); }
   });
@@ -385,36 +437,49 @@ function lineChart(id, c){
     const r = svg.getBoundingClientRect(); const px = (ev.clientX - r.left) / r.width * W;
     let best = xs[0]; xs.forEach(x => { if (Math.abs(X(x) - px) < Math.abs(X(best) - px)) best = x; });
     cross.setAttribute("x1", X(best)); cross.setAttribute("x2", X(best)); cross.setAttribute("visibility", "visible");
-    const rows = c.series.map(s => { const p = s.p.find(q => q[0] === best); return p ? `${s.n}：${c.tf ? c.tf(p, s) : p[1]}` : null; }).filter(Boolean);
+    const rows = c.series.map(s => { const p = s.p.find(q => q[0] === best); return p ? `${s.n}: ${c.tf ? c.tf(p, s) : p[1]}` : null; }).filter(Boolean);
     tip.innerHTML = `<b>${c.tx ? c.tx(best) : best}</b><br>` + rows.join("<br>");
-    tip.style.left = Math.min(Math.max(X(best) / W * r.width, 70), r.width - 70) + "px"; tip.style.top = (m.t / H * r.height + 34) + "px"; tip.hidden = false;
+    tip.style.left = Math.min(Math.max(X(best) / W * r.width, 80), r.width - 80) + "px"; tip.style.top = (m.t / H * r.height + 34) + "px"; tip.hidden = false;
   }
   svg.addEventListener("pointermove", move); svg.addEventListener("pointerdown", move);
   svg.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
 }
-// 32 cores row in the thread diagram
-(function(){ const g = document.getElementById("cores"); if (!g) return; for (let i = 0; i < 32; i++) el("rect", {class:"d-box", x:130 + i * 19, y:150, width:14, height:14, rx:2}, g); })();
+(function(){ const g = document.getElementById("cores"); if (g) for (let i = 0; i < 32; i++) el("rect", {class:"d-box", x:92 + i * 19, y:116, width:14, height:14, rx:2}, g); })();
+// VRAM stacks, to scale against 31.35 GiB
+function vram(id, n, w, kv, per){ const h = document.getElementById(id); if (!h) return; const T = 31.35, add = (cls, g, t) => { const s = document.createElement("span"); s.className = cls; s.style.width = (g / T * 100) + "%"; s.title = t; h.appendChild(s); };
+  for (let i = 0; i < n; i++){ add("w", w, `engine ${i+1} weights ${w} GiB`); add("k", kv, `engine ${i+1} KV grant ${kv} GiB`); add("o", per - w - kv, `engine ${i+1} other ${(per - w - kv).toFixed(2)} GiB`); }
+  add("free", T - n * per - 0.3, "free"); }
+vram("vr1", 8, 0.92, 1.04, 3.22); vram("vr2", 4, 5.76, 0.94, 7.59);
 
 const sm = [1.56,1.79,2.19,2.60,3.63,5.70], md = [6.78,9.84,13.36,17.31];
-lineChart("c1", {x:[1,8], xt:[1,2,3,4,6,8], yt:[1,2,3,4], ymax:4.2, h:300, xl:"同一张 GPU 上的模型数量 N", yf:v => v + "×", aria:"每字耗时相对 N=1 的倍数随模型数量上升",
-  tx:n => n + " 个模型", tf:(p,s) => p[1].toFixed(2) + "×（" + p[2] + " 毫秒）",
-  series:[{n:"小模型", c:"var(--s1)", lab:"小模型 3.6×", p:[1,2,3,4,6,8].map((n,i) => [n, sm[i]/sm[0], sm[i]])},
-          {n:"中号模型", c:"var(--s2)", lab:"中号 2.5×", p:[1,2,3,4].map((n,i) => [n, md[i]/md[0], md[i]])}]});
-lineChart("c2", {x:[1,6], xt:[1,2,3,4,5,6], yt:[0,25,50,75,100], ymax:108, h:260, xl:"模型数量 N", yf:v => v + "%", aria:"默认设置在 N=4 时输出跌到 18%，限制线程后到 N=6 都是 100%",
-  tx:n => n + " 个模型", tf:p => p[1] + "%",
-  series:[{n:"限制线程", c:"var(--s3)", lab:"限制线程", p:[[1,100],[2,100],[3,100],[4,100],[5,100],[6,100]]},
-          {n:"默认设置", c:"var(--bad)", lab:"崩溃 18%", ring:p => p[1] < 50, p:[[1,100],[2,100],[3,100],[4,18]]}]});
-const T = {x:[0,200], xt:[0,50,100,150,200], nodots:true, r:22, tx:t => "第 " + t + " 秒"};
-lineChart("c3a", {...T, h:170, yt:[0,16,32], ymax:34, tf:p => p[1].toFixed(1) + " 核", aria:"默认设置下 CPU 在十几秒后被占满 32 核",
-  series:[{n:"默认设置", c:"var(--bad)", p:D.stock.cpu},{n:"限制线程", c:"var(--s3)", p:D.capped.cpu}]});
-lineChart("c3b", {...T, h:150, yt:[0,0.5,1], ymax:1.05, tf:p => p[1].toFixed(2), aria:"默认设置下 GPU 随即停工",
-  series:[{n:"默认设置", c:"var(--bad)", p:D.stock.gpu},{n:"限制线程", c:"var(--s3)", p:D.capped.gpu}]});
-lineChart("c3c", {...T, h:190, yt:[0,400,800,1200], ymax:1260, xl:"开始测量后的秒数", tf:p => p[1] + " 个", aria:"默认设置下完成的请求几乎不再增长",
-  series:[{n:"默认设置", c:"var(--bad)", p:D.stock.done},{n:"限制线程", c:"var(--s3)", p:D.capped.done}]});
-const capS = (k, n, c, lab, dy) => ({n, c, lab, dy, ring:p => p[3] >= 50, p:D.cap[k].map(r => [r[0], r[1], r[2], r[3]])});
-const capTip = p => p[1].toLocaleString() + " token/秒，每字 " + p[2] + " 毫秒" + (p[3] >= 50 ? "，排队 " + (p[3]/1000).toFixed(1) + " 秒" : "");
-lineChart("c5", {x:[0,32], xt:[2,4,8,12,16,24,32], yt:[0,4000,8000,12000,16000], ymax:16800, h:320, xl:"每个模型每秒的请求数", yf:v => v ? v/1000 + "k" : "0", tx:q => "每个模型 " + q + " 请求/秒", tf:capTip, aria:"小模型的合计输出随请求速率线性上升，没有排队",
-  series:[capS("small1","1 个模型","var(--s3)","1 个模型"), capS("small4","4 个模型","var(--s1)","4 个模型"), capS("small8","8 个模型","var(--s2)","8 个模型")]});
-lineChart("c6", {x:[0,16], xt:[2,4,6,8,12,16], yt:[0,1000,2000,3000], ymax:3400, h:320, xl:"每个模型每秒的请求数", yf:v => v ? v/1000 + "k" : "0", tx:q => "每个模型 " + q + " 请求/秒", tf:capTip, aria:"中号模型在并发名额用完后开始排队，输出到顶",
-  series:[capS("medium1","1 个模型","var(--s3)","1 个模型"), capS("medium2","2 个模型","var(--s1)","2 个模型"), capS("medium4","4 个模型","var(--s2)","4 个模型", -8)]});
+lineChart("c1", {x:[1,8], xt:[1,2,3,4,6,8], yt:[1,2,3,4], ymax:4.2, h:300, xl:"N engines on GPU1", yf:v => v + "×", aria:"TPOT relative to N=1 rises with N for both models",
+  tx:n => "N=" + n, tf:p => p[1].toFixed(2) + "× (" + p[2] + " ms)",
+  series:[{n:"0.5B", c:"var(--s1)", lab:"0.5B 3.6×", p:[1,2,3,4,6,8].map((n,i) => [n, sm[i]/sm[0], sm[i]])},
+          {n:"3B", c:"var(--s2)", lab:"3B 2.55×", p:[1,2,3,4].map((n,i) => [n, md[i]/md[0], md[i]])}]});
+lineChart("c2", {x:[1,6], xt:[1,2,3,4,5,6], yt:[0,25,50,75,100], ymax:108, h:250, xl:"N engines on GPU1", yf:v => v + "%", aria:"Stock threads fall to 18% at N=4; capped stays at 100% to N=6",
+  tx:n => "N=" + n, tf:p => p[1] + "%",
+  series:[{n:"thread cap", c:"var(--s3)", lab:"capped", p:[[1,100],[2,100],[3,100],[4,100],[5,100],[6,100]]},
+          {n:"stock", c:"var(--bad)", lab:"collapse 18%", ring:p => p[1] < 50, p:[[1,100],[2,100],[3,100],[4,18]]}]});
+const T = {x:[0,200], xt:[0,50,100,150,200], nodots:true, r:22, tx:t => "t = " + t + " s"};
+lineChart("c3a", {...T, h:160, yt:[0,16,32], ymax:34, tf:p => p[1].toFixed(1) + " cores", aria:"Stock EngineCores pin all 32 cores",
+  series:[{n:"stock", c:"var(--bad)", p:D.stock.cpu},{n:"capped", c:"var(--s3)", p:D.capped.cpu}]});
+lineChart("c3b", {...T, h:140, yt:[0,0.5,1], ymax:1.05, tf:p => p[1].toFixed(2), aria:"GPU1 goes idle in the stock run",
+  series:[{n:"stock", c:"var(--bad)", p:D.stock.gpu},{n:"capped", c:"var(--s3)", p:D.capped.gpu}]});
+lineChart("c3c", {...T, h:190, yt:[0,400,800,1200], ymax:1260, xl:"seconds since measurement start", tf:p => p[1], aria:"Completions flatten in the stock run",
+  series:[{n:"stock", c:"var(--bad)", p:D.stock.done},{n:"capped", c:"var(--s3)", p:D.capped.done}]});
+const ring = p => p[3] >= 50;
+const tput = (k, n, c) => ({n, c, lab:n, ring, p:D.cap[k].map(r => [r[0], r[1], r[2], r[3]])});
+const tpot = (k, n, c) => ({n, c, lab:n, ring, p:D.cap[k].map(r => [r[0], r[2], r[1], r[3]])});
+const q = v => v + " QPS/model";
+const tt = p => p[1].toLocaleString() + " tok/s" + (p[3] >= 50 ? ", queue " + (p[3]/1000).toFixed(2) + " s" : ", queue " + p[3] + " ms");
+const tp = p => p[1] + " ms" + (p[3] >= 50 ? ", queue " + (p[3]/1000).toFixed(2) + " s" : "");
+const half = {w:470, h:300, r:50, l:46, xl:"offered QPS per model"};
+lineChart("c5a", {...half, x:[0,32], xt:[2,8,16,24,32], yt:[0,4000,8000,12000,16000], ymax:16800, yf:v => v ? v/1000 + "k" : "0", tx:q, tf:tt, aria:"0.5B aggregate throughput rises linearly with load",
+  series:[tput("small1","N=1","var(--s3)"), tput("small4","N=4","var(--s1)"), tput("small8","N=8","var(--s2)")]});
+lineChart("c5b", {...half, x:[0,32], xt:[2,8,16,24,32], yt:[0,4,8,12], ymax:14, tx:q, tf:tp, aria:"0.5B TPOT rises slowly with load",
+  series:[tpot("small1","N=1","var(--s3)"), tpot("small4","N=4","var(--s1)"), tpot("small8","N=8","var(--s2)")]});
+lineChart("c6a", {...half, x:[0,16], xt:[2,4,8,12,16], yt:[0,1000,2000,3000], ymax:3400, yf:v => v ? v/1000 + "k" : "0", tx:q, tf:tt, aria:"3B aggregate throughput plateaus at the sequence cap",
+  series:[tput("medium1","N=1","var(--s3)"), tput("medium2","N=2","var(--s1)"), tput("medium4","N=4","var(--s2)")]});
+lineChart("c6b", {...half, x:[0,16], xt:[2,4,8,12,16], yt:[0,5,10,15,20], ymax:22, tx:q, tf:tp, aria:"3B TPOT is nearly flat in load",
+  series:[tpot("medium1","N=1","var(--s3)"), tpot("medium2","N=2","var(--s1)"), tpot("medium4","N=4","var(--s2)")]});
 </script>
