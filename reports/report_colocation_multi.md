@@ -46,7 +46,7 @@ Engines are brought up **one at a time** (each waits for the previous to be heal
 no engine's memory-profiling pass races another's; the driver asserts every engine
 reports the same KV grant.
 
-| | **small cohort** | **medium cohort** |
+| | **small model** | **medium model** |
 |---|---|---|
 | model | Qwen2.5-0.5B | Qwen2.5-3B |
 | weights | 0.93 GiB | 5.76 GiB |
@@ -99,8 +99,8 @@ without it two decodes serialize to ~3.4× TPOT), and that cost is carried over 
 than re-measured here. No idle-window gate, no per-model SM caps.
 
 One knob turned out to matter: the **per-engine CPU thread cap**
-(`OMP_NUM_THREADS=4`). The small cohort was first run with stock threads; Appendix A shows why
-the cap exists. The medium cohort, the capped small offload curve (N=1–6), the N=8
+(`OMP_NUM_THREADS=4`). The small model was first run with stock threads; Appendix A shows why
+the cap exists. The medium model, the capped small offload curve (N=1–6), the N=8
 storm controls and every capacity sweep use it; the cap is neutral for a single model (medium N=1: all four cells within
 1–3% of uncapped).
 
@@ -121,7 +121,7 @@ load only.
 
 ---
 
-## 2. Small cohort: N × 0.5B under MPS
+## 2. Small model: N × 0.5B under MPS
 
 ### 2.1 KV resident (fits)
 
@@ -255,7 +255,7 @@ changes nothing else: at N=1–3, where stock works, capped and stock agree with
 
 ---
 
-## 3. Medium cohort: N × 3B under MPS
+## 3. Medium model: N × 3B under MPS
 
 Same design, a model 6× larger: Qwen2.5-3B, 0.94 GiB KV grant each, fits = 3 sessions
 (resident), offload = 14 sessions (3.1× over). Every medium cell runs with the per-engine
@@ -279,7 +279,7 @@ each client's actual arrival span (end effects keep it at ~99%).*
 
 **Observations:**
 
-- **A 3B reaches the small cohort's N=8 state at N=2.** One 3B alone keeps GPU1 0.57
+- **A 3B reaches the small model's N=8 state at N=2.** One 3B alone keeps GPU1 0.57
   SM-active; two reach 0.80 (small needed N=6 for 0.76). Each added 3B costs ~3.5 ms of
   TPOT — linear from N=1 (6.8 → 9.8 → 13.4 → 17.3 ms), 2.55× at N=4.
 
@@ -322,7 +322,7 @@ histogram deltas), summed over the N engines:
 
 - **Offload costs the 3B far more than the 0.5B — and the cost grows with N.** Decode-only
   e2e p95 goes 1.7 → 2.9 → 5.3 → 21 s, and at N=4 throughput finally drops below the
-  offered rate (96%). The small cohort's offload, capped, never left the resident curve.
+  offered rate (96%). The small model's offload, capped, never left the resident curve.
 
 - **It is queueing, not per-token slowness.** Decode-only TPOT stays on (even slightly
   below) the resident curve; the growth is all in the time requests wait to be
@@ -344,7 +344,7 @@ histogram deltas), summed over the N engines:
   401 ms vs 85 ms at N=1.
 
 - **The thread cap is what keeps this N=4 cell alive at all.** Run with stock threads
-  (experiment E1), the same cell collapses exactly like the small cohort's did: 180 of
+  (experiment E1), the same cell collapses exactly like the small model's did: 180 of
   1,200 requests time out, throughput falls to 28% of offered, host CPU 85%, GPU1
   0.29 SM-active, mean KV load 5.6 s and mean queue wait 204 s. So the 401 ms loads are
   not caused by the cap — uncapped they are 14× slower — and the oversubscription
@@ -379,13 +379,13 @@ histogram deltas), summed over the N engines:
 ![placement and memory to scale](../figures/mc_layout.png)
 
 *(a)/(b) where each config's processes live and how KV moves; (c) GPU1 memory at the
-largest N per cohort, to scale (weights / KV grant / other); (d) host RAM at the largest
+largest N per model, to scale (weights / KV grant / other); (d) host RAM at the largest
 offload N, to scale, from the measured RSS of the experiment's processes. RSS excludes
 pages already swapped out and the kernel's page cache: at small N=6 the bar reads 49 GB,
 but the box had already pushed ~4.8 GB to swap — the bar understates the pressure, it is
 not headroom.*
 
-Five resources could stop colocation. At the largest N each cohort reached (thread cap
+Five resources could stop colocation. At the largest N each model reached (thread cap
 on; stock threads noted where they differ):
 
 | resource | small · fits (N=8) | small · offload (N=6) | medium · fits (N=4) | medium · offload (N=4) |
@@ -400,8 +400,8 @@ on; stock threads noted where they differ):
 
 **Observations:**
 
-- **With stock settings the first thing to break is host CPU threads, in every cohort.**
-  It needs no GPU pressure at all: the small cohort's offload collapses at N=4 with
+- **With stock settings the first thing to break is host CPU threads, for both models.**
+  It needs no GPU pressure at all: the small model's offload collapses at N=4 with
   GPU1 half idle. Nothing else on this list fails that early or that hard.
 
 - **With the thread cap, the binding resource depends on the model and working set.**
@@ -651,14 +651,14 @@ are not attributable to prefill alone.*
 
 ```bash
 D=scripts/inf_multi_coloc/multi_sweep.py; PY=.venv/bin/python
-# §2 small cohort, stock threads, all four cells (2 QPS/model)
+# §2 small model, stock threads, all four cells (2 QPS/model)
 $PY $D --cohort small --n 1 2 3 4 --arm mps
 $PY $D --cohort small --n 6 8 --arm mps --cells dfits ffits
 # §2.2 / Appendix A the N=4 collapse (stock) and the capped offload curve
 $PY $D --cohort small --n 4 --arm mps --cells doff --name-suffix _thr        # stock, all monitors
 OMP_NUM_THREADS=4 $PY $D --cohort small --n 1 2 3 4 5 6 --arm mps --cells doff foff --name-suffix _omp4
 # Appendix A.2 N=8 storm reproducibility (stock x4, capped x3): queue_small_{3,6}.sh, queue_night.sh E3
-# §3 medium cohort (sizing: scripts/inf_multi_coloc/probe_kv.sh), thread cap on
+# §3 medium model (sizing: scripts/inf_multi_coloc/probe_kv.sh), thread cap on
 OMP_NUM_THREADS=4 $PY $D --cohort medium --n 1 2 3 4 --arm mps
 $PY $D --cohort medium --n 4 --arm mps --cells doff --name-suffix _nocap     # E1: stock collapses
 OMP_NUM_THREADS=2 $PY $D --cohort medium --n 4 --arm mps --cells doff --name-suffix _omp2  # E1b
