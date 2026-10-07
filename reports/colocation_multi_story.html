@@ -1,0 +1,420 @@
+<title>一张 GPU 放 N 个模型</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&display=swap">
+<style>
+/* layout: one reading column (~38em) with figures allowed to run wider; cool paper, ink text, chart blue as the only accent */
+:root{
+  --bg:#f5f7fa; --surface:#ffffff; --ink:#18212f; --ink2:#465166; --muted:#77818f; --line:#dde2ea; --line2:#b9c1cd;
+  --accent:#2a78d6; --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --bad:#cf3a3a; --good:#178a58;
+  --tint:#eaf1fb; --badtint:#fbecec; --goodtint:#e7f5ee;
+  --display:"Noto Serif SC","Songti SC","SimSun",serif;
+  --body:-apple-system,"PingFang SC","Noto Sans SC","Microsoft YaHei","Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#11141a; --surface:#1a1e26; --ink:#eef1f6; --ink2:#bcc4d0; --muted:#8892a2; --line:#2a303b; --line2:#465063;
+  --accent:#5a9bea; --s1:#3987e5; --s2:#d95926; --s3:#199e70; --bad:#e66767; --good:#3fb886;
+  --tint:#18263a; --badtint:#34191b; --goodtint:#143024; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#11141a; --surface:#1a1e26; --ink:#eef1f6; --ink2:#bcc4d0; --muted:#8892a2; --line:#2a303b; --line2:#465063;
+  --accent:#5a9bea; --s1:#3987e5; --s2:#d95926; --s3:#199e70; --bad:#e66767; --good:#3fb886;
+  --tint:#18263a; --badtint:#34191b; --goodtint:#143024; color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.8;padding-inline:20px;padding-block:0}
+.wrap{max-width:46rem;margin-inline:auto;padding-block:48px 96px}
+h1{font-family:var(--display);font-size:clamp(1.9rem,5vw,2.7rem);line-height:1.25;margin:0 0 .5em;text-wrap:balance}
+h2{font-family:var(--display);font-size:1.55rem;line-height:1.35;margin:3.2em 0 .6em;text-wrap:balance}
+h3{font-size:1.08rem;margin:2em 0 .4em}
+p{margin:.9em 0;color:var(--ink)}
+.lede{font-size:1.12rem;color:var(--ink2)}
+.kicker{font-size:.8rem;letter-spacing:.14em;color:var(--accent);font-weight:600;margin:0 0 1em}
+.step{font-size:.8rem;letter-spacing:.1em;color:var(--muted);font-weight:600;display:block;margin-bottom:.2em}
+strong{font-weight:650}
+code{font-family:var(--mono);font-size:.88em;background:var(--tint);padding:.08em .35em;border-radius:4px}
+a{color:var(--accent)}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:14px;margin:2em 0}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.fact b{display:block;font-family:var(--display);font-size:1.9rem;line-height:1.2;font-variant-numeric:tabular-nums}
+.fact span{font-size:.9rem;color:var(--ink2);line-height:1.55;display:block;margin-top:.3em}
+figure{margin:1.8em 0;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 18px 14px}
+figure.wide{margin-inline:calc(-1 * min(4rem, max(0px, (100vw - 46rem - 40px) / 2)))}
+figcaption{font-size:.88rem;color:var(--ink2);line-height:1.65;margin-top:10px}
+figcaption b{color:var(--ink)}
+.ftitle{font-weight:650;font-size:1rem;margin:0 0 2px}
+.fsub{font-size:.86rem;color:var(--muted);margin:0 0 10px}
+svg{display:block;max-width:100%;height:auto}
+.scroll{overflow-x:auto}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.86rem;color:var(--ink2);margin:0 0 6px}
+.legend i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+.legend i.dash{background:repeating-linear-gradient(90deg,currentColor 0 5px,transparent 5px 8px);height:3px}
+.chart{position:relative}
+.tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);font-size:.8rem;line-height:1.5;padding:6px 9px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-110%);z-index:2}
+.ax{fill:var(--muted);font-size:12px;font-family:var(--body)}
+.axt{fill:var(--ink2);font-size:12.5px;font-family:var(--body)}
+.lab{fill:var(--ink);font-size:12.5px;font-family:var(--body);font-weight:600}
+.grid{stroke:var(--line);stroke-width:1}
+.d-box{fill:var(--surface);stroke:var(--line2);stroke-width:1.4}
+.d-soft{fill:var(--tint);stroke:var(--accent);stroke-width:1.2}
+.d-bad{fill:var(--badtint);stroke:var(--bad);stroke-width:1.2}
+.d-good{fill:var(--goodtint);stroke:var(--good);stroke-width:1.2}
+.d-zone{fill:none;stroke:var(--line2);stroke-width:1.2;stroke-dasharray:5 4}
+.d-t{fill:var(--ink);font-size:13px;font-family:var(--body)}
+.d-b{fill:var(--ink);font-size:13.5px;font-family:var(--body);font-weight:650}
+.d-m{fill:var(--muted);font-size:12px;font-family:var(--body)}
+.d-a{fill:var(--accent);font-size:12px;font-family:var(--body);font-weight:600}
+.d-r{fill:var(--bad);font-size:12px;font-family:var(--body);font-weight:600}
+.d-g{fill:var(--good);font-size:12px;font-family:var(--body);font-weight:600}
+.d-ln{stroke:var(--ink2);stroke-width:1.5;fill:none}
+.d-lna{stroke:var(--accent);stroke-width:1.6;fill:none}
+.bars{display:grid;gap:10px;margin:6px 0 2px}
+.bar{display:grid;grid-template-columns:minmax(7.5rem,11rem) 1fr;gap:12px;align-items:center;font-size:.92rem}
+.bar .t{color:var(--ink2);line-height:1.4}
+.bar .track{display:flex;align-items:center;gap:8px;min-width:0}
+.bar .fill{height:20px;border-radius:0 4px 4px 0;background:var(--s1);flex:0 0 auto}
+.bar .fill.bad{background:var(--bad)} .bar .fill.alt{background:var(--s2)}
+.bar .v{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+table{border-collapse:collapse;width:100%;font-size:.92rem;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--ink2);font-weight:600;font-size:.84rem}
+.note{background:var(--tint);border-radius:10px;padding:14px 18px;margin:1.6em 0;font-size:.95rem;color:var(--ink)}
+.note.bad{background:var(--badtint)} .note.good{background:var(--goodtint)}
+.note p{margin:.3em 0}
+.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:14px;margin:1.4em 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-size:.94rem;line-height:1.65}
+.card h4{margin:0 0 .3em;font-size:1rem}
+.card p{margin:.3em 0;color:var(--ink2)}
+.pill{display:inline-block;font-size:.76rem;font-weight:650;padding:.1em .6em;border-radius:99px;margin-right:.4em;vertical-align:.08em}
+.pill.bad{background:var(--badtint);color:var(--bad)} .pill.good{background:var(--goodtint);color:var(--good)} .pill.n{background:var(--tint);color:var(--accent)}
+ol.check{padding-left:1.3em} ol.check li{margin:.7em 0}
+dl{display:grid;grid-template-columns:minmax(6.5rem,9rem) 1fr;gap:8px 16px;font-size:.94rem}
+dt{font-weight:650} dd{margin:0;color:var(--ink2)}
+.foot{margin-top:4em;padding-top:1.4em;border-top:1px solid var(--line);font-size:.86rem;color:var(--muted)}
+@media (max-width:520px){body{font-size:16px} dl{grid-template-columns:1fr;gap:2px 0} dd{margin-bottom:.7em} .bar{grid-template-columns:1fr;gap:3px}}
+</style>
+
+<div class="wrap">
+<p class="kicker">GPU 共享实验 · 第七个研究</p>
+<h1>一张 GPU 放 N 个模型，会发生什么</h1>
+<p class="lede">我们想在同一张显卡上同时运行很多个模型。这份报告用尽量少的术语讲清楚三件事：我们做了什么实验，模型变多之后先出问题的是什么，以及如果你也要这么做该注意什么。</p>
+
+<div class="facts">
+  <div class="fact"><b>8 个</b><span>小模型同时跑在一张 GPU 上，每个都能完整服务自己的请求，没有请求超时或排队。</span></div>
+  <div class="fact"><b>3.6×</b><span>代价是变慢：8 个模型时，每个模型吐出一个字的时间是单独跑时的 3.6 倍。</span></div>
+  <div class="fact"><b>4 个</b><span>模型就能让系统崩溃，原因不在 GPU，在 CPU 的一个默认设置。改一个参数就好。</span></div>
+</div>
+
+<div class="note"><p><strong>一句话结论：</strong>多个模型共用一张 GPU 是可行的。付出的主要是“每个字出得更慢”，能承受的总请求量比预想的大得多。最容易踩的坑在主机 CPU 上，而且很容易避开。</p></div>
+
+<h2><span class="step">背景</span>为什么这件事不简单</h2>
+<p>一个模型用不满一张 GPU 是常事：一张 32 GB 的显卡，放一个 1 GB 的小模型，大部分时间都闲着。很自然的想法是多放几个。问题在于，多个模型会同时争抢好几样东西，而且哪一样先不够用，事先并不知道。</p>
+<figure class="wide">
+<p class="ftitle">模型们会争抢的五样东西</p>
+<p class="fsub">两样在主机上，三样在 GPU 上</p>
+<div class="scroll"><svg viewBox="0 0 780 300" role="img" aria-label="主机上有 CPU 和内存，GPU 上有显存、算力和显存带宽，N 个模型同时使用它们">
+  <rect class="d-zone" x="10" y="30" width="330" height="250" rx="10"/><text class="d-b" x="26" y="54">主机</text>
+  <rect class="d-zone" x="370" y="30" width="400" height="250" rx="10"/><text class="d-b" x="386" y="54">GPU（显卡）</text>
+  <rect class="d-box" x="30" y="76" width="290" height="80" rx="8"/><text class="d-b" x="46" y="102">① CPU：32 个核</text><text class="d-m" x="46" y="124">每个模型都有一个调度程序在这里跑</text><text class="d-m" x="46" y="142">搬运数据也靠它</text>
+  <rect class="d-box" x="30" y="176" width="290" height="80" rx="8"/><text class="d-b" x="46" y="202">② 内存：60 GB</text><text class="d-m" x="46" y="224">显存放不下的“记忆”暂存在这里</text><text class="d-m" x="46" y="242">每个模型的程序本身也要占 5 GB 左右</text>
+  <rect class="d-box" x="390" y="76" width="170" height="180" rx="8"/><text class="d-b" x="406" y="102">③ 显存：31 GB</text><text class="d-m" x="406" y="124">放模型本身</text><text class="d-m" x="406" y="142">和对话的“记忆”</text>
+  <rect class="d-soft" x="402" y="160" width="146" height="22" rx="4"/><text class="d-t" x="412" y="176">模型 1</text>
+  <rect class="d-soft" x="402" y="186" width="146" height="22" rx="4"/><text class="d-t" x="412" y="202">模型 2</text>
+  <rect class="d-soft" x="402" y="212" width="146" height="22" rx="4"/><text class="d-t" x="412" y="228">…… 模型 N</text>
+  <rect class="d-box" x="580" y="76" width="170" height="80" rx="8"/><text class="d-b" x="596" y="102">④ 算力</text><text class="d-m" x="596" y="124">同一时刻能做</text><text class="d-m" x="596" y="142">多少计算</text>
+  <rect class="d-box" x="580" y="176" width="170" height="80" rx="8"/><text class="d-b" x="596" y="202">⑤ 显存带宽</text><text class="d-m" x="596" y="224">每秒能从显存</text><text class="d-m" x="596" y="242">读出多少数据</text>
+</svg></div>
+<figcaption>实验的核心问题：模型数量 N 一点点加大时，这五样里<b>哪一样先用完</b>，用完时表现成什么样。</figcaption>
+</figure>
+
+<h2><span class="step">三个概念</span>读懂后面内容需要的全部背景</h2>
+<p>后面的结论都建立在三个概念上。每个只需要一段话。</p>
+<h3>1. 模型是一个字一个字往外吐的</h3>
+<p>模型回答问题分两步。先把你的问题整个读一遍，这一步叫 <strong>prefill</strong>。然后一个字（准确说是一个 token）一个字地生成回答，这一步叫<strong>解码</strong>。我们最关心的速度指标是<strong>“出一个字要多久”</strong>，后文记作<strong>每字耗时</strong>（英文缩写 TPOT），单位是毫秒。</p>
+<h3>2. 模型有“记忆”，记忆要占显存</h3>
+<p>模型读过的内容会存成一份中间结果，叫 <strong>KV 缓存</strong>。有了它，同一段开头（比如同一份长文档）再次出现时不用重读。KV 缓存放在显存里，很占地方。显存放不下时，可以把一部分挪到主机内存，用到时再搬回来，这叫<strong>溢出</strong>。</p>
+<h3>3. 一起算比分开算划算</h3>
+<p>同一个模型同时收到好几个请求时，可以把它们合成一批，一步同时为所有请求各出一个字。这叫<strong>批处理</strong>。对小模型来说，一批算 2 个请求和算 8 个请求，花的时间几乎一样。记住这一点，它是后面最重要的一个结论的来源。</p>
+<figure class="wide">
+<p class="ftitle">一个请求的一生</p>
+<div class="scroll"><svg viewBox="0 0 780 210" role="img" aria-label="请求先 prefill 生成 KV 缓存，再循环解码，每步出一个字">
+  <defs><marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--ink2)"/></marker></defs>
+  <rect class="d-box" x="10" y="50" width="130" height="64" rx="8"/><text class="d-b" x="24" y="76">你的问题</text><text class="d-m" x="24" y="96">很长的一段文字</text>
+  <path class="d-ln" d="M140 82 H190" marker-end="url(#ar)"/>
+  <rect class="d-soft" x="192" y="50" width="150" height="64" rx="8"/><text class="d-b" x="206" y="76">prefill</text><text class="d-m" x="206" y="96">整段读一遍</text>
+  <path class="d-ln" d="M342 82 H392" marker-end="url(#ar)"/>
+  <rect class="d-soft" x="394" y="50" width="190" height="64" rx="8"/><text class="d-b" x="408" y="76">解码</text><text class="d-m" x="408" y="96">每一步出一个字，重复很多步</text>
+  <path class="d-ln" d="M560 50 C560 20 440 20 440 48" marker-end="url(#ar)"/><text class="d-a" x="462" y="18">每步的耗时 = 每字耗时</text>
+  <path class="d-ln" d="M584 82 H634" marker-end="url(#ar)"/>
+  <rect class="d-box" x="636" y="50" width="134" height="64" rx="8"/><text class="d-b" x="650" y="76">回答</text><text class="d-m" x="650" y="96">一个字一个字出来</text>
+  <rect class="d-good" x="192" y="150" width="392" height="44" rx="8"/><text class="d-b" x="206" y="170">KV 缓存（模型的记忆）</text><text class="d-m" x="206" y="187">prefill 写入，解码每一步都要读；默认放在显存里</text>
+  <path class="d-ln" d="M267 114 V148" marker-end="url(#ar)"/><path class="d-ln" d="M489 148 V116" marker-end="url(#ar)"/>
+</svg></div>
+<figcaption>首字时间（TTFT）是从发出请求到第一个字出来的时间，主要花在 prefill 上。之后每个字的间隔就是<b>每字耗时</b>。</figcaption>
+</figure>
+
+<h2><span class="step">实验设计</span>我们是怎么测的</h2>
+<p>机器有两张 RTX 5090 显卡（每张 32 GB 显存）、32 核 CPU 和 60 GB 内存。我们把 N 个<strong>一模一样</strong>的模型全部放在其中一张显卡上，然后让 N 一点点变大。每个模型都有自己的客户端，按固定速率发请求：每秒 2 个请求，每个请求带一段很长的开头（约 6000 个 token），生成 128 个 token 的回答。</p>
+<div class="pair">
+  <div class="card"><h4>小模型：Qwen2.5-0.5B</h4><p>模型本身约 1 GB，加上记忆等共占 3.2 GB 显存。</p><p>测了 N = 1、2、3、4、6、8。</p></div>
+  <div class="card"><h4>中号模型：Qwen2.5-3B</h4><p>模型本身约 5.8 GB，共占 7.7 GB 显存。</p><p>一张卡最多放 4 个，测了 N = 1、2、3、4。</p></div>
+</div>
+<p>每组模型都在两种“记忆压力”下各测一遍。区别只有一个：需要记住的内容是否放得进显存。</p>
+<figure class="wide">
+<p class="ftitle">两种情况：记忆放得下，和放不下</p>
+<div class="scroll"><svg viewBox="0 0 780 250" role="img" aria-label="放得下时所有前缀都在显存，放不下时大部分在内存，需要时搬回显存">
+  <defs><marker id="ar2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--bad)"/></marker></defs>
+  <text class="d-b" x="20" y="24">放得下</text><text class="d-m" x="80" y="24">要记住的内容比显存里的位置少</text>
+  <rect class="d-zone" x="20" y="40" width="340" height="190" rx="10"/><text class="d-m" x="34" y="62">显存里留给记忆的位置</text>
+  <g><rect class="d-good" x="34" y="76" width="70" height="34" rx="5"/><rect class="d-good" x="112" y="76" width="70" height="34" rx="5"/><rect class="d-good" x="190" y="76" width="70" height="34" rx="5"/><rect class="d-good" x="268" y="76" width="70" height="34" rx="5"/>
+  <rect class="d-good" x="34" y="118" width="70" height="34" rx="5"/><rect class="d-good" x="112" y="118" width="70" height="34" rx="5"/><rect class="d-good" x="190" y="118" width="70" height="34" rx="5"/><rect class="d-good" x="268" y="118" width="70" height="34" rx="5"/></g>
+  <text class="d-g" x="34" y="184">全部在显存里，随用随取</text><text class="d-m" x="34" y="206">不需要和主机内存来回搬运</text>
+  <text class="d-b" x="420" y="24">放不下（溢出）</text><text class="d-m" x="536" y="24">内容是位置的 3 倍</text>
+  <rect class="d-zone" x="420" y="40" width="160" height="190" rx="10"/><text class="d-m" x="434" y="62">显存</text>
+  <rect class="d-good" x="434" y="76" width="62" height="34" rx="5"/><rect class="d-good" x="504" y="76" width="62" height="34" rx="5"/><rect class="d-good" x="434" y="118" width="62" height="34" rx="5"/><rect class="d-good" x="504" y="118" width="62" height="34" rx="5"/>
+  <text class="d-m" x="434" y="184">只放得下一小部分</text>
+  <rect class="d-zone" x="620" y="40" width="150" height="190" rx="10"/><text class="d-m" x="634" y="62">主机内存</text>
+  <g><rect class="d-box" x="634" y="76" width="56" height="26" rx="4"/><rect class="d-box" x="698" y="76" width="56" height="26" rx="4"/><rect class="d-box" x="634" y="108" width="56" height="26" rx="4"/><rect class="d-box" x="698" y="108" width="56" height="26" rx="4"/><rect class="d-box" x="634" y="140" width="56" height="26" rx="4"/><rect class="d-box" x="698" y="140" width="56" height="26" rx="4"/><rect class="d-box" x="634" y="172" width="56" height="26" rx="4"/><rect class="d-box" x="698" y="172" width="56" height="26" rx="4"/></g>
+  <path d="M632 120 H584" stroke="var(--bad)" stroke-width="1.8" fill="none" marker-end="url(#ar2)"/><text class="d-r" x="566" y="212" text-anchor="middle">用到时搬回显存</text><text class="d-r" x="566" y="228" text-anchor="middle">这一步要靠 CPU</text>
+</svg></div>
+<figcaption>“放不下”的情况更接近真实服务：用户多、对话长，显存总是不够。这时每个请求都可能要先从内存把记忆搬回显存，<b>搬运由 CPU 完成</b>。</figcaption>
+</figure>
+<p>另外，所有模型地位平等，没有谁优先。GPU 上开了一个叫 MPS 的共享模式，它让多个程序可以真正同时使用 GPU，否则它们只能轮流用。之前的研究已经确认：不开 MPS，两个模型就会互相拖慢到 3 倍以上。</p>
+
+<h2><span class="step">发现一</span>模型越多，每个字出得越慢，但都跟得上</h2>
+<p>先看最干净的情况：记忆放得下。模型从 1 个加到 8 个，<strong>每个模型都完整处理了自己的请求，没有请求超时或排队</strong>。8 个小模型合起来每秒输出约 2000 个 token。</p>
+<p>代价体现在速度上。下面的图把“单独跑时的每字耗时”记为 1，看模型变多后慢了多少倍。</p>
+<figure class="wide">
+<p class="ftitle">每个模型慢了多少倍</p>
+<p class="fsub">每字耗时相对于 N=1 的倍数（记忆放得下，每个模型每秒 2 个请求）</p>
+<div class="legend"><span><i style="background:var(--s1)"></i>小模型 0.5B</span><span><i style="background:var(--s2)"></i>中号模型 3B</span></div>
+<div class="chart" id="c1"></div>
+<figcaption>小模型到 8 个时慢到 3.6 倍（1.6 → 5.7 毫秒）。中号模型更重，<b>2 个的拖慢程度就接近 3–4 个小模型</b>，4 个时慢到 2.5 倍（6.8 → 17.3 毫秒），同时显存也用到了 30.4 / 31.4 GB，第 5 个放不进去。</figcaption>
+</figure>
+<p>这一步看起来很温和：慢是慢了，但是平滑、可预期。直到我们换到“记忆放不下”的情况。</p>
+
+<h2><span class="step">发现二</span>真正让系统崩掉的，是 CPU 上的一个默认设置</h2>
+<p>在“记忆放不下”的情况下，3 个小模型一切正常。加到第 4 个，系统突然崩溃：每个模型 300 个请求里约有 130 个超时，总输出掉到应有的 18%。</p>
+<p>奇怪的是，<strong>崩溃时 GPU 几乎是闲着的</strong>，主机 CPU 却被占到 93% 以上。GPU 没事可做，是因为数据卡在了 CPU 这一侧。</p>
+<figure class="wide">
+<p class="ftitle">崩溃现场：同一组实验，只差一个设置</p>
+<p class="fsub">4 个小模型，记忆放不下。横轴是开始测量后的秒数</p>
+<div class="legend"><span><i style="background:var(--bad)"></i>默认设置</span><span><i style="background:var(--s3)"></i>限制每个模型的 CPU 线程数</span></div>
+<p class="fsub" style="margin:8px 0 0"><b style="color:var(--ink)">模型程序占用的 CPU 核数</b>（机器一共 32 个核）</p>
+<div class="chart" id="c3a"></div>
+<p class="fsub" style="margin:8px 0 0"><b style="color:var(--ink)">GPU 忙碌程度</b>（1 = 一直在忙）</p>
+<div class="chart" id="c3b"></div>
+<p class="fsub" style="margin:8px 0 0"><b style="color:var(--ink)">累计完成的请求数</b>（应完成 1200 个）</p>
+<div class="chart" id="c3c"></div>
+<figcaption>默认设置下，开始十几秒后 CPU 突然被占满 32 核，GPU 随即停工，完成的请求几乎不再增长。加了限制后，CPU 只用 3 核左右，1200 个请求全部按时完成。默认设置我们一共跑了 4 次，<b>4 次都崩</b>。</figcaption>
+</figure>
+<h3>原因：线程比 CPU 核多太多</h3>
+<p>每个模型的程序里都有一组负责 CPU 计算的工作线程。默认情况下，程序会按“整台机器都归我用”来开线程，这台 32 核的机器上每个模型开了约 135 个。只跑一个模型时没问题。跑 4 个模型，就是 540 个线程抢 32 个核。</p>
+<p>更糟的是，这些线程在等同伴时不会让出 CPU，而是原地“空转”。于是真正要干活的线程抢不到核，搬运记忆越来越慢，积压越来越多，最后所有核都在空转，系统卡死。记忆放不下时每个请求都要 CPU 搬运数据，所以最先中招。</p>
+<figure class="wide">
+<p class="ftitle">线程数和核数的对比</p>
+<div class="scroll"><svg viewBox="0 0 780 190" role="img" aria-label="默认设置 4 个模型共约 540 个线程抢 32 个核；限制后 4 个模型共 16 个线程">
+  <text class="d-b" x="20" y="26">默认设置</text>
+  <rect class="d-bad" x="20" y="40" width="80" height="40" rx="6"/><rect class="d-bad" x="108" y="40" width="80" height="40" rx="6"/><rect class="d-bad" x="196" y="40" width="80" height="40" rx="6"/><rect class="d-bad" x="284" y="40" width="80" height="40" rx="6"/>
+  <text class="d-t" x="60" y="65" text-anchor="middle">135 线程</text><text class="d-t" x="148" y="65" text-anchor="middle">135 线程</text><text class="d-t" x="236" y="65" text-anchor="middle">135 线程</text><text class="d-t" x="324" y="65" text-anchor="middle">135 线程</text>
+  <text class="d-r" x="20" y="104">4 个模型 ≈ 540 个线程</text><text class="d-m" x="20" y="124">抢 32 个核，互相空转，系统卡死</text>
+  <text class="d-b" x="420" y="26">限制为每个模型 4 个线程</text>
+  <rect class="d-good" x="420" y="40" width="80" height="40" rx="6"/><rect class="d-good" x="508" y="40" width="80" height="40" rx="6"/><rect class="d-good" x="596" y="40" width="80" height="40" rx="6"/><rect class="d-good" x="684" y="40" width="80" height="40" rx="6"/>
+  <text class="d-t" x="460" y="65" text-anchor="middle">4 线程</text><text class="d-t" x="548" y="65" text-anchor="middle">4 线程</text><text class="d-t" x="636" y="65" text-anchor="middle">4 线程</text><text class="d-t" x="724" y="65" text-anchor="middle">4 线程</text>
+  <text class="d-g" x="420" y="104">4 个模型 = 16 个线程</text><text class="d-m" x="420" y="124">少于 32 个核，各干各的</text>
+  <text class="d-m" x="20" y="162">机器的 32 个核：</text>
+  <g id="cores"></g>
+</svg></div>
+<figcaption>修复只需要一个环境变量：<code>OMP_NUM_THREADS=4</code>。规则是<b>每个模型的线程数 ≈ 核数 ÷ 模型数</b>。</figcaption>
+</figure>
+<h3>我们怎么确认是它</h3>
+<div class="pair">
+  <div class="card"><h4>排除了其他嫌疑</h4><p>负责存记忆的后台程序几乎不占 CPU。一个看起来可疑的缓冲区报警，在正常运行时也大量出现；把缓冲区加大一倍也没用。</p></div>
+  <div class="card"><h4>只改一个变量</h4><p>其他完全不变，只限制线程数：崩溃消失，0 个请求失败。线程数设成 2、4、8，结果都一样。</p></div>
+  <div class="card"><h4>看到了“空转”本身</h4><p>逐个线程采样：崩溃瞬间约 27 个线程占满 32 核，全部在空转，被系统强行打断的次数涨了 42 倍。</p></div>
+  <div class="card"><h4>换模型也一样</h4><p>中号模型在 4 个、记忆放不下、不加限制时同样崩溃：1200 个请求里 180 个超时。</p></div>
+</div>
+<div class="note bad"><p><strong>不只是“记忆放不下”时才出事。</strong>8 个小模型、记忆放得下时，默认设置下 4 次运行里有 2 次出现了十几秒的同类卡顿。它会自己恢复，平均速度看不出问题，但最慢的那批请求从 0.9 秒拖到了最长 8.4 秒。加了限制后跑了 3 次，一次都没出现。</p></div>
+<div class="note good"><p><strong>限制线程没有代价。</strong>单个模型时加不加限制，各项结果相差不到 3%。</p></div>
+
+<h2><span class="step">发现三</span>能承受的请求量，比“每秒 2 个”大得多</h2>
+<p>前面都是在每个模型每秒 2 个请求下测的。在这个负载下所有模型都跟得上，所以只能看出“慢了多少”，看不出“离撑不住还有多远”。于是我们固定模型数量，不断加大每个模型的请求速率，直到请求开始排队。</p>
+<figure class="wide">
+<p class="ftitle">小模型：一直加到 8 倍、16 倍负载，都没有排队</p>
+<p class="fsub">所有模型合计每秒输出的 token 数，随每个模型的请求速率变化（记忆放得下，已限制线程）</p>
+<div class="legend"><span><i style="background:var(--s3)"></i>1 个模型</span><span><i style="background:var(--s1)"></i>4 个模型</span><span><i style="background:var(--s2)"></i>8 个模型</span></div>
+<div class="chart" id="c5"></div>
+<figcaption>三条线都是直线往上走，说明给多少请求就处理多少。8 个小模型每个能扛每秒 16 个请求（基准的 8 倍），合计每秒约 15000 个 token，排队时间为 0。我们没有继续往上找极限。</figcaption>
+</figure>
+<p>原因就是前面说的批处理：请求变多时，模型只是把更多请求塞进同一步一起算，而每一步的耗时涨得很慢。所以发现一里“8 个模型慢了 3.6 倍”说的是<strong>速度</strong>，不是<strong>容量</strong>。</p>
+<figure class="wide">
+<p class="ftitle">中号模型：会到顶，但顶在一个参数上</p>
+<p class="fsub">同样的图，换成 3B 模型。空心红圈表示请求开始排队</p>
+<div class="legend"><span><i style="background:var(--s3)"></i>1 个模型</span><span><i style="background:var(--s1)"></i>2 个模型</span><span><i style="background:var(--s2)"></i>4 个模型</span></div>
+<div class="chart" id="c6"></div>
+<figcaption>每个模型最多撑到每秒 12 / 8 / 4 个请求（1 / 2 / 4 个模型时），再往上就排队。限制它的是我们给每个模型设的“最多同时处理 16 个请求”，GPU 本身还没到极限。另外可以看到：<b>模型越多，合计的上限反而越高</b>，因为每个模型各带 16 个名额。</figcaption>
+</figure>
+<div class="note"><p><strong>这个上限是我们自己做的取舍。</strong>为了让每个中号模型多留些显存放记忆，我们把“同时处理的请求数”从 64 调到了 16。多出来的记忆空间，是拿并发能力换的。这两个设置要放在一起考虑。</p></div>
+
+<h2><span class="step">发现四</span>多模型的真实代价：批处理被拆散了</h2>
+<p>把同样多的请求（合计每秒 32 个）用三种方式分配，看每个字要多久：</p>
+<figure>
+<p class="ftitle">同样的总请求量，分给越多模型，每个字越慢</p>
+<p class="fsub">小模型，合计每秒 32 个请求时的每字耗时（毫秒）</p>
+<div class="bars">
+  <div class="bar"><div class="t">1 个模型独自处理</div><div class="track"><div class="fill" style="width:20%"></div><span class="v">1.97 ms</span></div></div>
+  <div class="bar"><div class="t">分给 4 个模型</div><div class="track"><div class="fill" style="width:46.9%"></div><span class="v">4.56 ms</span></div></div>
+  <div class="bar"><div class="t">分给 8 个模型</div><div class="track"><div class="fill" style="width:80%"></div><span class="v">7.78 ms</span></div></div>
+</div>
+<figcaption>总工作量一样，分给 8 个模型慢了约 4 倍。</figcaption>
+</figure>
+<figure class="wide">
+<p class="ftitle">为什么：不同模型之间不能拼成一批</p>
+<div class="scroll"><svg viewBox="0 0 780 200" role="img" aria-label="一个模型把 8 个请求合成一批一步算完；8 个模型各算各的，每个都要付一次单步开销">
+  <text class="d-b" x="20" y="24">1 个模型，8 个请求</text>
+  <rect class="d-good" x="20" y="40" width="330" height="70" rx="8"/><text class="d-m" x="34" y="60">一步</text>
+  <g><rect class="d-box" x="34" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="72" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="110" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="148" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="186" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="224" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="262" y="70" width="32" height="28" rx="4"/><rect class="d-box" x="300" y="70" width="32" height="28" rx="4"/></g>
+  <text class="d-g" x="20" y="136">8 个请求合成一批，付一次开销</text>
+  <text class="d-b" x="420" y="24">8 个模型，每个 1 个请求</text>
+  <g><rect class="d-bad" x="420" y="40" width="78" height="32" rx="6"/><rect class="d-bad" x="506" y="40" width="78" height="32" rx="6"/><rect class="d-bad" x="592" y="40" width="78" height="32" rx="6"/><rect class="d-bad" x="678" y="40" width="78" height="32" rx="6"/><rect class="d-bad" x="420" y="78" width="78" height="32" rx="6"/><rect class="d-bad" x="506" y="78" width="78" height="32" rx="6"/><rect class="d-bad" x="592" y="78" width="78" height="32" rx="6"/><rect class="d-bad" x="678" y="78" width="78" height="32" rx="6"/></g>
+  <g><rect class="d-box" x="444" y="44" width="30" height="24" rx="4"/><rect class="d-box" x="530" y="44" width="30" height="24" rx="4"/><rect class="d-box" x="616" y="44" width="30" height="24" rx="4"/><rect class="d-box" x="702" y="44" width="30" height="24" rx="4"/><rect class="d-box" x="444" y="82" width="30" height="24" rx="4"/><rect class="d-box" x="530" y="82" width="30" height="24" rx="4"/><rect class="d-box" x="616" y="82" width="30" height="24" rx="4"/><rect class="d-box" x="702" y="82" width="30" height="24" rx="4"/></g>
+  <text class="d-r" x="420" y="136">8 个小批，付 8 次开销，还要在 GPU 上互相等</text>
+  <text class="d-m" x="20" y="172">小方块 = 一个请求在这一步要出的那个字；色块 = 一次“算一步”</text>
+</svg></div>
+<figcaption>所以多模型共用 GPU 换来的是<b>隔离</b>（不同模型、不同团队、不同版本各跑各的），而不是效率。如果只是同一个模型想多扛流量，应该让一个模型做大批处理。</figcaption>
+</figure>
+
+<h2><span class="step">发现五</span>记忆放不下时：小模型没事，中号模型要排队</h2>
+<p>解决了线程问题之后，再回头看“记忆放不下”的情况。</p>
+<figure class="wide">
+<p class="ftitle">小模型：限制线程后，一路平稳到 6 个</p>
+<p class="fsub">实际输出占应输出的百分比（小模型，记忆放不下）</p>
+<div class="legend"><span><i style="background:var(--bad)"></i>默认设置</span><span><i style="background:var(--s3)"></i>限制线程</span></div>
+<div class="chart" id="c2"></div>
+<figcaption>默认设置在第 4 个模型处崩溃。限制线程后，速度和“记忆放得下”时几乎一样。到 6 个模型时，<b>主机内存先不够了</b>（开始使用硬盘上的交换空间），而这时 GPU 只用了七成。</figcaption>
+</figure>
+<p>中号模型不一样。它的记忆单份就有 0.21 GB，是小模型的 3 倍，显存里只留得下 4 份左右。几乎每个请求都要先把自己的记忆从内存搬回来，于是请求开始排队，而且模型越多排得越久：</p>
+<figure>
+<p class="ftitle">中号模型：请求平均排队多久</p>
+<p class="fsub">记忆放不下时，一个请求开始被处理前的平均等待（已限制线程）</p>
+<div class="bars">
+  <div class="bar"><div class="t">1 个模型</div><div class="track"><div class="fill alt" style="width:1.4%"></div><span class="v">0.08 秒</span></div></div>
+  <div class="bar"><div class="t">2 个模型</div><div class="track"><div class="fill alt" style="width:3.6%"></div><span class="v">0.21 秒</span></div></div>
+  <div class="bar"><div class="t">3 个模型</div><div class="track"><div class="fill alt" style="width:12.2%"></div><span class="v">0.72 秒</span></div></div>
+  <div class="bar"><div class="t">4 个模型</div><div class="track"><div class="fill alt" style="width:80%"></div><span class="v">4.7 秒</span></div></div>
+</div>
+<figcaption>每个字的生成速度并没有变差，时间都花在“等着被处理”上。原因有两层：显存里的记忆位置限制了同时能处理的请求数；到 4 个模型时，搬一次记忆也从 0.09 秒变成了 0.4 秒，因为搬运要和 4 个模型自己的解码抢 GPU。</figcaption>
+</figure>
+
+<h2><span class="step">汇总</span>到底什么先用完</h2>
+<p>回到开头的问题。答案取决于模型大小和记忆压力，但第一行对所有情况都成立。</p>
+<figure class="wide"><div class="scroll">
+<table>
+<tr><th>情况</th><th>最先出问题的</th><th>表现</th><th>我们测到的位置</th></tr>
+<tr><td><b>任何情况，默认设置</b></td><td><span class="pill bad">CPU 线程</span></td><td>系统卡死或间歇卡顿，GPU 却闲着</td><td>记忆放不下：4 个模型必崩<br>记忆放得下：8 个模型有一半概率卡顿</td></tr>
+<tr><td>小模型，记忆放得下</td><td><span class="pill n">GPU 时间</span></td><td>每个字变慢，但请求不排队</td><td>6–8 个模型后变慢加快；8 个模型仍可扛 8 倍负载</td></tr>
+<tr><td>小模型，记忆放不下</td><td><span class="pill n">主机内存</span></td><td>开始用硬盘交换空间</td><td>6 个模型（60 GB 内存）</td></tr>
+<tr><td>中号模型，记忆放得下</td><td><span class="pill n">显存</span> <span class="pill n">并发名额</span></td><td>放不进第 5 个；高负载时请求排队</td><td>4 个模型占 30.4 / 31.4 GB</td></tr>
+<tr><td>中号模型，记忆放不下</td><td><span class="pill n">搬运记忆的排队</span></td><td>请求等待时间随模型数快速变长</td><td>4 个模型时平均等 4.7 秒</td></tr>
+</table></div>
+<figcaption>除第一行外，其余都是在限制线程之后测到的。</figcaption>
+</figure>
+
+<h2><span class="step">建议</span>如果你也要在一张 GPU 上放多个模型</h2>
+<ol class="check">
+<li><strong>先限制每个模型的 CPU 线程数。</strong>设 <code>OMP_NUM_THREADS</code>，取值不超过“CPU 核数 ÷ 模型数”。这一条没有代价，却能避免最严重的故障。</li>
+<li><strong>打开 MPS。</strong>否则多个模型只能轮流使用 GPU。</li>
+<li><strong>预期每个字会变慢，而不是服务不过来。</strong>小模型 8 个时慢 3.6 倍，中号模型 4 个时慢 2.5 倍。能不能接受，取决于你的延迟要求。</li>
+<li><strong>为了隔离才拆成多个模型。</strong>同一个模型想扛更多流量，交给一个实例做批处理更快。</li>
+<li><strong>尽量让记忆留在显存里。</strong>放不下时，小模型问题不大，大一点的模型会明显排队。</li>
+<li><strong>算内存，不只算显存。</strong>每个模型的程序自己要占约 5 GB 主机内存，溢出的记忆还要另算。</li>
+<li><strong>“留给记忆的显存”和“同时处理的请求数”一起定。</strong>它们此消彼长。</li>
+<li><strong>判断是否撑得住，看请求有没有排队。</strong>GPU 的“忙碌程度”读数会误导人：负载翻倍时它甚至可能下降。</li>
+</ol>
+
+<h2><span class="step">局限</span>这次没有回答的问题</h2>
+<ul>
+<li>小模型的容量极限在哪里。我们加到了基准的 8–16 倍都没有排队，没有继续往上找。高负载下的每次测量只有十几秒，还不能说明能长时间稳定。</li>
+<li>大多数数据点只跑了一次。崩溃（4 次）和 8 个模型的卡顿（共 7 次）是重复验证过的。</li>
+<li>中号模型搬运记忆时，具体卡在 GPU 的哪个环节，还没有分清。</li>
+<li>是哪一段代码在空转，没有定位到。机器没有相应的调试权限，只能确认空转这个行为。</li>
+<li>没有测的情况：大小模型混着放、模型之间分优先级、只做 prefill 的服务方式、不开 MPS 时随模型数的变化。</li>
+<li>8 个小模型的 7 次运行里，有 2 次各出现 1 个请求（每次共 2400 个）因客户端连接中断而失败，模型一侧没有报错，原因没有查。</li>
+<li>只在这一台机器、一种请求形态上测过。</li>
+</ul>
+
+<h2><span class="step">名词表</span>文中出现的术语</h2>
+<dl>
+<dt>token</dt><dd>模型处理文字的基本单位，大致相当于一个字或半个词。</dd>
+<dt>每字耗时（TPOT）</dt><dd>生成相邻两个 token 之间的时间。越小越快。</dd>
+<dt>首字时间（TTFT）</dt><dd>从发出请求到第一个 token 出来的时间。</dd>
+<dt>prefill / 解码</dt><dd>先整段读入问题（prefill），再逐个 token 生成回答（解码）。</dd>
+<dt>KV 缓存</dt><dd>模型读过内容后留下的中间结果，文中称“记忆”。占显存，可以复用。</dd>
+<dt>溢出（offload）</dt><dd>显存放不下的 KV 缓存挪到主机内存，用到时再搬回显存。</dd>
+<dt>批处理</dt><dd>同一个模型把多个请求合在一步里一起计算。</dd>
+<dt>MPS</dt><dd>NVIDIA 的多进程共享模式，让多个程序真正同时使用一张 GPU。</dd>
+<dt>线程</dt><dd>程序里并行干活的执行单元。线程数远多于 CPU 核数时会互相妨碍。</dd>
+<dt>QPS</dt><dd>每秒请求数。本文基准是每个模型每秒 2 个。</dd>
+</dl>
+
+<p class="foot">数据来自 2026 年 10 月 1–2 日在一台双 RTX 5090 工作站上的实验，所有图表由实测数据绘制。完整技术报告、每个决定的记录和原始数据见代码仓库中的 <code>reports/report_colocation_multi.md</code> 与 <code>DECISIONS_MULTI_COLOC.md</code>。</p>
+</div>
+
+<script>
+const D = {"stock":{"cpu":[[0,0.48],[4,6.17],[8,5.6],[12,24.81],[16,31.9],[20,31.89],[24,31.89],[28,31.89],[32,31.91],[36,31.88],[40,31.89],[44,31.93],[48,31.9],[52,30.41],[56,31.89],[60,31.9],[64,31.9],[68,31.85],[72,31.92],[76,31.89],[80,31.84],[84,31.94],[88,31.86],[92,31.88],[96,31.93],[100,31.89],[104,31.9],[108,31.89],[112,31.86],[116,31.96],[120,31.9],[124,31.91],[128,31.9],[132,31.87],[136,31.91],[140,31.88],[144,30.57],[148,31.87],[152,31.9],[156,31.92],[160,31.91],[164,31.93],[168,31.93],[172,31.91],[176,31.9],[180,31.88],[184,31.95],[188,31.91],[192,31.9],[196,29.54]],"gpu":[[0,0.09],[4,0.53],[8,0.56],[12,0.36],[16,0.01],[20,0.0],[24,0.0],[28,0.0],[32,0.0],[36,0.0],[40,0.0],[44,0.0],[48,0.01],[52,0.06],[56,0.15],[60,0.0],[64,0.0],[68,0.0],[72,0.0],[76,0.0],[80,0.03],[84,0.02],[88,0.0],[92,0.05],[96,0.05],[100,0.05],[104,0.0],[108,0.0],[112,0.0],[116,0.0],[120,0.0],[124,0.0],[128,0.0],[132,0.03],[136,0.0],[140,0.02],[144,0.21],[148,0.0],[152,0.0],[156,0.0],[160,0.0],[164,0.0],[168,0.0],[172,0.0],[176,0.0],[180,0.0],[184,0.0],[188,0.0],[192,0.05],[196,0.17]],"done":[[0,0],[4,10],[8,41],[12,71],[16,81],[20,81],[24,81],[28,81],[32,81],[36,81],[40,81],[44,81],[48,81],[52,82],[56,123],[60,125],[64,131],[68,131],[72,143],[76,155],[80,155],[84,160],[88,166],[92,167],[96,174],[100,175],[104,188],[108,190],[112,196],[116,206],[120,206],[124,214],[128,223],[132,223],[136,224],[140,230],[144,230],[148,262],[152,266],[156,266],[160,280],[164,294],[168,294],[172,294],[176,294],[180,301],[184,305],[188,305],[192,305],[196,321],[200,340]]},"capped":{"cpu":[[0,0.51],[4,2.66],[8,2.85],[12,3.42],[16,2.69],[20,3.72],[24,2.67],[28,3.07],[32,2.89],[36,4.02],[40,2.71],[44,3.67],[48,3.56],[52,3.37],[56,2.47],[60,2.86],[64,2.93],[68,3.39],[72,2.22],[76,3.53],[80,3.58],[84,3.31],[88,2.51],[92,2.65],[96,3.65],[100,2.54],[104,2.57],[108,3.14],[112,3.03],[116,3.95],[120,3.52],[124,3.07],[128,2.74],[132,3.73],[136,3.08],[140,3.5],[144,3.11],[148,1.33],[152,1.09],[156,0.09]],"gpu":[[0,0.0],[4,0.47],[8,0.59],[12,0.62],[16,0.54],[20,0.68],[24,0.63],[28,0.62],[32,0.56],[36,0.75],[40,0.49],[44,0.67],[48,0.71],[52,0.64],[56,0.55],[60,0.59],[64,0.54],[68,0.67],[72,0.53],[76,0.59],[80,0.7],[84,0.62],[88,0.62],[92,0.48],[96,0.78],[100,0.51],[104,0.52],[108,0.68],[112,0.57],[116,0.62],[120,0.73],[124,0.55],[128,0.6],[132,0.65],[136,0.66],[140,0.64],[144,0.62],[148,0.42],[152,0.25],[156,0.06]],"done":[[0,0],[4,10],[8,41],[12,71],[16,111],[20,141],[24,181],[28,213],[32,243],[36,275],[40,306],[44,334],[48,376],[52,409],[56,446],[60,472],[64,500],[68,529],[72,568],[76,588],[80,625],[84,664],[88,698],[92,724],[96,752],[100,789],[104,814],[108,844],[112,876],[116,907],[120,948],[124,982],[128,1011],[132,1038],[136,1077],[140,1109],[144,1149],[148,1174],[152,1193],[156,1200],[160,1200],[164,1200],[168,1200],[172,1200],[176,1200],[180,1200],[184,1200],[188,1200],[192,1200],[196,1200],[200,1200]]},"cap":{"small1":[[2,274,1.56,0],[3,411,1.59,0],[4,547,1.62,0],[6,819,1.64,0],[8,1091,1.66,0],[16,2168,1.74,0],[32,4277,1.97,0]],"small4":[[2,1045,2.6,0],[3,1565,3.11,0],[4,2085,3.62,0],[6,3118,4.23,0],[8,4144,4.56,0],[12,6173,4.93,0],[16,8171,5.35,0],[24,11993,6.67,0]],"small8":[[2,2014,5.59,0],[3,3015,7.07,0],[4,4011,7.78,0],[6,5983,8.59,0],[8,7930,9.27,0],[12,11705,11.51,0],[16,15324,12.81,0]],"medium1":[[2,273,6.78,0],[2.5,340,6.81,0],[3,408,6.84,0],[4,542,6.91,0],[8,1069,7.51,2],[12,1581,7.89,27],[16,1931,7.94,1029]],"medium2":[[2,523,9.84,0],[2.5,652,9.94,0],[3,781,9.98,0],[4,1037,10.16,0],[6,1543,10.79,2],[8,2042,11.21,23],[12,2617,11.62,2026]],"medium4":[[2,1036,17.31,0],[2.5,1292,17.55,0],[3,1546,17.93,0],[4,2048,18.57,6],[6,2974,19.98,605],[8,3047,20.15,5657]]}};
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent, text){ const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; if (parent) parent.appendChild(e); return e; }
+// Multi-series line chart with direct end labels, optional failure rings, crosshair + tooltip.
+function lineChart(id, c){
+  const host = document.getElementById(id); if (!host) return;
+  const W = 760, H = c.h || 300, m = {l:58, r:c.r == null ? 96 : c.r, t:14, b:44};
+  const svg = el("svg", {viewBox:`0 0 ${W} ${H}`, role:"img", "aria-label":c.aria || ""}, null);
+  const X = v => m.l + (v - c.x[0]) / (c.x[1] - c.x[0]) * (W - m.l - m.r);
+  const Y = v => H - m.b - (v / c.ymax) * (H - m.t - m.b);
+  c.yt.forEach(v => { el("line", {class:"grid", x1:m.l, x2:W - m.r, y1:Y(v), y2:Y(v)}, svg); el("text", {class:"ax", x:m.l - 8, y:Y(v) + 4, "text-anchor":"end"}, svg, c.yf ? c.yf(v) : v); });
+  c.xt.forEach(v => el("text", {class:"ax", x:X(v), y:H - m.b + 18, "text-anchor":"middle"}, svg, c.xf ? c.xf(v) : v));
+  if (c.xl) el("text", {class:"axt", x:(m.l + W - m.r) / 2, y:H - 6, "text-anchor":"middle"}, svg, c.xl);
+  if (c.ref) el("path", {d:c.ref.p.map((p,i) => (i ? "L" : "M") + X(p[0]) + " " + Y(p[1])).join(""), fill:"none", stroke:"var(--muted)", "stroke-width":1.2, "stroke-dasharray":"2 4"}, svg);
+  c.series.forEach(s => {
+    el("path", {d:s.p.map((p,i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(Math.min(p[1], c.ymax)).toFixed(1)).join(""), fill:"none", stroke:s.c, "stroke-width":2, "stroke-linejoin":"round", "stroke-linecap":"round"}, svg);
+    if (!c.nodots) s.p.forEach((p,i) => { el("circle", {cx:X(p[0]), cy:Y(p[1]), r:4, fill:s.c, stroke:"var(--surface)", "stroke-width":2}, svg);
+      if (s.ring && s.ring(p)) el("circle", {cx:X(p[0]), cy:Y(p[1]), r:9, fill:"none", stroke:"var(--bad)", "stroke-width":2}, svg); });
+    if (s.lab){ const p = s.p[s.p.length - 1]; el("text", {class:"lab", x:X(p[0]) + (s.ring && s.ring(p) ? 16 : 9), y:Y(Math.min(p[1], c.ymax)) + 4 + (s.dy || 0)}, svg, s.lab); }
+  });
+  const cross = el("line", {x1:0, x2:0, y1:m.t, y2:H - m.b, stroke:"var(--line2)", "stroke-width":1, visibility:"hidden"}, svg);
+  host.appendChild(svg);
+  const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; host.appendChild(tip);
+  const xs = [...new Set(c.series.flatMap(s => s.p.map(p => p[0])))].sort((a,b) => a - b);
+  function move(ev){
+    const r = svg.getBoundingClientRect(); const px = (ev.clientX - r.left) / r.width * W;
+    let best = xs[0]; xs.forEach(x => { if (Math.abs(X(x) - px) < Math.abs(X(best) - px)) best = x; });
+    cross.setAttribute("x1", X(best)); cross.setAttribute("x2", X(best)); cross.setAttribute("visibility", "visible");
+    const rows = c.series.map(s => { const p = s.p.find(q => q[0] === best); return p ? `${s.n}：${c.tf ? c.tf(p, s) : p[1]}` : null; }).filter(Boolean);
+    tip.innerHTML = `<b>${c.tx ? c.tx(best) : best}</b><br>` + rows.join("<br>");
+    tip.style.left = Math.min(Math.max(X(best) / W * r.width, 70), r.width - 70) + "px"; tip.style.top = (m.t / H * r.height + 34) + "px"; tip.hidden = false;
+  }
+  svg.addEventListener("pointermove", move); svg.addEventListener("pointerdown", move);
+  svg.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+}
+// 32 cores row in the thread diagram
+(function(){ const g = document.getElementById("cores"); if (!g) return; for (let i = 0; i < 32; i++) el("rect", {class:"d-box", x:130 + i * 19, y:150, width:14, height:14, rx:2}, g); })();
+
+const sm = [1.56,1.79,2.19,2.60,3.63,5.70], md = [6.78,9.84,13.36,17.31];
+lineChart("c1", {x:[1,8], xt:[1,2,3,4,6,8], yt:[1,2,3,4], ymax:4.2, h:300, xl:"同一张 GPU 上的模型数量 N", yf:v => v + "×", aria:"每字耗时相对 N=1 的倍数随模型数量上升",
+  tx:n => n + " 个模型", tf:(p,s) => p[1].toFixed(2) + "×（" + p[2] + " 毫秒）",
+  series:[{n:"小模型", c:"var(--s1)", lab:"小模型 3.6×", p:[1,2,3,4,6,8].map((n,i) => [n, sm[i]/sm[0], sm[i]])},
+          {n:"中号模型", c:"var(--s2)", lab:"中号 2.5×", p:[1,2,3,4].map((n,i) => [n, md[i]/md[0], md[i]])}]});
+lineChart("c2", {x:[1,6], xt:[1,2,3,4,5,6], yt:[0,25,50,75,100], ymax:108, h:260, xl:"模型数量 N", yf:v => v + "%", aria:"默认设置在 N=4 时输出跌到 18%，限制线程后到 N=6 都是 100%",
+  tx:n => n + " 个模型", tf:p => p[1] + "%",
+  series:[{n:"限制线程", c:"var(--s3)", lab:"限制线程", p:[[1,100],[2,100],[3,100],[4,100],[5,100],[6,100]]},
+          {n:"默认设置", c:"var(--bad)", lab:"崩溃 18%", ring:p => p[1] < 50, p:[[1,100],[2,100],[3,100],[4,18]]}]});
+const T = {x:[0,200], xt:[0,50,100,150,200], nodots:true, r:22, tx:t => "第 " + t + " 秒"};
+lineChart("c3a", {...T, h:170, yt:[0,16,32], ymax:34, tf:p => p[1].toFixed(1) + " 核", aria:"默认设置下 CPU 在十几秒后被占满 32 核",
+  series:[{n:"默认设置", c:"var(--bad)", p:D.stock.cpu},{n:"限制线程", c:"var(--s3)", p:D.capped.cpu}]});
+lineChart("c3b", {...T, h:150, yt:[0,0.5,1], ymax:1.05, tf:p => p[1].toFixed(2), aria:"默认设置下 GPU 随即停工",
+  series:[{n:"默认设置", c:"var(--bad)", p:D.stock.gpu},{n:"限制线程", c:"var(--s3)", p:D.capped.gpu}]});
+lineChart("c3c", {...T, h:190, yt:[0,400,800,1200], ymax:1260, xl:"开始测量后的秒数", tf:p => p[1] + " 个", aria:"默认设置下完成的请求几乎不再增长",
+  series:[{n:"默认设置", c:"var(--bad)", p:D.stock.done},{n:"限制线程", c:"var(--s3)", p:D.capped.done}]});
+const capS = (k, n, c, lab, dy) => ({n, c, lab, dy, ring:p => p[3] >= 50, p:D.cap[k].map(r => [r[0], r[1], r[2], r[3]])});
+const capTip = p => p[1].toLocaleString() + " token/秒，每字 " + p[2] + " 毫秒" + (p[3] >= 50 ? "，排队 " + (p[3]/1000).toFixed(1) + " 秒" : "");
+lineChart("c5", {x:[0,32], xt:[2,4,8,12,16,24,32], yt:[0,4000,8000,12000,16000], ymax:16800, h:320, xl:"每个模型每秒的请求数", yf:v => v ? v/1000 + "k" : "0", tx:q => "每个模型 " + q + " 请求/秒", tf:capTip, aria:"小模型的合计输出随请求速率线性上升，没有排队",
+  series:[capS("small1","1 个模型","var(--s3)","1 个模型"), capS("small4","4 个模型","var(--s1)","4 个模型"), capS("small8","8 个模型","var(--s2)","8 个模型")]});
+lineChart("c6", {x:[0,16], xt:[2,4,6,8,12,16], yt:[0,1000,2000,3000], ymax:3400, h:320, xl:"每个模型每秒的请求数", yf:v => v ? v/1000 + "k" : "0", tx:q => "每个模型 " + q + " 请求/秒", tf:capTip, aria:"中号模型在并发名额用完后开始排队，输出到顶",
+  series:[capS("medium1","1 个模型","var(--s3)","1 个模型"), capS("medium2","2 个模型","var(--s1)","2 个模型"), capS("medium4","4 个模型","var(--s2)","4 个模型", -8)]});
+</script>
