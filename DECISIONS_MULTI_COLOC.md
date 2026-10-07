@@ -214,3 +214,19 @@ collapse mechanism is now measured at the thread level, not inferred.
 Not done, by decision: locating the exact small-cohort capacity cliff; separating which
 shared resource medium offload reloads queue on (copy engines / MPS kernels / PCIe);
 stack-level identification of the spinning code (no ptrace/perf/sudo on this box).
+
+## E. Post-hoc (2026-10-07)
+
+- **Telemetry name collision found and repaired.** Per-second telemetry files are named
+  per launch (`mc_<cohort>_n<N>_<arm><suffix>`), and launches with the same N/arm/suffix
+  reused the name: `mc_small_n4_mps_omp4{,_host}.csv` (the capped N=4 offload run used
+  in the collapse figure) was overwritten by the later foff run and the capacity sweeps;
+  the same happened to `mc_small_n{1,8}_mps_omp4` and `mc_medium_n{1,2,4}_mps` traces and
+  to the matching `output/logs/mc_archive/` directories. **Not affected:** per-cell raw
+  JSONs (distinct names; GPU means were extracted at run time), the summaries, and the
+  E1b/E2/E3 traces (unique suffixes). **Repair:** the original capped-N=4 traces were
+  recovered from git (commit 20e4db4) as `mc_small_n4_mps_omp4_doffrun{,_host}.csv` and
+  `plot_mc_collapse.py` reads those; the driver now gives a repeat launch its own tag
+  (`_L2`, `_L3`, …) and records `telemetry_tag` in each raw record. Earlier versions of
+  the other overwritten traces remain recoverable from git history but no analysis in
+  the report depends on them.

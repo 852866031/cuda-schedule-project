@@ -465,6 +465,7 @@ def run_cell(args, coh, n, arm, cell, launch_info, mon_path, name_extra=""):
            "ws_gib_per_model": round(coh[CELLS[cell][1]] * args.prefix_len
                                      * coh["kv_bytes"] / GIB, 3),
            "setup": "inf_multi_coloc", "launch": launch_info,
+           "telemetry_tag": mon_path.stem,
            # per-engine CPU thread cap (unset = vLLM/torch default = all cores per engine;
            # stock N=4 decode-only offload collapses from thread oversubscription)
            "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
@@ -657,6 +658,13 @@ def main():
         print(f"\n##### launch {tag}: {n} x {coh['model']} on GPU1, cells {args.cells}",
               flush=True)
         GPUMON.mkdir(parents=True, exist_ok=True)
+        # Telemetry files are per LAUNCH. Never overwrite an earlier launch's trace with
+        # the same N/arm/suffix (it happened: the capped N=4 offload trace was clobbered by
+        # later launches) -- give a repeat launch its own tag (_L2, _L3, ...).
+        base_tag, k = tag, 1
+        while (GPUMON / f"{tag}.csv").exists():
+            k += 1
+            tag = f"{base_tag}_L{k}"
         mon_path = GPUMON / f"{tag}.csv"
         mon = subprocess.Popen([sys.executable, str(REPO / "scripts/common/gpu_monitor.py"),
                                 str(mon_path)])

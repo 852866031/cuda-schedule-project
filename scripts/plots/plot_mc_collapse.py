@@ -29,7 +29,10 @@ RAW, MON, FIGS = REPO / "output" / "raw", REPO / "output" / "gpumon", REPO / "fi
 # (label, raw cell, monitor tag, color, annotation offset/alignment)
 RUNS = [("stock (default threads)", "mc_small_doff_n4_mps_thr", "mc_small_n4_mps_thr",
          "#cf222e", (-6, 14), "right", "bottom"),
-        ("OMP_NUM_THREADS=4", "mc_small_doff_n4_mps_omp4", "mc_small_n4_mps_omp4",
+        # telemetry tag "_doffrun": the launch tag mc_small_n4_mps_omp4 was later reused by
+        # other launches (foff, capacity sweeps) and overwritten; this is the original
+        # trace recovered from git (20e4db4). The driver no longer reuses tags.
+        ("OMP_NUM_THREADS=4", "mc_small_doff_n4_mps_omp4", "mc_small_n4_mps_omp4_doffrun",
          "#2e7d4f", (10, -6), "left", "top")]
 plt.rcParams.update({"font.size": 13, "axes.titlesize": 14, "axes.labelsize": 13,
                      "legend.fontsize": 12})
