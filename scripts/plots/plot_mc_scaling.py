@@ -85,11 +85,19 @@ def main():
     ap.add_argument("--cohort", default="small")
     ap.add_argument("--arm", default="mps")
     ap.add_argument("--group", choices=list(GROUPS), required=True)
+    ap.add_argument("--threads", choices=["both", "stock", "capped"], default="both",
+                    help="draw only the stock-thread runs, only the thread-capped runs "
+                         "(OMP_NUM_THREADS=4), or both overlaid; a single setting gets its "
+                         "own file (..._stock.png / ..._capped.png)")
     ap.add_argument("--offered", type=float, default=256.0,
                     help="offered output tok/s per model (2 QPS x 128 tokens)")
     args = ap.parse_args()
     data, canon = load(args.cohort, args.arm)
     data = {k: v for k, v in data.items() if k[0] in GROUPS[args.group]}
+    if args.threads != "both":       # one thread setting per figure
+        keep = "" if args.threads == "stock" else CAP
+        data = {k: v for k, v in data.items() if k[1] == keep}
+        canon = {k: v for k, v in canon.items() if k[1] == keep}
     has_cap = any(var == CAP for _, var in data) and any(var == "" for _, var in data)
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5.6))
@@ -101,7 +109,8 @@ def main():
         if not rows:
             continue
         color = COLOR[cell]
-        capped = variant == CAP
+        # dashed/hollow marks distinguish capped from stock only when both are drawn
+        capped = variant == CAP and has_cap
         label = LABEL[cell] + (" · thread-capped" if capped and has_cap
                                else " · stock threads" if has_cap else "")
         marker = "s" if cell.startswith("f") else "o"
@@ -165,6 +174,12 @@ def main():
                  marker="^", ms=6,
                  label=f"GPU1 SM-active (decode-only·{args.group}"
                        + (", capped)" if args.group == "offload" and has_cap else ")"))
+        if args.threads == "stock":   # the collapse point sits at ~0: say so on the mark
+            for n_, v_ in sm.items():
+                if v_ is not None and v_ < 0.1:
+                    ax2.annotate("GPU idle", (n_, v_), xytext=(-12, -1),
+                                 textcoords="offset points", ha="right", va="top",
+                                 fontsize=11, color="#bc4c00")
         span = 1.05 / (1 - BAND_TOP0)
         ax2.set_ylim(-BAND_TOP0 * span, 1.05)
         ax2.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
@@ -217,10 +232,13 @@ def main():
 
     h, l = ax_tp.get_legend_handles_labels()
     title = {"fits": "KV resident (fits)", "offload": "KV 3× over the grant (offload)"}
-    fig.suptitle(f"{args.cohort} cohort · {title[args.group]}", y=0.995, fontsize=15)
+    thr = {"both": "", "stock": " · stock threads",
+           "capped": " · thread cap (OMP_NUM_THREADS=4)"}[args.threads]
+    fig.suptitle(f"{args.cohort} cohort · {title[args.group]}{thr}", y=0.995, fontsize=15)
     fig.legend(h, l, loc="upper center", ncol=5, frameon=False, bbox_to_anchor=(0.5, 0.955))
     fig.tight_layout(rect=(0, 0, 1, 0.9))
-    out = FIGS / f"mc_scaling_{args.cohort}_{args.arm}_{args.group}.png"
+    sfx = "" if args.threads == "both" else f"_{args.threads}"
+    out = FIGS / f"mc_scaling_{args.cohort}_{args.arm}_{args.group}{sfx}.png"
     fig.savefig(out, dpi=130, bbox_inches="tight")
     print(out)
 

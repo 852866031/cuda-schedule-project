@@ -98,7 +98,7 @@ without it two decodes serialize to ~3.4× TPOT), and that cost is carried over 
 than re-measured here. No idle-window gate, no per-model SM caps.
 
 One knob turned out to matter: the **per-engine CPU thread cap**
-(`OMP_NUM_THREADS=4`). The small cohort was first run with stock threads; §3 shows why
+(`OMP_NUM_THREADS=4`). The small cohort was first run with stock threads; Appendix A shows why
 the cap exists. The medium cohort, the capped small offload curve (N=1–6), the N=8
 storm controls and every capacity sweep use it; the cap is neutral for a single model (medium N=1: all four cells within
 1–3% of uncapped).
@@ -144,7 +144,7 @@ settings.*
 *TTFT/TPOT are p50, mean over the N models; zero failed requests in every cell. N=8
 decode-only TPOT is the zero-failure rerun (`_r2`); the first run lost one request to a
 client-side broken pipe and otherwise agrees (5.6 ms). SM-active is from the
-first run (0.86, same as full); the rerun's transient CPU storm (§3.2) pulls its mean to
+first run (0.86, same as full); the rerun's transient CPU storm (Appendix A.2) pulls its mean to
 0.78. Host CPU was not recorded before N=6.*
 
 **Observations:**
@@ -165,7 +165,7 @@ first run (0.86, same as full); the rerun's transient CPU storm (§3.2) pulls it
   to N=4, slows to ~0.09 per model by N=6 and is 0.86 at N=8 while TPOT keeps rising —
   each model's decode steps increasingly wait on the others'. Host CPU (15–32%) and GPU1
   memory (26 of 31 GiB) are not binding. *This is a per-token latency knee at 2 QPS, not
-  a capacity limit:* §5.1 shows N=8 still serves 4× this load (8 QPS per model) with TPOT
+  a capacity limit:* §4.1 shows N=8 still serves 4× this load (8 QPS per model) with TPOT
   only 5.6 → 9.3 ms, because more load means bigger batches per step, not more steps.
   Nor is SM-active a saturation gauge — it counts how often the SMs are busy, not how
   full they are, and at N=4 it *falls* (0.78 → 0.68) from 4 to 8 QPS while throughput
@@ -177,25 +177,55 @@ first run (0.86, same as full); the rerun's transient CPU storm (§3.2) pulls it
 
 ### 2.2 KV 3× over the grant (offload)
 
-![small cohort, offload](../figures/mc_scaling_small_mps_offload.png)
+Offload was run twice: first with the stock thread settings every other cell above used,
+then with a per-engine CPU thread cap. They are shown separately because the first one
+fails for a reason that has nothing to do with the GPU.
 
-*Same panels. Solid = stock thread settings (N=1–4); dashed with hollow markers =
-per-engine CPU thread cap (`OMP_NUM_THREADS=4`, N=1–6). Where decode-only and full
-coincide, the decode-only circle sits inside the full square. Red ring = failed cell
-(>1% of requests). SM-active follows the capped decode-only runs.*
+#### Stock thread settings: collapse at N=4
 
-| N | decode-only TPOT, stock → capped | full TTFT, stock → capped | full TPOT, stock → capped | agg tok/s, capped (decode-only / full) | GPU1 SM-active (capped) | swap-in pages (capped) |
+![small cohort, offload, stock threads](../figures/mc_scaling_small_mps_offload_stock.png)
+
+*Same panels as §2.1. Red ring = failed cell (>1% of requests). SM-active is the
+decode-only cell's.*
+
+| N | decode-only TPOT | full TTFT / TPOT | agg tok/s (decode-only / full) | failed requests (decode-only) | GPU1 SM-active (decode-only) |
+|---|---|---|---|---|---|
+| 1 | 1.60 ms | 10.7 / 1.57 ms | 274 / 274 | 0 | 0.17 |
+| 2 | 1.98 | 10.8 / 1.88 | 526 / 526 | 0 | 0.32 |
+| 3 | 2.28 | 11.2 / 2.23 | 787 / 788 | 0 | 0.45 |
+| 4 | **35 ✗** | 12.9 / 2.62 | **192** / 1043 | **489 of 1,200** | **0.05** |
+
+*✗ reproduced in 4 of 4 stock runs (489–619 failed, 158–192 tok/s). N≤3 decode-only
+reproduced (second run: 2.28 ms, 787 tok/s). Stock was not run beyond N=4.*
+
+**Why it fails.** Up to N=3 offload is free: TPOT and throughput follow the resident
+curve. At N=4 decode-only offload falls off a cliff — ~130 of 300 requests per model time
+out and throughput drops to 18% of offered — while **GPU1 goes idle** (SM-active 0.05)
+and host CPU hits 93–97%. The cause is on the host: every vLLM engine sizes its CPU
+thread pool for the whole machine (~135 threads each), and under offload every request
+runs CPU-side KV copies on that pool. With four engines the threads spin-wait against
+each other, pin all 32 cores, and starve the GPU of work. It is a tipping point, not a
+slope, which is why N=3 is healthy and N=4 is not. Full·offload survives N=4 here (far
+fewer of its requests reload). The evidence — per-second traces, per-thread counters,
+and the controls that rule out the alternatives — is in [Appendix A](#appendix-a-the-failure-that-stops-colocation-cpu-thread-oversubscription).
+
+#### Thread cap (`OMP_NUM_THREADS=4`): scales to N=6
+
+Capping each engine's pool at 4 threads (4 × 4 ≤ 32 cores) removes the collapse and
+changes nothing else: at N=1–3, where stock works, capped and stock agree within noise.
+
+![small cohort, offload, thread cap](../figures/mc_scaling_small_mps_offload_capped.png)
+
+*Same panels, every engine started with `OMP_NUM_THREADS=4`.*
+
+| N | decode-only TPOT | full TTFT / TPOT | agg tok/s (decode-only / full) | failed requests | GPU1 SM-active (decode-only) | swap-in pages (decode-only window) |
 |---|---|---|---|---|---|---|
-| 1 | 1.60 → 1.59 ms | 10.7 → 10.8 ms | 1.57 → 1.57 ms | 274 / 274 | 0.17 | 83 |
-| 2 | 1.98 → 1.98 | 10.8 → 10.8 | 1.88 → 1.86 | 526 / 526 | 0.32 | 164 |
-| 3 | 2.28 → 2.26 | 11.2 → 11.3 | 2.23 → 2.23 | 788 / 788 | 0.45 | 33 |
-| 4 | **35 ✗** → 2.64 | 12.9 → 12.7 | 2.62 → 2.61 | 1045 / 1045 | 0.57 | 1 |
-| 5 | — → 3.12 | — → 14.4 | — → 3.11 | 1292 / 1292 | 0.68 | 142 |
-| 6 | — → 3.66 | — → 16.4 | — → 3.66 | 1520 / 1521 | 0.73 | **29,262** |
-
-*Stock = default threads; capped = `OMP_NUM_THREADS=4` (§3). ✗ = stock decode-only N=4:
-~130 of 300 requests per model timed out, aggregate 192 tok/s (reproduced 4×; §3).
-Every capped cell has zero failed requests. Stock was not run beyond N=4.*
+| 1 | 1.59 ms | 10.8 / 1.57 ms | 274 / 274 | 0 | 0.17 | 83 |
+| 2 | 1.98 | 10.8 / 1.86 | 526 / 526 | 0 | 0.32 | 164 |
+| 3 | 2.26 | 11.3 / 2.23 | 788 / 788 | 0 | 0.45 | 33 |
+| 4 | 2.64 | 12.7 / 2.61 | 1045 / 1045 | 0 | 0.57 | 1 |
+| 5 | 3.12 | 14.4 / 3.11 | 1292 / 1292 | 0 | 0.68 | 142 |
+| 6 | 3.66 | 16.4 / 3.66 | 1520 / 1521 | 0 | 0.73 | **29,262** |
 
 **Observations:**
 
@@ -205,128 +235,32 @@ Every capped cell has zero failed requests. Stock was not run beyond N=4.*
 
 - **The cap is free wherever stock works.** At N=1–3 capped and stock agree within
   noise on every metric (TPOT ±0.02 ms, full TTFT ±0.1 ms). It only matters at N=4,
-  where stock decode-only collapses (§3) and capped is just the next point on the curve.
+  where capped is just the next point on the curve.
 
-- **Full·offload TTFT rises gently, not stepwise.** 10.7 ms at N=1 to 16.4 ms at N=6:
-  zipf reuse keeps each model's hot prefixes resident, so few requests reload, and the
-  rise tracks the per-step slowdown.
+- **Full·offload TTFT rises gently, not stepwise.** 10.8 ms at N=1 to 16.4 ms at N=6,
+  tracking the per-step slowdown. This is consistent with zipf reuse keeping each model's
+  hot prefixes resident so that few requests reload; that explanation is not isolated
+  here (decode-only cells use uniform sessions, full cells zipf, and the decode-only +
+  zipf control was not run).
 
 - **Host RAM becomes the limit at N=6.** At N=6 the host is swap-backed: 29k pages
   swapped in during the decode-only window (97k out) versus at most a few hundred below,
   with 4.8 of 7.6 GiB swap in use — yet latency stays on trend. N=7 would leave ~9 GB
   available, just above the launcher's RAM gate, and N=8 would be refused; offload was
-  stopped at N=6 rather than run deep into swap (§5).
+  stopped at N=6 rather than run deep into swap (§4).
 
 - **The GPU still has room.** GPU1 is at 0.73 SM-active and 19 of 31 GiB at N=6 — for
   offload the binding resource is host memory, not the GPU.
 
 ---
 
-## 3. The failure that stops colocation: CPU thread oversubscription
-
-### 3.1 What happens at N=4
-
-Decode-only·offload at N=4 collapsed in **four of four** stock runs: ~130 of 300
-requests per model timed out, aggregate throughput fell from the offered
-1,045 to 158–192 tok/s — while GPU1 sat at 3–5% SM-active. N=3 was healthy in all four runs.
-A cliff, not a slope, and the GPU is idle through it: the bottleneck is on the host.
-
-![stock vs thread-capped N=4 offload](../figures/mc_collapse_small_n4.png)
-
-*Same cell, two runs differing only in `OMP_NUM_THREADS` (stock = the 4th reproduction,
-run with every monitor). (a) host CPU cores used by the four EngineCores (the stores stay
-at ~0 in both runs and are omitted); (b) GPU1 SM-active; (c) cumulative completed
-requests vs the offered arrivals; (d) stock run only — the capped run predates the
-per-thread sampler — busy EngineCore threads and involuntary context switches (6 s
-rolling mean).*
-
-| decode-only·offload | TPOT p50 | agg tok/s | failed (of 1,200) | host CPU | EngineCore cores | GPU1 SM-active |
-|---|---|---|---|---|---|---|
-| N=3, stock (×2) | 2.3 ms | 787 | 0 | 13% | — | 0.45 |
-| N=4, stock (×4) | 23–74 ms | 158–192 | 489–619 | 93–97% | **31.8–31.9 / 32** (traced runs) | 0.03–0.05 |
-| N=4, stock, 2 GiB L1 | 23 ms | 193 | 492 | 94% | — | 0.05 |
-| **N=4, `OMP_NUM_THREADS=4`** | **2.6 ms** | **1045** | **0** | **10%** | **2.9 (mean)** | 0.57 |
-
-**Observations:**
-
-- **At first the stock run is indistinguishable from the capped one** — same SM-active,
-  same completion slope, for 14–35 s depending on the run (14 s in the run plotted).
-  Then the EngineCores jump from ~7 to all 32 host cores within a few seconds and **stay
-  pinned until the clients time out**. At that instant GPU1 drops
-  to ~0 and completions flatten to a trickle.
-
-- **The CPU is burned inside the engines, not in the stores.** The four LMCache store
-  servers stay at ~0 cores throughout; it is the EngineCores — the processes that run
-  LMCache's CPU-side copy path (the Python fallback, see CLAUDE.md).
-
-- **Capping each engine's thread pool removes the collapse entirely.** With
-  `OMP_NUM_THREADS=4` the same cell sits exactly on the N≤3 curve (TPOT 2.6 ms, full
-  throughput), zero failures, the engines averaging 2.9 cores. GPU1 does the work again (0.57).
-
-- **It is not the LMCache staging pool.** The pinned-L1 "failed to allocate" warnings
-  that first looked like the cause are present at N=3 (~5,000 per model) and in the
-  capped N=4 run (~5,000) — both healthy — and doubling the pool does not help.
-
-**The mechanism — measured at the thread level.** Each vLLM engine's torch/OpenMP
-pool is sized to the whole machine (each uncapped EngineCore runs ~135 threads), so N
-engines field far more threads than cores. Stack sampling is not possible on this box
-(no ptrace/perf/sudo), so a per-thread sampler reads `/proc/<pid>/task/*` every 2 s for
-every EngineCore (experiment E2, a 4th stock reproduction):
-
-| stock N=4 decode-only offload, 4 EngineCores | threads | busy threads (>0.5 core) | user-mode CPU | kernel-mode CPU | involuntary ctx-switch/s | voluntary ctx-switch/s |
-|---|---|---|---|---|---|---|
-| before the collapse (first 14 s) | 540 | 0.5 | 5.3 cores | 0.0 | 276 | 10,437 |
-| during the collapse | 540 | **26.8** | **31.8 cores** | **0.0** | **11,542** | 4,303 |
-
-At the onset ~27 threads (~7 per engine) start burning all 32 cores **entirely in user
-mode** — no syscall time — and involuntary context switches jump 42× while voluntary ones
-fall: threads are preempted while still runnable instead of blocking. That is the
-signature of spin-waiting threads stealing cores from each other: each copy slows, more
-pile up, and the box settles where all cores spin and little completes — a **cliff with
-hysteresis** (normal service, then a flip that never recovers). Capping each engine's
-pool at 4 threads (4 × 4 ≤ 32 cores) removes it. What remains unidentified is *which*
-code spins (the sampler sees behaviour, not stacks); torch's OpenMP pool is the
-consistent candidate, since `OMP_NUM_THREADS` alone controls it.
-
-### 3.2 It is not offload-only
-
-The stock N=8 **resident** rerun showed the same signature once, transiently: at t≈78 s
-the eight EngineCores went from ~7 to 31.8 of 32 cores for ~20 s, GPU1 SM-active fell
-from 0.95 to 0.03–0.5, and then it **recovered on its own**. Median latency was
-untouched (e2e p50 0.72–0.79 s, as in the first run), but every model's tail blew up:
-e2e p95 1.5–8.4 s versus 0.9 s, TPOT p95 up to 38 ms versus 7 ms in the first N=8 run,
-which had no storm. With resident KV the storm was brief and self-recovering (in both
-stormy runs below), instead of permanent as under offload.
-
-To test whether this is a repeatable hazard and whether the cap prevents it, N=8 resident
-was run four times stock and three times capped (experiment E3), with the per-thread
-sampler on (storm = any 2 s sample where the EngineCores use > 20 cores):
-
-| N=8 decode-only fits | runs that stormed | peak EngineCore CPU | worst e2e p95 | worst TPOT p95 | TPOT p50 |
-|---|---|---|---|---|---|
-| stock threads | **2 of 4** (~20 s and ~14 s) | 32.5 cores (stormy), 10.9 (clean) | 0.93–8.4 s | 7.2–38 ms | 5.6–5.7 ms |
-| `OMP_NUM_THREADS=4` | **0 of 3** | 8.8 cores | 0.93 s (every run) | 7.2 ms (every run) | 5.6 ms |
-
-The storm is a coin-flip hazard at N=8 with stock settings, and every capped run had the
-storm-free tail at the same median cost. Three clean capped runs alone would still happen
-~12% of the time if the cap did nothing; together with the thread-level mechanism (§3.1)
-and N=4 (stock collapsed 4 of 4, capped 0 of 1) the evidence points one way. (Two
-requests in all — one of 2,400 in the first stock and the first capped N=8 run — failed
-with a client-side broken pipe and no engine error; recorded, not rerun.)
-
-**Rule for colocation:** cap each engine's CPU threads to about cores ÷ N. The stock
-defaults assume one engine per machine; at N=1 the cap costs nothing (medium N=1: all
-cells within 1–3% of uncapped).
-
----
-
-## 4. Medium cohort: N × 3B under MPS
+## 3. Medium cohort: N × 3B under MPS
 
 Same design, a model 6× larger: Qwen2.5-3B, 0.94 GiB KV grant each, fits = 3 sessions
 (resident), offload = 14 sessions (3.1× over). Every medium cell runs with the per-engine
 thread cap (the cap is neutral at N=1: all four cells within 1–3% of uncapped).
 
-### 4.1 KV resident (fits)
+### 3.1 KV resident (fits)
 
 ![medium cohort, KV resident](../figures/mc_scaling_medium_mps_fits.png)
 
@@ -357,9 +291,9 @@ each client's actual arrival span (end effects keep it at ~99%).*
 
 - **VRAM binds at N=4.** 30.4 of 31.35 GiB: a fifth 3B does not fit, so at 2 QPS VRAM
   and GPU time run out together. Under higher load each engine's sequence cap binds
-  first (§5.1).
+  first (§4.1).
 
-### 4.2 KV 3× over the grant (offload)
+### 3.2 KV 3× over the grant (offload)
 
 ![medium cohort, offload](../figures/mc_scaling_medium_mps_offload.png)
 
@@ -439,7 +373,7 @@ histogram deltas), summed over the N engines:
 
 ---
 
-## 5. What binds first
+## 4. What binds first
 
 ![placement and memory to scale](../figures/mc_layout.png)
 
@@ -461,7 +395,7 @@ on; stock threads noted where they differ):
 | host RAM | 22.7 GB available | **16.7 GB avail., 29k pages swapped in — practical ceiling** | 29.3 GB available | 28.6 GB available |
 | host CPU (capped) | 20% | 16% | 13% | 17% |
 | host CPU (**stock** threads) | **storm in 2 of 4 runs** | **collapse at N=4** | — | **collapse at N=4** |
-| what binds first | GPU time (latency) — no capacity wall up to 16 QPS/model | host RAM | VRAM at N=4; under load the per-engine sequence cap (§5.1) | KV-reload queueing |
+| what binds first | GPU time (latency) — no capacity wall up to 16 QPS/model | host RAM | VRAM at N=4; under load the per-engine sequence cap (§4.1) | KV-reload queueing |
 
 **Observations:**
 
@@ -471,21 +405,21 @@ on; stock threads noted where they differ):
 
 - **With the thread cap, the binding resource depends on the model and working set.**
   Small resident models run into **GPU time** — a per-token latency knee at N≈6–8 with
-  VRAM and RAM to spare — but no capacity wall within 16 QPS per model (§5.1). Small offloaded models run out of **host RAM** (swap-backed at
+  VRAM and RAM to spare — but no capacity wall within 16 QPS per model (§4.1). Small offloaded models run out of **host RAM** (swap-backed at
   N=6, GPU at 0.73). Medium models run out of **VRAM** at N=4 (a fifth 3B
   does not fit) with GPU time and HBM bandwidth close behind; under load each engine's
-  **sequence cap** binds first (§5.1).
+  **sequence cap** binds first (§4.1).
 
 - **Medium offload hits a fourth limit before any of those: KV-load queueing.** Its
   decode-only queue wait grows 82 ms → 4.7 s from N=1 to N=4 while GPU, VRAM and RAM all
-  still have headroom (§4.2).
+  still have headroom (§3.2).
 
 - **Host RAM is the offload ceiling, not the fits ceiling.** Resident cells add ~5 GB of
   host RAM per model (API server + EngineCore incl. the 1 GiB pinned LMCache L1 + an
   idle store); offload adds the working set in the store (3.4 GiB small, 3.0 GiB medium).
   On this 60 GiB box that caps small offload at N≈6.
 
-### 5.1 Capacity: price the sharing in load, not at one rate
+### 4.1 Capacity: price the sharing in load, not at one rate
 
 Everything above is at 2 QPS per model, where every resident cell serves its offered
 load. The sixth study showed a single sub-saturation point can flatter sharing ~3×, so
@@ -558,7 +492,7 @@ wait, and TPOT barely moves (18.6 → 20.2 ms).*
 
 ---
 
-## 6. Takeaways
+## 5. Takeaways
 
 1. **Cap each engine's CPU threads before colocating anything.** vLLM/torch default to one
    engine per machine: N engines × ~135 threads spin against each other on 32 cores. Stock
@@ -581,11 +515,109 @@ wait, and TPOT barely moves (18.6 → 20.2 ms).*
 5. **Size the KV grant and the sequence cap together.** For 3B at a fixed footprint,
    dropping `max-num-seqs` 64 → 16 raised the grant 0.59 → 0.94 GiB and cut N=1
    decode-only offload's first-token wait from 742 to 103 ms — but the same cap later
-   bounds each engine's capacity (§5.1). It is one trade-off, not two settings.
+   bounds each engine's capacity (§4.1). It is one trade-off, not two settings.
 6. **Measure capacity by queueing, not delivered/offered.** With fixed-size request
    windows, delivered/offered falls with load even when nothing queues.
 
 
+
+---
+
+## Appendix A. The failure that stops colocation: CPU thread oversubscription
+
+### A.1 What happens at N=4
+
+Decode-only·offload at N=4 collapsed in **four of four** stock runs: ~130 of 300
+requests per model timed out, aggregate throughput fell from the offered
+1,045 to 158–192 tok/s — while GPU1 sat at 3–5% SM-active. N=3 was healthy in all four runs.
+A cliff, not a slope, and the GPU is idle through it: the bottleneck is on the host.
+
+![stock vs thread-capped N=4 offload](../figures/mc_collapse_small_n4.png)
+
+*Same cell, two runs differing only in `OMP_NUM_THREADS` (stock = the 4th reproduction,
+run with every monitor). (a) host CPU cores used by the four EngineCores (the stores stay
+at ~0 in both runs and are omitted); (b) GPU1 SM-active; (c) cumulative completed
+requests vs the offered arrivals; (d) stock run only — the capped run predates the
+per-thread sampler — busy EngineCore threads and involuntary context switches (6 s
+rolling mean).*
+
+| decode-only·offload | TPOT p50 | agg tok/s | failed (of 1,200) | host CPU | EngineCore cores | GPU1 SM-active |
+|---|---|---|---|---|---|---|
+| N=3, stock (×2) | 2.3 ms | 787 | 0 | 13% | — | 0.45 |
+| N=4, stock (×4) | 23–74 ms | 158–192 | 489–619 | 93–97% | **31.8–31.9 / 32** (traced runs) | 0.03–0.05 |
+| N=4, stock, 2 GiB L1 | 23 ms | 193 | 492 | 94% | — | 0.05 |
+| **N=4, `OMP_NUM_THREADS=4`** | **2.6 ms** | **1045** | **0** | **10%** | **2.9 (mean)** | 0.57 |
+
+**Observations:**
+
+- **At first the stock run is indistinguishable from the capped one** — same SM-active,
+  same completion slope, for 14–35 s depending on the run (14 s in the run plotted).
+  Then the EngineCores jump from ~7 to all 32 host cores within a few seconds and **stay
+  pinned until the clients time out**. At that instant GPU1 drops
+  to ~0 and completions flatten to a trickle.
+
+- **The CPU is burned inside the engines, not in the stores.** The four LMCache store
+  servers stay at ~0 cores throughout; it is the EngineCores — the processes that run
+  LMCache's CPU-side copy path (the Python fallback, see CLAUDE.md).
+
+- **Capping each engine's thread pool removes the collapse entirely.** With
+  `OMP_NUM_THREADS=4` the same cell sits exactly on the N≤3 curve (TPOT 2.6 ms, full
+  throughput), zero failures, the engines averaging 2.9 cores. GPU1 does the work again (0.57).
+
+- **It is not the LMCache staging pool.** The pinned-L1 "failed to allocate" warnings
+  that first looked like the cause are present at N=3 (~5,000 per model) and in the
+  capped N=4 run (~5,000) — both healthy — and doubling the pool does not help.
+
+**The mechanism — measured at the thread level.** Each vLLM engine's torch/OpenMP
+pool is sized to the whole machine (each uncapped EngineCore runs ~135 threads), so N
+engines field far more threads than cores. Stack sampling is not possible on this box
+(no ptrace/perf/sudo), so a per-thread sampler reads `/proc/<pid>/task/*` every 2 s for
+every EngineCore (experiment E2, a 4th stock reproduction):
+
+| stock N=4 decode-only offload, 4 EngineCores | threads | busy threads (>0.5 core) | user-mode CPU | kernel-mode CPU | involuntary ctx-switch/s | voluntary ctx-switch/s |
+|---|---|---|---|---|---|---|
+| before the collapse (first 14 s) | 540 | 0.5 | 5.3 cores | 0.0 | 276 | 10,437 |
+| during the collapse | 540 | **26.8** | **31.8 cores** | **0.0** | **11,542** | 4,303 |
+
+At the onset ~27 threads (~7 per engine) start burning all 32 cores **entirely in user
+mode** — no syscall time — and involuntary context switches jump 42× while voluntary ones
+fall: threads are preempted while still runnable instead of blocking. That is the
+signature of spin-waiting threads stealing cores from each other: each copy slows, more
+pile up, and the box settles where all cores spin and little completes — a **cliff with
+hysteresis** (normal service, then a flip that never recovers). Capping each engine's
+pool at 4 threads (4 × 4 ≤ 32 cores) removes it. What remains unidentified is *which*
+code spins (the sampler sees behaviour, not stacks); torch's OpenMP pool is the
+consistent candidate, since `OMP_NUM_THREADS` alone controls it.
+
+### A.2 It is not offload-only
+
+The stock N=8 **resident** rerun showed the same signature once, transiently: at t≈78 s
+the eight EngineCores went from ~7 to 31.8 of 32 cores for ~20 s, GPU1 SM-active fell
+from 0.95 to 0.03–0.5, and then it **recovered on its own**. Median latency was
+untouched (e2e p50 0.72–0.79 s, as in the first run), but every model's tail blew up:
+e2e p95 1.5–8.4 s versus 0.9 s, TPOT p95 up to 38 ms versus 7 ms in the first N=8 run,
+which had no storm. With resident KV the storm was brief and self-recovering (in both
+stormy runs below), instead of permanent as under offload.
+
+To test whether this is a repeatable hazard and whether the cap prevents it, N=8 resident
+was run four times stock and three times capped (experiment E3), with the per-thread
+sampler on (storm = any 2 s sample where the EngineCores use > 20 cores):
+
+| N=8 decode-only fits | runs that stormed | peak EngineCore CPU | worst e2e p95 | worst TPOT p95 | TPOT p50 |
+|---|---|---|---|---|---|
+| stock threads | **2 of 4** (~20 s and ~14 s) | 32.5 cores (stormy), 10.9 (clean) | 0.93–8.4 s | 7.2–38 ms | 5.6–5.7 ms |
+| `OMP_NUM_THREADS=4` | **0 of 3** | 8.8 cores | 0.93 s (every run) | 7.2 ms (every run) | 5.6 ms |
+
+The storm is a coin-flip hazard at N=8 with stock settings, and every capped run had the
+storm-free tail at the same median cost. Three clean capped runs alone would still happen
+~12% of the time if the cap did nothing; together with the thread-level mechanism (A.1)
+and N=4 (stock collapsed 4 of 4, capped 0 of 1) the evidence points one way. (Two
+requests in all — one of 2,400 in the first stock and the first capped N=8 run — failed
+with a client-side broken pipe and no engine error; recorded, not rerun.)
+
+**Rule for colocation:** cap each engine's CPU threads to about cores ÷ N. The stock
+defaults assume one engine per machine; at N=1 the cap costs nothing (medium N=1: all
+cells within 1–3% of uncapped).
 
 ---
 
@@ -596,15 +628,15 @@ D=scripts/inf_multi_coloc/multi_sweep.py; PY=.venv/bin/python
 # §2 small cohort, stock threads, all four cells (2 QPS/model)
 $PY $D --cohort small --n 1 2 3 4 --arm mps
 $PY $D --cohort small --n 6 8 --arm mps --cells dfits ffits
-# §2.2 / §3 the N=4 collapse (stock) and the capped offload curve
+# §2.2 / Appendix A the N=4 collapse (stock) and the capped offload curve
 $PY $D --cohort small --n 4 --arm mps --cells doff --name-suffix _thr        # stock, all monitors
 OMP_NUM_THREADS=4 $PY $D --cohort small --n 1 2 3 4 5 6 --arm mps --cells doff foff --name-suffix _omp4
-# §3.2 N=8 storm reproducibility (stock x4, capped x3): queue_small_{3,6}.sh, queue_night.sh E3
-# §4 medium cohort (sizing: scripts/inf_multi_coloc/probe_kv.sh), thread cap on
+# Appendix A.2 N=8 storm reproducibility (stock x4, capped x3): queue_small_{3,6}.sh, queue_night.sh E3
+# §3 medium cohort (sizing: scripts/inf_multi_coloc/probe_kv.sh), thread cap on
 OMP_NUM_THREADS=4 $PY $D --cohort medium --n 1 2 3 4 --arm mps
 $PY $D --cohort medium --n 4 --arm mps --cells doff --name-suffix _nocap     # E1: stock collapses
 OMP_NUM_THREADS=2 $PY $D --cohort medium --n 4 --arm mps --cells doff --name-suffix _omp2  # E1b
-# §5.1 capacity sweeps (E4/E4b/E4c), thread cap on
+# §4.1 capacity sweeps (E4/E4b/E4c), thread cap on
 OMP_NUM_THREADS=4 $PY $D --cohort small --n 1 4 8 --arm mps --cells dfits --qps 3 4 6 8 12 16 24 32 --name-suffix _omp4
 OMP_NUM_THREADS=4 $PY $D --cohort medium --n 1 2 4 --arm mps --cells dfits --qps 2.5 3 4 6 8 12 16
 # (the exact overnight order is scripts/inf_multi_coloc/queue_night{,2,3,4}.sh)
@@ -612,6 +644,8 @@ OMP_NUM_THREADS=4 $PY $D --cohort medium --n 1 2 4 --arm mps --cells dfits --qps
 # figures (view them before believing them)
 for c in small medium; do for g in fits offload; do
   $PY scripts/plots/plot_mc_scaling.py --cohort $c --group $g; done; done
+for t in stock capped; do      # §2.2: one thread setting per figure
+  $PY scripts/plots/plot_mc_scaling.py --cohort small --group offload --threads $t; done
 $PY scripts/plots/plot_mc_collapse.py
 $PY scripts/plots/plot_mc_layout.py
 $PY scripts/plots/plot_mc_capacity.py
