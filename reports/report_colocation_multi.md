@@ -81,7 +81,8 @@ arrival schedules, same statistics. What varies is the cell:
 
 Decode-only requests are 100% prefix hits with no suffix, uniform over sessions — the
 disaggregated-decode case (scenario B of the sixth study). Full requests add a 128-token
-suffix and use zipf-1.1 session reuse (scenario A).
+suffix and use zipf-1.1 session reuse (scenario A). The full per-cell workload is
+tabulated in [Appendix B](#appendix-b-workload-per-serving-cell).
 
 **Decode-only TTFT is reported N/A.** With no prefill, its "first token"
 time is just queueing plus, under offload, reloading the prefix from DRAM — a KV-fetch
@@ -618,6 +619,31 @@ with a client-side broken pipe and no engine error; recorded, not rerun.)
 **Rule for colocation:** cap each engine's CPU threads to about cores ÷ N. The stock
 defaults assume one engine per machine; at N=1 the cap costs nothing (medium N=1: all
 cells within 1–3% of uncapped).
+
+---
+
+## Appendix B. Workload per serving cell
+
+Every model gets its own client; all N clients start at the same instant. Model *i* uses
+seed 1000+100*i*, so prefixes and arrival times differ between models while the
+statistics are identical.
+
+| | Case 1: full · fits | Case 2: decode-only · fits | Case 3: full · offload | Case 4: decode-only · offload |
+|---|---|---|---|---|
+| Request rate | 2 QPS per model, open-loop Poisson | same | same | same |
+| Prompt | 6144-token session prefix + 128-token unique suffix | 6144-token session prefix only | prefix + 128-token suffix | prefix only |
+| Output | 128 tokens (forced) | 128 tokens | 128 tokens | 128 tokens |
+| Prefill during measurement | yes (the 128-token suffix) | none (prefix KV pre-stored by a temporary GPU0 engine) | yes | none |
+| Session reuse | zipf-1.1 | uniform | zipf-1.1 | uniform |
+| Distinct sessions (0.5B / 3B) | 8 / 3 | 8 / 3 | 48 / 14 | 48 / 14 |
+| KV working set (0.5B / 3B) | 0.56 / 0.63 GiB | 0.56 / 0.63 GiB | 3.38 / 2.95 GiB | 3.38 / 2.95 GiB |
+| vs. KV grant per model (1.04 / 0.94 GiB) | 54% / 67%, fits | 54% / 67%, fits | 3.2× / 3.1× over | 3.2× / 3.1× over |
+| Requests per model | 300 | 300 | 300 | 300 |
+
+*The capacity sweeps (§4.1) use case 2 with the per-model rate raised from 2 QPS up to
+32 QPS (0.5B) or 16 QPS (3B), still 300 requests per model. Full and decode-only cells
+differ in session skew as well as in prefill, so differences between them under offload
+are not attributable to prefill alone.*
 
 ---
 
