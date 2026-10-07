@@ -124,7 +124,7 @@ load only.
 
 ### 2.1 KV resident (fits)
 
-![small cohort, KV resident](../figures/mc_scaling_small_mps_fits.png)
+![small cohort, KV resident](../figures/mc_scaling_small_mps_fits_stock.png)
 
 *(a) per-model TPOT p50 (mean over models; whisker = worst model), (b) per-model TTFT
 p50 of the full cells (decode-only TTFT is N/A), (c) aggregate throughput against the
@@ -644,6 +644,7 @@ OMP_NUM_THREADS=4 $PY $D --cohort medium --n 1 2 4 --arm mps --cells dfits --qps
 # figures (view them before believing them)
 for c in small medium; do for g in fits offload; do
   $PY scripts/plots/plot_mc_scaling.py --cohort $c --group $g; done; done
+$PY scripts/plots/plot_mc_scaling.py --cohort small --group fits --threads stock   # §2.1
 for t in stock capped; do      # §2.2: one thread setting per figure
   $PY scripts/plots/plot_mc_scaling.py --cohort small --group offload --threads $t; done
 $PY scripts/plots/plot_mc_collapse.py
