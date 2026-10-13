@@ -230,3 +230,24 @@ stack-level identification of the spinning code (no ptrace/perf/sudo on this box
   (`_L2`, `_L3`, …) and records `telemetry_tag` in each raw record. Earlier versions of
   the other overwritten traces remain recoverable from git history but no analysis in
   the report depends on them.
+
+## F. Write-up changes after the close-out (2026-10-07 → 10-13)
+
+| when | change | who |
+|---|---|---|
+| 10-07 | Illustrated HTML report (`reports/colocation_multi_story.html`), first in Chinese for newcomers, then rewritten in English for researchers with full configuration and per-N tables | **user** |
+| 10-07 | Report §2.2 split into a stock-threads figure and a thread-capped figure; the CPU-thread section moved to Appendix A; later sections renumbered | **user** |
+| 10-07 | Softened "full·offload TTFT stays low because of zipf reuse" to "consistent with" — the decode-only + zipf control was never run | Claude |
+| 10-07 | §2.1 figure shows stock-thread runs only | **user** |
+| 10-07 | Appendix B (workload per serving cell) added | **user** |
+| 10-07 | "cohort" → "model" in figure titles and report text (the `--cohort` CLI flag is unchanged) | **user** |
+| 10-12 | Short summary report in the Slack-message flow (`reports/report_colocation_multi_summary.md`), with the user's Hypothesis 1 (lost batching) | **user** |
+| 10-13 | CLAUDE.md, README and the next-session prompt updated for handoff | **user** |
+
+**Open at handoff** (none blocks the conclusions; all are stated in the report):
+decode-only + zipf control; capacity points re-measured over fixed-duration windows;
+repeats for error bars (most points are n=1); a fully capped 0.5B resident curve at
+N=1–6; stock threads beyond N=4 under offload; the 0.5B capacity limit; the GPU-bound
+3B capacity (needs `max-num-seqs 64`); which resource 3B reloads queue on; the two
+client-side broken pipes at N=8. Not run by decision: no-MPS vs N, priority gate,
+prefill-only + external scheduler, mixed model sizes.

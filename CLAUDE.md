@@ -1,9 +1,11 @@
 # Working in this repo
 
-Four completed studies of VRAM limits on a 2× RTX 5090 (32 GB, PCIe Gen4 ×8, no P2P —
-GeForce) workstation with 60 GiB RAM. Plans (`PLAN*.md`) are pre-registration documents:
-never rewrite their predictions, only annotate outcomes. Results live in `reports/`,
-figures in `figures/`, all data under `output/` (summaries, raw JSONs, per-second GPU
+Seven completed studies of VRAM limits and GPU sharing on a 2× RTX 5090 (32 GB, PCIe
+Gen4 ×8, no P2P — GeForce) workstation with 32 cores and 60 GiB RAM. Plans (`PLAN*.md`)
+are pre-registration documents: never rewrite their predictions, only annotate outcomes.
+Run-level decisions go in a decision log (`DECISIONS_*.md`): each experiment's prediction
+written before it runs, its outcome after. Results live in `reports/`, figures in
+`figures/`, all data under `output/` (summaries, raw JSONs, per-second GPU and host
 telemetry in `output/gpumon/`, engine logs in `output/logs/`).
 
 ## Environments — non-negotiable details
@@ -16,6 +18,15 @@ telemetry in `output/gpumon/`, engine logs in `output/logs/`).
   a source build deadlocks at engine init; the Python fallback is what all measurements
   used). pip drags `transformers` to 5.x when installing it — re-pin `<5` after.
 - `PYTHONHASHSEED=0` is mandatory for any cross-process LMCache use.
+- **More than one vLLM engine on the box: set `OMP_NUM_THREADS` ≤ cores ÷ engines for
+  every engine** (4 was used; 2/4/8 behave identically). Each engine's torch/OpenMP pool
+  defaults to all 32 cores (~135 threads per EngineCore). Uncapped, 4 engines with
+  DRAM-offloaded KV spin-wait on all 32 cores, the GPU idles and requests time out
+  (4 of 4 runs); 8 engines with resident KV storm transiently (2 of 4). The cap costs
+  nothing at N=1. Export it before the driver — the launch scripts inherit it.
+- No ptrace, perf or sudo on this box (`ptrace_scope=1`, `perf_event_paranoid=4`): stack
+  sampling is unavailable; `scripts/inf_multi_coloc/thread_sampler.py` reads per-thread
+  `/proc` counters instead.
 
 ## Safety — this machine has been frozen and rebooted by pinned memory
 
@@ -24,7 +35,10 @@ hard-freezes the box. The P2P connector defaults to **32 GiB pinned per instance
 Rules: never launch vLLM stacks except through the launch scripts (they budget-check),
 keep `scripts/common/mem_guard.sh` running (they start it), and remember the pool
 allocator rounds sizes up to powers of two. The stall/heartbeat watchdogs exist because
-every failure mode of the KV-transfer path is a silent hang, not an error.
+every failure mode of the KV-transfer path is a silent hang, not an error. Run strictly
+one stack set at a time. Host RAM is the ceiling for offload: budget ~5 GB of RSS per
+engine (API server + EngineCore incl. 1 GiB pinned L1) plus the store's working set; the
+box was swap-backed at 6 × 0.5B with 3.4 GiB stores.
 
 ## Layout
 
@@ -41,6 +55,15 @@ every failure mode of the KV-transfer path is a silent hang, not an error.
   process and the Qwen tenant as a subprocess). Env knobs: `TASKSET_ISOLATE`,
   `--qwen-decode-skew`; MPS is run by exporting `CUDA_MPS_PIPE_DIRECTORY` before the
   driver (start `nvidia-cuda-mps-control -d` first, `echo quit | …` to tear down).
+- `scripts/inf_multi_coloc/` — N homogeneous models on GPU1 (self-contained copies).
+  `multi_sweep.py` brings engines up one at a time via `multi_launch.sh`, owns the MPS
+  daemon (`--arm mps`), runs all requested cells against one launch
+  (`--cells dfits doff ffits foff`), sweeps load with `--qps a b c`, and rebuilds
+  `output/summary_mc_<cohort>*.csv` from raw on every run. `--cohort small|medium` =
+  Qwen2.5-0.5B (util 0.08) | Qwen2.5-3B (util 0.22, `max-num-seqs 16`, sized with
+  `probe_kv.sh`). `host_monitor.py` / `thread_sampler.py` are started per launch.
+  `mc_scheduler.py` + the `pfill` cell (external cross-model scheduler) exist but were
+  never run. Queue scripts (`queue_*.sh`) record the exact order of what was run.
 - `scripts/plots/` — one script per figure family; regenerate after data changes and
   **always view the PNG before finishing** (label collisions are the recurring bug).
 
@@ -57,3 +80,21 @@ every failure mode of the KV-transfer path is a silent hang, not an error.
   that way once.
 - p50 TTFT run-to-run variance on flat regions is ±15 ms; throughput dips are the
   trustworthy knee signals.
+- **Telemetry file names must not collide either.** Per-launch traces
+  (`output/gpumon/<tag>{,_host,_threads}.csv`) were overwritten once by later launches
+  with the same N/arm/suffix; `multi_sweep.py` now appends `_L2`, `_L3`, … and records
+  `telemetry_tag` in each raw record. Engine logs are archived per launch
+  (`output/logs/mc_archive/<tag>/`) because `mc_engine_<i>.log` is reused.
+- **Decode-only TTFT is N/A.** With no prefill it is queue + KV-reload time, not a
+  time-to-first-token. Judge decode-only cells on TPOT, throughput, failed requests and
+  the engine's queue-wait metric.
+- **Capacity = scheduler queue wait** (`vllm:request_queue_time_seconds`, mean < 50 ms and
+  ≤ 1% failed), found by sweeping per-model QPS at fixed N. Not delivered/offered: with a
+  fixed request count the window's drain tail reads 92–94% at high QPS with zero
+  queueing. Not SM-active either: it fell while throughput doubled.
+- A cell is `ok` only with zero failed requests; a lone client-side broken pipe is
+  recorded, not treated as a collapse (plots ring a cell only above 1% failed).
+- `--gpu-memory-utilization` fixes the footprint; within it the KV grant trades against
+  `--max-num-seqs` (3B at util 0.22: 64 → 0.59 GiB, 16 → 0.94 GiB), and that cap then
+  bounds per-engine capacity. Size both together, by probe, with the GPU verified empty
+  between probes.
