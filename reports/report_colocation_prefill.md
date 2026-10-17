@@ -106,9 +106,9 @@ prefill → DRAM → 3B decode on GPU0. The 3B prefill is on GPU1 in all three.
 
 ![rate sweep](../figures/pfc_rate.png)
 
-*8B split at 2 requests/s, decode budget 22 GiB; the 3B's load on the x axis (0 = the 8B
-alone). (a) 8B output throughput. (b) Mean time an 8B request waits in the decode
-engine's queue. (c) GPU1 SM-active (fraction of time the SMs are busy).*
+*8B split at 2 requests/s, decode budget 22 GiB; the 3B's load on the x axis. Grey bar and dashed line = **the 8B alone (baseline)**; blue = with the 3B in
+P1, red = in P2. (a) 8B output throughput. (b) Mean time an 8B request waits in the
+decode engine's queue. (c) GPU1 SM-active (fraction of time the SMs are busy).*
 
 | 3B rate (req/s) | 8B tok/s P1 / P2 | 8B decode queue P1 / P2 | 8B TPOT p50 P1 / P2 | 8B ITL p50 | 3B TTFT p50, alone → with 8B: P1 | P2 (sync save) | GPU1 SM-active / occupancy (P1) |
 |---|---|---|---|---|---|---|---|

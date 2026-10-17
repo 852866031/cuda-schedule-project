@@ -45,19 +45,27 @@ def cell(pl, q):
     return "pfc_base" if q is None else f"pfc_{pl}{q}"
 
 
-def bars(ax, vals, fmt, colors, labels):
-    """Grouped bars over the 3B rates, one group per rate, value on every bar."""
+C_BASE = "#57606a"
+
+
+def bars(ax, vals, fmt, colors, labels, base):
+    """x = 3B load. At 0 a single grey bar = the 8B alone (the baseline), carried across
+    the panel as a dashed line; at 0.5/1/2 one bar per placement, value on every bar."""
     xi = np.arange(len(RATES))
     w = 0.8 / len(vals)
+    ax.axhline(base, color=C_BASE, ls="--", lw=1.4, zorder=0)
+    b0 = ax.bar(0, base, 0.5, color=C_BASE, label="8B alone (baseline)")
+    ax.text(0, base, fmt(base), ha="center", va="bottom", fontsize=10, fontweight="bold")
     for k, (v, c, lab) in enumerate(zip(vals, colors, labels)):
-        xs = xi + (k - (len(vals) - 1) / 2) * w
-        b = ax.bar(xs, v, w, color=c, label=lab)
-        for rect, y in zip(b, v):
+        xs = xi[1:] + (k - (len(vals) - 1) / 2) * w
+        bb = ax.bar(xs, v[1:], w, color=c, label=lab)
+        for rect, y in zip(bb, v[1:]):
             if np.isfinite(y):
                 ax.text(rect.get_x() + rect.get_width() / 2, y, fmt(y), ha="center",
-                        va="bottom", fontsize=10)
+                        va="bottom", fontsize=10,
+                        bbox=dict(fc="white", ec="none", pad=0.4, alpha=0.85))
     ax.set_xticks(xi)
-    ax.set_xticklabels([r for r, _ in RATES])
+    ax.set_xticklabels(["8B\nalone"] + [r for r, _ in RATES[1:]])
     ax.set_xlabel("3B load (requests / s)")
     ax.grid(alpha=0.3, axis="y")
 
@@ -67,17 +75,19 @@ def rate_figure():
     cols, labs = [C_P1, C_P2], ["3B prefill only (P1)", "3B prefill + KV to DRAM (P2)"]
     get = lambda col: [[f(cell(pl, q), col) for _, q in RATES] for pl in ("p1", "p2")]
 
-    bars(ax[0], get("big_tok_per_s"), lambda y: f"{y:.0f}", cols, labs)
+    base = lambda col: f("pfc_base", col)
+    bars(ax[0], get("big_tok_per_s"), lambda y: f"{y:.0f}", cols, labs, base("big_tok_per_s"))
     ax[0].set(ylabel="8B output tokens / s", ylim=(0, 285),
               title="(a) 8B serves less as the 3B load grows")
     q = [np.array(v) / 1000 for v in get("big_decode_queue_ms")]
-    bars(ax[1], q, lambda y: f"{y:.1f}", cols, labs)
+    bars(ax[1], q, lambda y: f"{y:.1f}", cols, labs, base("big_decode_queue_ms") / 1000)
     ax[1].set(ylabel="seconds", ylim=(0, 31),
               title="(b) 8B requests wait longer for the decode GPU")
-    bars(ax[2], get("gpu1_sm_active_mean"), lambda y: f"{y:.2f}", cols, labs)
+    bars(ax[2], get("gpu1_sm_active_mean"), lambda y: f"{y:.2f}", cols, labs,
+         base("gpu1_sm_active_mean"))
     ax[2].set(ylabel="fraction of time the SMs are busy", ylim=(0, 0.8),
               title="(c) The decode GPU (GPU1) is busier")
-    fig.legend(*ax[0].get_legend_handles_labels(), loc="upper center", ncol=2,
+    fig.legend(*ax[0].get_legend_handles_labels(), loc="upper center", ncol=3,
                frameon=False, bbox_to_anchor=(0.5, 1.0))
     fig.suptitle("Placements P1 and P2: 3B prefill on the 8B's decode GPU", y=1.06,
                  fontsize=15, fontweight="bold")
@@ -94,7 +104,7 @@ def saturation_figure():
     """Per 8B request: the time it spent waiting rather than decoding, over the window.
     Waiting = (end - first token) - 127 tokens x the run's median gap between tokens; the
     median gap is the same 14.4-14.5 ms in every cell, so the rest is queueing."""
-    cells = [("pfc_base", "no 3B", "k"), ("pfc_p1_q0.5", "3B at 0.5 req/s", "#7aa7e8"),
+    cells = [("pfc_base", "8B alone (baseline)", "k"), ("pfc_p1_q0.5", "3B at 0.5 req/s", "#7aa7e8"),
              ("pfc_p1_q1", "3B at 1 req/s", C_P1), ("pfc_p1", "3B at 2 req/s", "#0b3d91")]
     fig, ax = plt.subplots(figsize=(9.5, 5))
     for nm, lab, c in cells:
