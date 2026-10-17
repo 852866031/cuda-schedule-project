@@ -1,6 +1,6 @@
 # Working in this repo
 
-Seven completed studies of VRAM limits and GPU sharing on a 2× RTX 5090 (32 GB, PCIe
+Eight completed studies of VRAM limits and GPU sharing on a 2× RTX 5090 (32 GB, PCIe
 Gen4 ×8, no P2P — GeForce) workstation with 32 cores and 60 GiB RAM. Plans (`PLAN*.md`)
 are pre-registration documents: never rewrite their predictions, only annotate outcomes.
 Run-level decisions go in a decision log (`DECISIONS_*.md`): each experiment's prediction
@@ -64,6 +64,11 @@ box was swap-backed at 6 × 0.5B with 3.4 GiB stores.
   `probe_kv.sh`). `host_monitor.py` / `thread_sampler.py` are started per launch.
   `mc_scheduler.py` + the `pfill` cell (external cross-model scheduler) exist but were
   never run. Queue scripts (`queue_*.sh`) record the exact order of what was run.
+- `scripts/inf_pf_coloc/` — a 3B prefill on the 8B split's decode GPU (`pfc_sweep.py`, one
+  launch per cell; `pfc_launch.sh big|small`). The 3B store is capped (`LMC_STORE_CAP_GB`,
+  the stock store never evicts). `async_save_patch/` (`--sm-async-save`) returns token #1
+  before LMCache's GPU→host copy; the 3B router then waits for its marker file before the
+  decode leg (the stock split races: ~27% partial KV hits).
 - `scripts/plots/` — one script per figure family; regenerate after data changes and
   **always view the PNG before finishing** (label collisions are the recurring bug).
 
