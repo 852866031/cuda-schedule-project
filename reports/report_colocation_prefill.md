@@ -244,6 +244,12 @@ the copy is done, and the scheduler frees the blocks (vLLM's own mechanism).
 > **Placement: P3 (prefill on GPU1 → DRAM → decode on GPU0).** 3B at 2 req/s; beside
 > the 8B only with the 8B's pinned memory cut from 12 to 8 GiB.
 
+![P3](../figures/pfc_p3.png)
+
+*3B at 2 req/s. Top row: the 8B (baseline = the 8B alone, also at 8 GiB pinned). Bottom
+row: the 3B alone and beside the 8B, stock synchronous save vs the async-save patch, and
+SM-active on each GPU. Cells with the 8B are swap-backed.*
+
 With the 8B's two pinned L1 pools at 6 GiB each, P3 does not fit host RAM: available
 memory fell to 4 GB 68 s into the window and mem_guard killed the engines (`pfc_p3`).
 With the pools at 4 GiB it runs (`pfc_p3_l1x4`, `pfc_p3_async_l1x4`):
