@@ -177,17 +177,19 @@ def async_figure():
 
 
 def p3_figure():
-    """P3: 3B prefill on GPU1 -> DRAM -> 3B decode on GPU0. Beside the 8B only with the
-    8B's pinned memory cut to 8 GiB, so its baseline is the 8B alone at 8 GiB."""
-    fig, ax = plt.subplots(2, 3, figsize=(18, 9.5))
+    """P3 with the async-save patch: 3B prefill on GPU1 -> DRAM -> 3B decode on GPU0.
+    The stock-save P3 runs are not shown: 26-28% of their decode requests re-prefilled
+    part of the prompt (pfc_async.png). Beside the 8B only with the 8B's pinned memory
+    cut to 8 GiB, so its baseline is the 8B alone at 8 GiB."""
+    fig, ax = plt.subplots(2, 3, figsize=(17, 9.5))
     ax = ax.ravel()
 
     def panel(a, names, labels, col, colors, fmt, title, ylabel, scale=1.0, base=None):
         v = [f(n, col) * scale for n in names]
-        b = a.bar(range(len(v)), v, 0.6, color=colors)
+        b = a.bar(range(len(v)), v, 0.55, color=colors)
         for rect, y in zip(b, v):
             a.text(rect.get_x() + rect.get_width() / 2, y, fmt(y), ha="center", va="bottom",
-                   fontsize=10.5)
+                   fontsize=11)
         if base is not None:
             a.axhline(v[base], color=C_BASE, ls="--", lw=1.4, zorder=0)
         a.set_xticks(range(len(v)))
@@ -195,9 +197,8 @@ def p3_figure():
         a.set(title=title, ylabel=ylabel, ylim=(0, max(v) * 1.18))
         a.grid(alpha=0.3, axis="y")
 
-    big = ["pfc_base_l1x4", "pfc_p3_l1x4", "pfc_p3_async_l1x4"]
-    big_lab = ["8B alone\n(baseline)", "+ 3B P3\nstock save", "+ 3B P3\npatch"]
-    big_c = [C_BASE, C_SOLO, C_ASYNC]
+    big, big_lab = ["pfc_base_l1x4", "pfc_p3_async_l1x4"], ["8B alone\n(baseline)", "8B + 3B P3"]
+    big_c = [C_BASE, C_ASYNC]
     panel(ax[0], big, big_lab, "big_tok_per_s", big_c, lambda y: f"{y:.0f}",
           "(a) 8B throughput: output tokens / s", "tokens / s", base=0)
     panel(ax[1], big, big_lab, "big_decode_queue_ms", big_c, lambda y: f"{y:.1f}",
@@ -206,23 +207,22 @@ def p3_figure():
     panel(ax[2], big, big_lab, "big_ttft_p50_ms", big_c, lambda y: f"{y:.0f}",
           "(c) 8B TTFT p50 (its prefill shares GPU0)", "ms", base=0)
 
-    sm = ["pfc_s3_v2", "pfc_s3_async_v2", "pfc_p3_l1x4", "pfc_p3_async_l1x4"]
-    sm_lab = ["3B alone\nstock", "3B alone\npatch", "with 8B\nstock", "with 8B\npatch"]
-    sm_c = [C_SOLO, C_ASYNC, C_SOLO, C_ASYNC]
+    sm, sm_lab = ["pfc_s3_async_v2", "pfc_p3_async_l1x4"], ["3B alone\n(baseline)", "3B beside\nthe 8B"]
+    sm_c = [C_BASE, C_ASYNC]
     panel(ax[3], sm, sm_lab, "sm_ttft_p50_ms", sm_c, lambda y: f"{y:.0f}",
-          "(d) 3B TTFT p50", "ms")
+          "(d) 3B TTFT p50", "ms", base=0)
     panel(ax[4], sm, sm_lab, "sm_tpot_p50_ms", sm_c, lambda y: f"{y:.1f}",
-          "(e) 3B TPOT p50 (decode on GPU0)", "ms per token")
+          "(e) 3B TPOT p50 (decode on GPU0)", "ms per token", base=0)
 
-    cells = ["pfc_base_l1x4", "pfc_s3_async_v2", "pfc_p3_l1x4", "pfc_p3_async_l1x4"]
-    lab = ["8B alone", "3B alone\npatch", "8B + P3\nstock", "8B + P3\npatch"]
+    cells = ["pfc_base_l1x4", "pfc_s3_async_v2", "pfc_p3_async_l1x4"]
+    lab = ["8B alone", "3B alone", "8B + 3B P3"]
     xi = np.arange(len(cells))
     for k, (g, c) in enumerate((("gpu0", "#bf8700"), ("gpu1", "#8250df"))):
         v = [f(n, f"{g}_sm_active_mean") for n in cells]
         b = ax[5].bar(xi + (k - 0.5) * 0.38, v, 0.38, color=c, label=g.upper())
         for rect, y in zip(b, v):
             ax[5].text(rect.get_x() + rect.get_width() / 2, y, f"{y:.2f}", ha="center",
-                       va="bottom", fontsize=10)
+                       va="bottom", fontsize=10.5)
     ax[5].set_xticks(xi)
     ax[5].set_xticklabels(lab, fontsize=11)
     ax[5].set(title="(f) SM-active per GPU (DCGM)", ylabel="fraction of time (mean)",
@@ -230,13 +230,13 @@ def p3_figure():
     ax[5].legend(frameon=False, loc="upper left", ncol=2)
     ax[5].grid(alpha=0.3, axis="y")
 
-    fig.suptitle("Placement P3: 3B prefill on GPU1 → DRAM → 3B decode on GPU0, beside the 8B "
-                 "split", fontsize=15, fontweight="bold", y=1.0)
-    fig.text(0.5, -0.03, "3B at 2 requests/s.  With the 8B the 8B's pinned host memory is 8 GiB "
-             "(12 GiB elsewhere): it does not fit host RAM otherwise; the 8B-alone bar is at "
-             "8 GiB too.\nCells with the 8B are swap-backed (2.3–2.8 GB swapped in): the 8B "
-             "numbers are an upper bound on its cost.  Dark grey + dashed line = 8B alone; "
-             "light grey = stock synchronous save; green = async-save patch.", ha="center", fontsize=11, color="#444")
+    fig.suptitle("Placement P3: 3B prefill on GPU1 → DRAM → 3B decode on GPU0 (async-save "
+                 "patch)", fontsize=15, fontweight="bold", y=1.0)
+    fig.text(0.5, -0.03, "3B at 2 requests/s.  The 8B's pinned host memory is 8 GiB here "
+             "(12 GiB elsewhere; P3 does not fit host RAM otherwise), in the baseline too.\n"
+             "The 8B + P3 cell is swap-backed (2.3 GB swapped in): its 8B numbers are an "
+             "upper bound on the cost.  Dark grey + dashed line = baseline.",
+             ha="center", fontsize=11, color="#444")
     fig.tight_layout()
     fig.savefig(FIGS / "pfc_p3.png", dpi=130, bbox_inches="tight")
     plt.close(fig)

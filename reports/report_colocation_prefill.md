@@ -94,7 +94,7 @@ the 3B prefill. Per-model claims rest on client latencies and per-engine metrics
 | §3 why the 8B saturates | **P1** | 0, 0.5, 1, 2 req/s | yes | — | — |
 | §4 the synchronous save | **P2** | 0.5, 1, 2 req/s | yes | yes | stock |
 | §5 asynchronous save | **P2, P3** | 2 req/s | yes | yes | stock vs patch |
-| §6 the full 3B split | **P3** | 2 req/s | yes (8B pinned memory 8 GiB) | yes | stock vs patch |
+| §6 the full 3B split | **P3** | 2 req/s | yes (8B pinned memory 8 GiB) | yes | patch |
 
 P1 = 3B prefill only, KV dropped · P2 = 3B prefill, KV written to DRAM · P3 = 3B
 prefill → DRAM → 3B decode on GPU0. The 3B prefill is on GPU1 in all three.
@@ -241,29 +241,39 @@ the copy is done, and the scheduler frees the blocks (vLLM's own mechanism).
 
 ## 6. The full 3B split — P3
 
-> **Placement: P3 (prefill on GPU1 → DRAM → decode on GPU0).** 3B at 2 req/s; beside
-> the 8B only with the 8B's pinned memory cut from 12 to 8 GiB.
+> **Placement: P3 (prefill on GPU1 → DRAM → decode on GPU0), async-save patch.** 3B at
+> 2 req/s; beside the 8B only with the 8B's pinned memory cut from 12 to 8 GiB.
+
+All P3 numbers in this section use the patch. With the stock synchronous save, 26–28% of
+P3 decode requests found only part of their KV and re-prefilled the rest on GPU0 (§5), so
+those runs do not measure the placement they are meant to; the patch with the router's
+readiness gate gets 300 of 300 full hits. The stock P3 runs appear only in §5, as the
+before/after comparison.
 
 ![P3](../figures/pfc_p3.png)
 
-*3B at 2 req/s. Top row: the 8B (baseline = the 8B alone, also at 8 GiB pinned). Bottom
-row: the 3B alone and beside the 8B, stock synchronous save vs the async-save patch, and
-SM-active on each GPU. Cells with the 8B are swap-backed.*
+*P3 with the async-save patch, 3B at 2 req/s. Dark grey + dashed line = the 8B alone, at
+the same 8 GiB of pinned memory. Cells with the 8B are swap-backed.*
 
 With the 8B's two pinned L1 pools at 6 GiB each, P3 does not fit host RAM: available
 memory fell to 4 GB 68 s into the window and mem_guard killed the engines (`pfc_p3`).
-With the pools at 4 GiB it runs (`pfc_p3_l1x4`, `pfc_p3_async_l1x4`):
+With the pools at 4 GiB it runs:
 
-| | 8B TTFT p50 | 8B TPOT p50 | 8B tok/s | 3B TTFT p50 | 3B TPOT p50 | 3B tok/s | GPU0 / GPU1 SM-active | swapped in |
-|---|---|---|---|---|---|---|---|---|
-| 8B alone, 8 GiB pinned | 257 ms | 35.7 ms | 247.9 | — | — | — | 0.03 / 0.51 | 0.3 GB |
-| + P3, sync save | 296 ms | 331 ms | 194.5 | 873 ms | 12.0 ms | 270 | 0.39 / 0.64 | 2.8 GB |
-| + P3, async save | 274 ms | 316 ms | 198.2 | 287 ms | 13.7 ms | 271 | 0.38 / 0.64 | 2.3 GB |
+| | 8B TTFT p50 | 8B TPOT p50 | 8B tok/s | 8B decode queue | 3B TTFT p50 | 3B TPOT p50 | 3B tok/s | GPU0 / GPU1 SM-active | swapped in |
+|---|---|---|---|---|---|---|---|---|---|
+| 8B alone, 8 GiB pinned (`pfc_base_l1x4`) | 257 ms | 35.7 ms | 247.9 | 1.5 s | — | — | — | 0.03 / 0.51 | 0.3 GB |
+| 3B alone, P3 (`pfc_s3_async_v2`) | — | — | — | — | 238 ms | 12.2 ms | 271 | 0.52 / 0.39 | 0 |
+| 8B + 3B P3 (`pfc_p3_async_l1x4`) | 274 ms | 316 ms | 198.2 | 30.2 s | 287 ms | 13.7 ms | 271 | 0.38 / 0.64 | 2.3 GB |
 
-- **GPU0 gets work too** (SM-active 0.03 → 0.38), and the 3B decode beside the 8B prefill
-  runs at its solo TPOT (12–14 ms) and full throughput.
+- **Both GPUs get work.** GPU0 SM-active 0.03 → 0.38 (the 3B decode), GPU1 0.51 → 0.64
+  (the 3B prefill).
+- **The 3B is barely affected by the 8B:** TTFT 238 → 287 ms, TPOT 12.2 → 13.7 ms, full
+  throughput.
+- **The 8B saturates as in P1/P2** (198 tok/s, queue 30 s): the cost lands on its decode
+  GPU, as before. Its TTFT rises 257 → 274 ms now that its prefill shares GPU0 with the
+  3B decode.
 - **The smaller pinned pools cost the 8B on their own:** TTFT 176 → 257 ms alone.
-- **These cells are swap-backed** (2–3 GB swapped in during the window, although
+- **These cells are swap-backed** (2.3 GB swapped in during the window, although
   12–16 GB read as available: the kernel swaps anonymous pages and keeps the model files
   in page cache; without root this cannot be changed). The 8B numbers in P3 are an upper
   bound on its cost, not a clean measurement.

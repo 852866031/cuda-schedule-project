@@ -239,3 +239,8 @@ after. Study-level predictions are in `PLAN_PF_COLOC.md`. Times are local.
   row and CLAUDE.md layout entry added. **Open:** the 8B was at its knee in every cell
   (prefill-as-neighbour cost not separated from no-headroom cost); P3 is swap-backed;
   most cells n=1; the one unexplained store-port bind failure.
+- **10-17 — Decision (user): P3 is reported with the async-save patch only.** The stock
+  P3 runs re-prefilled part of the prompt on GPU0 for 26–28% of decode requests, so they
+  do not measure the placement; they stay only as the before/after comparison in report
+  §5. Report §6 and `pfc_p3.png` show `pfc_base_l1x4`, `pfc_s3_async_v2`,
+  `pfc_p3_async_l1x4`.
