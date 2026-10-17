@@ -86,14 +86,29 @@ the 3B prefill. Per-model claims rest on client latencies and per-engine metrics
 
 ---
 
-## 2. What the 3B prefill costs the 8B, and what it buys
+## Which experiment ran in which placement
+
+| section | placement(s) | 3B load | with the 8B | 3B alone | KV save |
+|---|---|---|---|---|---|
+| §2 cost and utilization | **P1, P2** | 0.5, 1, 2 req/s | yes | yes | stock (synchronous) |
+| §3 why the 8B saturates | **P1** | 0, 0.5, 1, 2 req/s | yes | — | — |
+| §4 the synchronous save | **P2** | 0.5, 1, 2 req/s | yes | yes | stock |
+| §5 asynchronous save | **P2, P3** | 2 req/s | yes | yes | stock vs patch |
+| §6 the full 3B split | **P3** | 2 req/s | yes (8B pinned memory 8 GiB) | yes | stock vs patch |
+
+P1 = 3B prefill only, KV dropped · P2 = 3B prefill, KV written to DRAM · P3 = 3B
+prefill → DRAM → 3B decode on GPU0. The 3B prefill is on GPU1 in all three.
+
+## 2. What the 3B prefill costs the 8B, and what it buys — P1 and P2
+
+> **Placements: P1 (prefill only) and P2 (prefill + KV to DRAM, stock synchronous
+> save).** 3B at 0.5 / 1 / 2 req/s, beside the 8B and alone.
 
 ![rate sweep](../figures/pfc_rate.png)
 
-*(a) 8B output throughput; dotted = offered over the arrival span (the 8B alone reaches
-97% of it: the fixed 300-request window's drain tail). (b) Mean scheduler queue wait on
-the 8B decode engine, log scale. (c) 3B TTFT p50; dashed open markers = the 3B alone.
-(d) GPU1 SM-active. x = the 3B's realised request rate; 0 = the 8B alone.*
+*8B split at 2 requests/s, decode budget 22 GiB; the 3B's load on the x axis (0 = the 8B
+alone). (a) 8B output throughput. (b) Mean time an 8B request waits in the decode
+engine's queue. (c) GPU1 SM-active (fraction of time the SMs are busy).*
 
 | 3B rate (req/s) | 8B tok/s P1 / P2 | 8B decode queue P1 / P2 | 8B TPOT p50 P1 / P2 | 8B ITL p50 | 3B TTFT p50, alone → with 8B: P1 | P2 (sync save) | GPU1 SM-active / occupancy (P1) |
 |---|---|---|---|---|---|---|---|
@@ -123,12 +138,16 @@ tok/s, TPOT 274 / 276 ms). 8B TTFT p50 stays 167–195 ms in all of them (176 al
   alone as well as colocated — that is the synchronous save of §4, not the 8B.
 - **The 8B's TTFT is a GPU0 quantity and stays put** (167–195 ms vs 176 alone).
 
-## 3. Why the 8B saturates
+## 3. Why the 8B saturates — P1
+
+> **Placement: P1 (prefill only).** The same holds for P2: §2 shows both cost the 8B the
+> same.
 
 ![queue growth](../figures/pfc_saturation.png)
 
-*Per 8B request: time after token #1 divided by the remaining 127 tokens, against its
-arrival time; rolling mean of 15 requests. P1 cells.*
+*Per 8B request (P1 cells): the time it waited instead of decoding — end minus first
+token, minus 127 tokens at the run's median gap between tokens (14.4–14.5 ms in every
+cell) — against when it arrived; rolling mean of 15 requests.*
 
 The 8B decode engine at 22 GiB holds a 5.77 GiB KV grant; each in-flight 8B request
 holds a whole 6272-token prompt (0.77 GiB), so ~7 requests fit at once. By Little's law,
@@ -150,7 +169,10 @@ The baseline's TTFT (176 ms) is higher than the split study's b22 (111 ms) becau
 the smaller prefill grant, not MPS: the 8B alone at prefill util 0.80 reads 77 ms with
 identical TPOT and throughput (`pfc_base_pf80`). All comparisons here are at 0.74.
 
-## 4. Writing the 3B's KV to DRAM: a synchronous copy in front of token #1
+## 4. Writing the 3B's KV to DRAM: a synchronous copy in front of token #1 — P2
+
+> **Placement: P2 (prefill + KV to DRAM), stock LMCache.** Compared against P1, which
+> writes nothing.
 
 Alone at 2 req/s, writing the KV to DRAM raises the 3B's TTFT from 210 to 576 ms. That
 should not happen: token #1 exists as soon as the forward pass ends.
@@ -165,13 +187,17 @@ the service time; at 2 req/s (whole-prompt prefill admits one request per step) 
 multiplies it into +366 ms of TTFT. At 0.6 req/s, where nothing queues, the cost is
 exactly the copy: 266 vs 209 ms.
 
-## 5. An asynchronous save
+## 5. An asynchronous save — P2 and P3
+
+> **Placements: P2 and P3, each with the stock synchronous save and with the patch.**
+> 3B at 2 req/s, beside the 8B and alone.
 
 ![sync vs async](../figures/pfc_async.png)
 
-*(a) 3B TTFT p50 (bar) and p95 (whisker) at 2 req/s, stock synchronous save vs the patch;
-dashed = prefill only, 3B alone. (b) P3: share of decode requests that found their whole
-prompt in the store.*
+*(a) 3B time to first token at 2 req/s (bar = median, line = p95), stock synchronous
+save vs the patch; dashed = prefill only, 3B alone. P3 with the 8B uses 8 GiB of 8B
+pinned memory (§6). (b) P3: share of decode requests that found their whole prompt in
+the store.*
 
 The patch (`scripts/inf_pf_coloc/async_save_patch/`, loaded into the 3B prefill engine
 only) changes three connector methods: `wait_for_save` hands the copy to one background
@@ -213,7 +239,10 @@ the copy is done, and the scheduler frees the blocks (vLLM's own mechanism).
 - **Not handled:** a request preempted while its copy is in flight would lose its blocks
   under the copy (prefill-only engines here never preempt).
 
-## 6. The full 3B split (P3)
+## 6. The full 3B split — P3
+
+> **Placement: P3 (prefill on GPU1 → DRAM → decode on GPU0).** 3B at 2 req/s; beside
+> the 8B only with the 8B's pinned memory cut from 12 to 8 GiB.
 
 With the 8B's two pinned L1 pools at 6 GiB each, P3 does not fit host RAM: available
 memory fell to 4 GB 68 s into the window and mem_guard killed the engines (`pfc_p3`).
