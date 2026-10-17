@@ -78,22 +78,22 @@ def rate_figure():
     base = lambda col: f("pfc_base", col)
     bars(ax[0], get("big_tok_per_s"), lambda y: f"{y:.0f}", cols, labs, base("big_tok_per_s"))
     ax[0].set(ylabel="8B output tokens / s", ylim=(0, 285),
-              title="(a) 8B serves less as the 3B load grows")
+              title="(a) 8B throughput: output tokens / s")
     q = [np.array(v) / 1000 for v in get("big_decode_queue_ms")]
     bars(ax[1], q, lambda y: f"{y:.1f}", cols, labs, base("big_decode_queue_ms") / 1000)
-    ax[1].set(ylabel="seconds", ylim=(0, 31),
-              title="(b) 8B requests wait longer for the decode GPU")
+    ax[1].set(ylabel="seconds (mean per request)", ylim=(0, 31),
+              title="(b) 8B queue wait in the decode engine")
     bars(ax[2], get("gpu1_sm_active_mean"), lambda y: f"{y:.2f}", cols, labs,
          base("gpu1_sm_active_mean"))
-    ax[2].set(ylabel="fraction of time the SMs are busy", ylim=(0, 0.8),
-              title="(c) The decode GPU (GPU1) is busier")
+    ax[2].set(ylabel="fraction of time (mean over the run)", ylim=(0, 0.8),
+              title="(c) GPU1 SM-active (DCGM)")
     fig.legend(*ax[0].get_legend_handles_labels(), loc="upper center", ncol=3,
                frameon=False, bbox_to_anchor=(0.5, 1.0))
     fig.suptitle("Placements P1 and P2: 3B prefill on the 8B's decode GPU", y=1.06,
                  fontsize=15, fontweight="bold")
     fig.text(0.5, -0.04, "8B: split, 2 requests/s, decode GPU budget 22 GiB.  3B: a fresh "
              "6144-token prompt per request, prefilled on the 8B's decode GPU.  "
-             "(b) = mean time an 8B request waits in the decode engine's queue.",
+             "(b) = vLLM request_queue_time on the 8B decode engine: arrival there → first scheduled (not TPOT).",
              ha="center", fontsize=11, color="#444")
     fig.tight_layout()
     fig.savefig(FIGS / "pfc_rate.png", dpi=130, bbox_inches="tight")
@@ -118,11 +118,12 @@ def saturation_figure():
         ax.plot(t[k - 1:], np.convolve(wait, np.ones(k) / k, mode="valid"), color=c, lw=2.2,
                 label=lab)
     ax.set(xlabel="when the 8B request arrived (s into the run)",
-           ylabel="seconds the request waited\nfor the decode GPU",
-           title="P1: with the 3B at 1-2 req/s the 8B's queue never drains", ylim=(0, None))
+           ylabel="seconds waited (per request)",
+           title="P1: 8B wait for the decode GPU, per request, over the run", ylim=(0, None))
     ax.grid(alpha=0.3)
     ax.legend(frameon=False, loc="upper left")
-    fig.text(0.5, -0.03, "8B requests, P1 cells; rolling mean of 15 requests.",
+    fig.text(0.5, -0.03, "wait = (end − first token) − 127 × median gap between tokens "
+             "(14.4–14.5 ms in every run); rolling mean of 15 requests.",
              ha="center", fontsize=11, color="#444")
     fig.tight_layout()
     fig.savefig(FIGS / "pfc_saturation.png", dpi=130, bbox_inches="tight")
@@ -151,7 +152,7 @@ def async_figure():
     ax[0].axhline(ref, color=C_P1, ls="--", lw=1.2,
                   label=f"prefill only, 3B alone ({ref:.0f} ms)")
     ax[0].set(xticks=xi, xticklabels=[p[0] for p in pairs], ylabel="3B time to first token (ms)\nbar = median, line = p95",
-              ylim=(0, 2300), title="(a) Writing the KV to DRAM no longer delays the first token")
+              ylim=(0, 2300), title="(a) 3B TTFT (time to first token)")
     ax[0].grid(alpha=0.3, axis="y")
 
     hit = []
@@ -164,7 +165,7 @@ def async_figure():
         ax[1].text(i, v + 1.5, f"{v:.0f}%", ha="center", va="bottom", fontsize=11)
     ax[1].set(xticks=range(5), xticklabels=lab, ylim=(0, 112),
               ylabel="% of decode requests",
-              title="(b) P3: decode found all its KV")
+              title="(b) P3: decode requests that found\nthe whole KV in DRAM (%)")
     ax[1].grid(alpha=0.3, axis="y")
     fig.legend(*ax[0].get_legend_handles_labels(), loc="upper center", ncol=3, frameon=False,
                bbox_to_anchor=(0.5, 0.99))
