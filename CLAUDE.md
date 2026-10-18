@@ -1,6 +1,6 @@
 # Working in this repo
 
-Eight completed studies of VRAM limits and GPU sharing on a 2× RTX 5090 (32 GB, PCIe
+Nine completed studies of VRAM limits and GPU sharing on a 2× RTX 5090 (32 GB, PCIe
 Gen4 ×8, no P2P — GeForce) workstation with 32 cores and 60 GiB RAM. Plans (`PLAN*.md`)
 are pre-registration documents: never rewrite their predictions, only annotate outcomes.
 Run-level decisions go in a decision log (`DECISIONS_*.md`): each experiment's prediction
@@ -69,6 +69,12 @@ box was swap-backed at 6 × 0.5B with 3.4 GiB stores.
   the stock store never evicts). `async_save_patch/` (`--sm-async-save`) returns token #1
   before LMCache's GPU→host copy; the 3B router then waits for its marker file before the
   decode leg (the stock split races: ~27% partial KV hits).
+- `scripts/inf_pf_prio/` — 8B-decode vs 3B-prefill priority (P2 only; `pfp_sweep.py --arm
+  fair|mps8b|gate8b|gate8bt|mps3b|gate3b|eager8b`). MPS priority = `CUDA_MPS_CLIENT_PRIORITY=1`
+  on the low-priority engine; gating = `site/hp_signal.py` (busy window) + `orion_gate/
+  cupti_gate.so` (forces eager). `--sm-quant fp8` loads bf16 first (7–9 GiB peak): start
+  it before the 8B (`--sm-first`). The 3B store falls back to the next port if :8301 will
+  not bind (seen 3×, cause unknown).
 - `scripts/plots/` — one script per figure family; regenerate after data changes and
   **always view the PNG before finishing** (label collisions are the recurring bug).
 
