@@ -226,7 +226,8 @@ def slot_figure():
                    zorder=3)
     ax.axvline(1.0, color="k", ls="--", lw=1)
     ax.text(0.995, 0.3, "slots full", rotation=90, ha="right", va="bottom", fontsize=11)
-    ax.set(yscale="log", xlabel="8B offered rate × residence on its decode engine ÷ KV slots",
+    ax.set(yscale="log", xlabel="8B KV slot utilization = requests the 8B needs in flight ÷ requests its KV holds\n"
+                                "(offered rate × residence per request on the decode engine ÷ KV slots)",
            ylabel="8B queue wait in its decode engine, mean (s, log)",
            title="The 8B queues once the 3B stretches its residence past its KV slots")
     ax.grid(alpha=0.3, which="both")

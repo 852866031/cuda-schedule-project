@@ -234,3 +234,4 @@ The main queue raises two questions the report would otherwise leave as conjectu
   128-token decode at A, 8 req/s); fp8 cuts the residence growth by about a third
   (+54% → +34%), and the 3× shorter queue is the cliff amplifying it; tighter gating helps
   the 8B in C only by throttling the 3B. Renamed the supplement arm "tighter gating".
+- **10-19 — report restructured (user):** the all-arms slot figure moved from §3 to a new §6 after the priority results; §3.1 keeps the slot-utilization explanation with fair-sharing cells only; takeaways are §7. x-axis renamed "KV slot utilization".

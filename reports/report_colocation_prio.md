@@ -15,7 +15,7 @@ The short answer:
 > KV slot on its decode engine (+10–55% here). The 8B queues once its offered rate ×
 > that residence approaches the number of requests its KV grant holds — every non-gated
 > cell, across configurations, arms and 3B rates, falls on one curve of queue wait against that
-> ratio (§3.1). A decode with slot headroom absorbs the prefill almost for free: with an
+> ratio (§6). A decode with slot headroom absorbs the prefill almost for free: with an
 > fp8 3B beside an 8B at a 25 GiB budget, 16k prompt tokens/s of prefill cost the 8B
 > 1.7% of its throughput.
 >
@@ -144,23 +144,33 @@ the decode engine grows:
 | A (bf16 3B, 23 GiB), fair | 3.10 s | 3.66 (+18%) | 4.01 (+29%) | 4.76 (+54%) |
 | B (fp8 3B, 23 GiB), fair | 3.10 s | — | 3.70 (+19%) | 4.14 (+34%) |
 | C (fp8 3B, 25 GiB), fair | 3.43 s | 3.73 (+9%) | 3.93 (+15%) | 4.89 (+43%) |
-| A, MPS 8B priority | 3.10 s | 3.45 (+11%) | 3.75 (+21%) | 4.30 (+39%) |
 
 Each request in flight holds its whole prompt's KV (6400 tokens × 0.125 MiB = 0.78 GiB),
-so the decode engine holds **~8.7 requests at 23 GiB and ~11.2 at 25 GiB**. By Little's
-law the 8B needs offered rate × residence of them.
+so the decode engine holds **~8.7 requests at 23 GiB and ~11.2 at 25 GiB** — its *slots*.
+How many slots the 8B *needs* follows from Little's law: requests arrive at 2 per second
+and each stays for its residence, so on average 2 × residence are in flight. The ratio
+of the two is the **KV slot utilization**:
 
-![slot pressure](../figures/pfp_slots.png)
+> slot utilization = (offered rate × residence) ÷ slots
 
-*Every non-gated P2 cell (A, B, C; fair, MPS 8B priority, MPS 3B priority; 8B alone):
-the 8B's mean queue wait on its decode engine against offered rate × residence ÷ KV
-slots.*
+Worked through for config A: alone, 2 req/s × 3.10 s = 6.2 requests in flight on 8.7
+slots → **0.71**. With the 3B at 8 req/s each request stays 4.76 s, so 9.5 are needed on
+the same 8.7 slots → **1.10**: more requests want a slot than there are, and the excess
+waits in the decode engine's queue. (Like a car park: arrivals per second × minutes
+parked = cars inside; once that exceeds the spaces, a queue forms at the gate. The 3B
+does not slow the cars; it makes each one stay longer.)
 
-**All cells fall on one curve.** The queue is ~0.1–0.3 s below 0.7 of the slots, ~1–2 s
-at 0.8–0.87, 4–8 s at 0.92–0.99, and 18–20 s past 1.0 (A at 8 req/s, fair and 3B
-priority). Configuration, arm and 3B rate matter only through where they put this ratio.
-It rises before 1.0 because arrivals are bursty: Poisson arrivals overfill the slots
-before the average does.
+Under fair sharing, the 8B's queue follows its slot utilization:
+
+| 8B slot utilization → queue wait | alone | 2 req/s | 4 req/s | 8 req/s |
+|---|---|---|---|---|
+| A (8.7 slots) | 0.71 → 0.45 s | 0.85 → 1.7 s | 0.92 → 4.2 s | **1.10 → 18.2 s** |
+| B (8.7 slots) | 0.71 → 0.45 s | — | 0.85 → 1.7 s | 0.96 → 5.6 s |
+| C (11.2 slots) | 0.61 → 0.13 s | 0.66 → 0.22 s | 0.70 → 0.30 s | 0.87 → 1.3 s |
+
+Below ~0.7 the queue is a fraction of a second; at 0.85–0.96 it is seconds; past 1.0 it
+grows without bound. It rises before 1.0 because arrivals are random: bursts fill the
+slots before the average does. §6 shows the priority arms follow the same rule.
 
 ### 3.2 What fp8 and two more GiB each do
 
@@ -168,7 +178,7 @@ before the average does.
 |---|---|---|---|
 | 4 req/s: 8B tok/s / TPOT / queue | 239.6 / 59 ms / 4.2 s | 247.9 / 41 ms / 1.7 s | 253.7 / 34 ms / 0.30 s |
 | 8 req/s: 8B tok/s / TPOT / queue | 209.3 / 166 ms / 18.2 s | 233.7 / 68 ms / 5.6 s | 246.1 / 44 ms / 1.3 s |
-| 8 req/s: slot ratio | 1.10 | 0.96 | 0.87 |
+| 8 req/s: slot utilization | 1.10 | 0.96 | 0.87 |
 
 - **A → B (fp8 3B, same 8B) cuts the interference by about a third:** residence +54% →
   +34% at 8 req/s. The fp8 prefill occupies the GPU about half as long (3B alone at
@@ -178,7 +188,7 @@ before the average does.
   4.14 s) moves the 8B from just past its slots (1.10) to just under (0.96), and its queue
   from 18 to 5.6 s.
 - **B → C (two more GiB for the 8B) adds slots, not speed:** 8.7 → 11.2 requests. The
-  residence is no shorter (4.89 s), but the ratio falls to 0.87 and the queue to 1.3 s.
+  residence is no shorter (4.89 s), but the slot utilization falls to 0.87 and the queue to 1.3 s.
 
 ---
 
@@ -212,7 +222,7 @@ A fair 8 req/s 164.5 vs 166 ms; A mps8b 4 req/s 42.7 vs 42.1 ms.*
   margin: 88 ms and 227 tok/s vs 166 ms and 209 tok/s at fair. In C the same ordering
   holds with small margins, because fair sharing costs the 8B little there. It works on
   the quantity that matters: the 8B's residence grows +39% instead of +54% (A, 8 req/s),
-  enough to bring the slot ratio from 1.10 to 0.99 (§3.1).
+  enough to bring the slot utilization from 1.10 to 0.99 (§6).
 - **Gating gives the 8B no more than fair sharing.** A at 4 req/s 64 ms (fair 59); at
   8 req/s 127 ms (fair 166, mps8b 88), with the 8B's per-token gap rising from 15 to 24 ms.
 - **…and it starves the 3B.** The gated 3B issues kernels only between 8B decode steps:
@@ -279,13 +289,39 @@ in the 8B panels = the 8B alone with an eager decode, gate3b's baseline.*
 - **Gating the 8B costs it more than the eager decode it requires.** At 8 req/s the 8B
   with an eager decode and no gate has 193 ms (A) / 45 ms (C) of TPOT; gated, 225 / 58 ms.
 
-## 6. Takeaways
+## 6. One rule across configurations and arms
+
+§3.1 explained the 8B's queue under fair sharing by its KV slot utilization. The priority
+arms change the same quantity. MPS 8B priority shortens the 8B's residence (A, fair →
+mps8b: 3.66 → 3.45 s at 2 req/s, 4.01 → 3.75 at 4, 4.76 → 4.30 at 8; growth +54% → +39%
+at 8 req/s); MPS 3B priority lengthens it slightly. Plotting every non-gated cell
+against its slot utilization:
+
+![slot pressure](../figures/pfp_slots.png)
+
+*Every non-gated P2 cell (A, B, C; fair, MPS 8B priority, MPS 3B priority; 8B alone):
+the 8B's mean queue wait on its decode engine against its KV slot utilization. 1.0 = on
+average every slot is taken.*
+
+**All cells fall on one curve.** The queue is ~0.1–0.3 s below 0.7 of the slots, ~1–2 s
+at 0.8–0.87, 4–8 s at 0.92–0.99, and 18–20 s past 1.0 (A at 8 req/s, fair and 3B
+priority). Configuration, arm and 3B rate matter only through where they put the slot
+utilization.
+
+The priority arms add no separate effect: they help or hurt the 8B exactly as far as they
+move its residence, and the rule says where that matters — near 1.0. That is why MPS 8B
+priority looks strong in A at 8 req/s (1.10 → 0.99) and marginal in C (0.87 → 0.80).
+The gated arms are left out because their 8B decode runs eager (gate3b) or their 3B is
+starved below its offered rate (gate8b at 8 req/s), which changes the load, not just the
+residence.
+
+## 7. Takeaways
 
 1. **A prefill neighbour costs a decode KV slots, not tokens.** It leaves the decode's
    median step alone but stretches how long each request holds its KV (+10–55% here).
    The decode is safe while offered rate × residence stays clearly below the requests its
    KV grant holds (≤ ~0.8 of it for < 1 s of queue at Poisson arrivals); past ~0.9 it
-   queues for seconds, past 1.0 without bound (§3.1). This is a sizing rule: measure the
+   queues for seconds, past 1.0 without bound (§3.1, §6). This is a sizing rule: measure the
    residence with the neighbour, and size the decode's KV for it.
 2. **With slot headroom, prefill on the decode GPU is nearly free.** Config C with MPS 8B
    priority: 7.7 req/s × 2048 tokens ≈ 16k prompt tokens/s of 3B prefill at 71 ms TTFT,
@@ -308,7 +344,7 @@ in the 8B panels = the 8B alone with an eager decode, gate3b's baseline.*
 - Most cells are single runs; the key A cells at 4 and 8 req/s have two (fair, mps8b),
   and clean repeats agree within 1–3%. Swap-backed cells are marked †.
 - Config B was run under fair sharing only, at 4 and 8 req/s.
-- The slot rule (§3.1) is fitted on one 8B, one workload and P2 only; the residence a
+- The slot rule (§3.1, §6) is fitted on one 8B, one workload and P2 only; the residence a
   neighbour adds has to be measured, not derived.
 - The 3B workload is synthetic (fresh 2048-token prompts, one output token); MPS client
   priority has two levels only.
@@ -333,7 +369,7 @@ scripts/inf_pf_prio/queue_supp3.sh; scripts/inf_pf_prio/queue_supp4.sh   # confi
 $PY $D --cells p2 --arm gate8bt --sm-qps 8 --budget 23 --sm-quant "" --sm-util 0.205 --name-suffix _b23_r2
 scripts/inf_pf_prio/queue_supp6.sh          # §4.1, the 8B at 2.5 / 3 QPS
 # figures (view them before believing them)
-$PY scripts/plots/plot_pfp_results.py     # incl. pfp_slots.png (§3.1)
+$PY scripts/plots/plot_pfp_results.py     # incl. pfp_slots.png (§6)
 ```
 
 Data: `output/summary_pfp.csv` (rebuilt from raw on every run); raw records
