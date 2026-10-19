@@ -153,6 +153,23 @@ of the two is the **KV slot utilization**:
 
 > slot utilization = (offered rate × residence) ÷ slots
 
+Where each quantity comes from:
+
+| quantity | value | source |
+|---|---|---|
+| **offered rate** | 2 req/s (2.5 in §4.1) | set by the workload: the 8B client's Poisson arrival rate. Not measured. |
+| **residence** (per 8B request, on the decode engine) | 3.1–4.9 s | measured by the 8B decode engine itself. vLLM exports two per-request histograms on `/metrics`: `vllm:request_prefill_time_seconds` (from first scheduled to first token — on this decode engine that is loading the prompt's KV from DRAM through LMCache, plus one token of compute) and `vllm:request_decode_time_seconds` (first to last token). The driver scrapes `/metrics` right before and right after the 150 s window; residence = Δsum ÷ Δcount of the first + the same of the second. |
+| **KV per request** | 0.78 GiB | arithmetic: 6400 tokens (6144 prefix + 128 suffix + 128 output) × 0.125 MiB/token (Llama-3-8B: 32 layers × 8 KV heads × 128 dim × 2 (K, V) × 2 bytes). |
+| **KV grant** | 6.77 GiB (23 GiB budget), 8.77 GiB (25 GiB) | reported by the decode engine at startup ("Available KV cache memory"), parsed from its log and stored in each raw record. |
+| **slots** | 8.7 (23 GiB), 11.2 (25 GiB) | KV grant ÷ KV per request. |
+| **queue wait** (the y-axis in §6) | 0.1–20 s | measured by the decode engine: `vllm:request_queue_time_seconds` (arrival at the engine to first scheduled), Δsum ÷ Δcount over the window. |
+
+Two simplifications: a request is counted as holding its full 6400 tokens for its whole
+residence (it grows from 6272 to 6400 while decoding, a 2% difference), and vLLM's
+16-token block rounding is ignored. Both shift every point by the same small factor, not
+the shape of the curve. The computation is `slot_figure()` in
+`scripts/plots/plot_pfp_results.py`, from the raw records `output/raw/pfp_*.json`.
+
 Worked through for config A: alone, 2 req/s × 3.10 s = 6.2 requests in flight on 8.7
 slots → **0.71**. With the 3B at 8 req/s each request stays 4.76 s, so 9.5 are needed on
 the same 8.7 slots → **1.10**: more requests want a slot than there are, and the excess
