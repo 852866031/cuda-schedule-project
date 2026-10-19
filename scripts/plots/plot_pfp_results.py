@@ -41,7 +41,7 @@ C_BASE = "#57606a"
 ARM_STYLE = {"fair": ("#bf8700", "fair (MPS default)"),
              "mps8b": ("#1f6feb", "8B priority: MPS client priority"),
              "gate8b": ("#0b3d91", "8B priority: gating"),
-             "gate8bt": ("#8fb8ff", "8B priority: gating, tight backlog (supplement)"),
+             "gate8bt": ("#8fb8ff", "8B priority: tighter gating (supplement)"),
              "mps3b": ("#2e9d4f", "3B priority: MPS client priority"),
              "gate3b": ("#145a2b", "3B priority: gating")}
 
@@ -193,9 +193,67 @@ def config_figure():
     plt.close(fig)
 
 
+def slot_figure():
+    """Slot pressure: the 8B decode engine holds KV for ~grant / 0.78 GiB requests at once
+    (6400 tokens x 0.125 MiB each). Each request occupies a slot for its residence on the
+    engine (KV load + decode, from the engine's own metrics). Offered rate x residence /
+    slots > 1 means the slots cannot keep up. y = the engine's mean queue wait."""
+    import json
+    raw = REPO / "output" / "raw"
+    slots = {"_b23": 6.77 / 0.78125, "_fp8b23": 6.77 / 0.78125, "_fp8b25": 8.77 / 0.78125}
+    cfg_of = {"_b23": "A", "_fp8b23": "B", "_fp8b25": "C"}
+    ccol = {"A": "#bf8700", "B": "#d4a0a0", "C": "#8250df"}
+    marker = {"base": "s", "fair": "o", "mps8b": "^", "mps3b": "v"}
+    fig, ax = plt.subplots(figsize=(10, 6))
+    pts = []
+    for sfx in slots:
+        names = [] if sfx == "_fp8b23" else [f"pfp_base_fair{sfx}"]   # B shares A's 8B
+        names += [f"pfp_p2_{a}_q{q}{sfx}" for a in ("fair", "mps8b", "mps3b") for q in RATES]
+        for n in names:
+            pk = pick(n)
+            if not pk:
+                continue
+            r = json.loads((raw / f"{pk}.json").read_text())
+            d = r["metrics_delta"]["big_decode"]
+            res = sum(d.get(f"vllm:request_{k}_time_seconds_sum", 0) /
+                      max(1, d.get(f"vllm:request_{k}_time_seconds_count", 1))
+                      for k in ("prefill", "decode"))
+            qw = d["vllm:request_queue_time_seconds_sum"] / d["vllm:request_queue_time_seconds_count"]
+            arm = "base" if "_base_" in n else n.split("_")[2]
+            pts.append((r["big_qps"] * res / slots[sfx], qw, cfg_of[sfx], arm))
+    for x, y, c, a in pts:
+        ax.scatter(x, y, s=70, color=ccol[c], marker=marker[a], edgecolors="k", linewidths=0.5,
+                   zorder=3)
+    ax.axvline(1.0, color="k", ls="--", lw=1)
+    ax.text(0.995, 0.3, "slots full", rotation=90, ha="right", va="bottom", fontsize=11)
+    ax.set(yscale="log", xlabel="8B offered rate × residence on its decode engine ÷ KV slots",
+           ylabel="8B queue wait in its decode engine, mean (s, log)",
+           title="The 8B queues once the 3B stretches its residence past its KV slots")
+    ax.grid(alpha=0.3, which="both")
+    from matplotlib.lines import Line2D
+    hc = [Line2D([], [], marker="o", ls="", color=ccol[c], markeredgecolor="k", markersize=9,
+                 label=lab) for c, lab in (("A", "A: bf16 3B, 8B 23 GiB"),
+                                           ("B", "B: fp8 3B, 8B 23 GiB"),
+                                           ("C", "C: fp8 3B, 8B 25 GiB"))]
+    ha = [Line2D([], [], marker=marker[a], ls="", color="#bbb", markeredgecolor="k",
+                 markersize=9, label=lab) for a, lab in (("base", "8B alone"), ("fair", "fair"),
+                                                          ("mps8b", "8B priority (MPS)"),
+                                                          ("mps3b", "3B priority (MPS)"))]
+    l1 = ax.legend(handles=hc, loc="upper left", title="configuration", frameon=True)
+    ax.add_artist(l1)
+    ax.legend(handles=ha, loc="lower right", title="arm", frameon=True)
+    fig.text(0.5, -0.02, "P2, 3B at 2 / 4 / 8 req/s; 8B at 2 QPS (gated arms excluded: their 8B "
+             "decode runs eager).", ha="center", fontsize=10.5, color="#444")
+    fig.tight_layout()
+    fig.savefig(FIGS / "pfp_slots.png", dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return pts
+
+
 if __name__ == "__main__":
     for cfg in CFGS:
         prio_figure(cfg, ["fair", "mps8b", "gate8b", "gate8bt"], "8b", "8B priority")
         prio_figure(cfg, ["fair", "mps3b", "gate3b"], "3b", "3B priority")
     config_figure()
+    slot_figure()
     print("wrote figures/pfp_prio_{A,C}_{8b,3b}.png, pfp_configs.png")

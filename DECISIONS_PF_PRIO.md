@@ -225,3 +225,12 @@ The main queue raises two questions the report would otherwise leave as conjectu
   `pfp_configs.png`; PLAN outcomes annotated; README / CLAUDE.md entries added. Not
   committed (the user commits on request).
 - **10-19 — report renamed the configurations (user):** A = bf16 3B + 8B 23 GiB (unchanged), **B = fp8 3B + 8B 23 GiB** (the cross cell / S3 here), **C = fp8 3B + 8B 25 GiB** ("config B" in this log and the plan). Figures `pfp_prio_B_*` became `pfp_prio_C_*`; data names unchanged (`_b23`, `_fp8b23`, `_fp8b25`).
+- **10-19 — report takeaways rewritten after discussion with the user** (no new run). New
+  analysis from the existing raw records: the 8B's residence on its decode engine (KV load
+  + decode) and offered rate × residence ÷ KV slots (6400 tokens × 0.125 MiB per request;
+  ~8.7 slots at 23 GiB, ~11.2 at 25 GiB). Every non-gated cell falls on one curve of the
+  8B's queue wait against that ratio (`figures/pfp_slots.png`). Corrections made: the
+  8B's *median* ITL is unchanged but its mean per-token time grows (2.8 → 4.1 s per
+  128-token decode at A, 8 req/s); fp8 cuts the residence growth by about a third
+  (+54% → +34%), and the 3× shorter queue is the cliff amplifying it; tighter gating helps
+  the 8B in C only by throttling the 3B. Renamed the supplement arm "tighter gating".

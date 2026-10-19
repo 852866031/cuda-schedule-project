@@ -10,22 +10,22 @@ enforced by MPS or by gating.**
 
 The short answer:
 
-> **MPS client priority is the lever that works; gating does not protect the 8B.** With
-> the 8B as the high-priority MPS client and the 3B at "below normal", the 8B keeps
-> 247 tok/s and 43 ms TPOT at 4 3B-requests/s where fair sharing gives it 240 tok/s and
-> 59 ms, and the 3B pays only ~20 ms of TTFT. The launch gate that worked for a fine-tune
-> neighbour in the fifth study gives the 8B nothing over fair sharing here (64 ms at
-> 4 req/s, 127 ms at 8), starves the 3B (TTFT 30 s, 6 of 7.7 req/s served at 8 req/s),
-> and tightening it makes both sides worse.
+> **The cost of a prefill neighbour to a decode is KV slots, and it is predictable.** The
+> 3B rarely slows the 8B's median token; it lengthens the time each 8B request holds a
+> KV slot on its decode engine (+10–55% here). The 8B queues once its offered rate ×
+> that residence approaches the number of requests its KV grant holds — every non-gated
+> cell, across configurations, arms and 3B rates, falls on one curve of queue wait against that
+> ratio (§3.1). A decode with slot headroom absorbs the prefill almost for free: with an
+> fp8 3B beside an 8B at a 25 GiB budget, 16k prompt tokens/s of prefill cost the 8B
+> 1.7% of its throughput.
 >
-> **How much the 3B hurts the 8B depends on the 3B's weight and the 8B's headroom, about
-> equally.** At 8 3B-requests/s fair sharing costs the 8B 18% of its throughput with a
-> bf16 3B beside a 23 GiB 8B (config A), 8% with an fp8 3B beside the same 8B (B), and 3%
-> with the fp8 3B beside a 25 GiB 8B (C) — where little is left for any policy to protect.
->
-> **The 3B barely needs protecting.** Under fair sharing its TTFT rises only 10–35 ms
-> over running alone. MPS 3B priority recovers 4–10 ms of that at little cost to the 8B;
-> gating recovers the same and costs the 8B more than its required eager decode does.
+> **Give priority to the decode, and do it with MPS client priority.** The decode has a
+> capacity cliff and the prefill does not: under fair sharing the 3B is only 10–34 ms
+> slower than alone, while the 8B can fall off its slot limit. Making the 3B a
+> low-priority MPS client shortens the 8B's residence enough to pull it back (8 3B-req/s,
+> config A: queue 18 → 8 s, TPOT 166 → 88 ms) for 20–70 ms of 3B TTFT. Prioritizing the
+> 3B buys it 5–10 ms. A launch-time gate gives the 8B nothing over fair sharing and
+> starves the 3B.
 
 Run-level decisions, every prediction and its outcome are in
 [DECISIONS_PF_PRIO.md](../DECISIONS_PF_PRIO.md); the study-level predictions in
@@ -57,7 +57,7 @@ prompt per request (1 output token) at 2 / 4 / 8 req/s — shorter than the refe
 
 A is the largest 8B budget a bf16 3B fits beside; C buys the 8B two more GiB with an fp8
 3B. A → C changes two things; B changes only the 3B, so A vs B is the 3B's weight and
-B vs C the 8B's headroom (§3.1).
+B vs C the 8B's headroom (§3.2).
 
 ### 1.2 The priority arms
 
@@ -72,7 +72,7 @@ All under MPS. Each colocated cell runs one arm at one 3B rate (150 s windows).
 | `gate3b` | 3B | 3B publishes its busy window; the 8B decode's launches wait (8B eager) |
 
 Controls: the 8B alone with an eager decode (gate3b's baseline), the 3B alone at each
-rate, the 8B eager beside the 3B without a gate (8 req/s). Supplements: a tighter gate
+rate, the 8B eager beside the 3B without a gate (8 req/s). Supplements: tighter gating
 (`gate8bt`: K=1, ≤ 1 pending) and repeats (§4).
 
 ### 1.3 Measurement
@@ -122,29 +122,63 @@ only). Dashed = the 8B alone at 23 GiB (A, B) and 25 GiB (C).*
 
 **Observations:**
 
-- **In A the 8B pays in capacity, as in the eighth study.** Its per-token gap is
-  unchanged (ITL p50 15.0–15.3 ms); what grows is the queue on its decode engine, to 18 s
-  at 8 req/s, and throughput falls 18%.
-- **In C it barely pays.** −3% throughput and a 1.3 s queue at 8 req/s.
+- **In A the 8B pays in capacity:** throughput −18% and an 18 s queue on its decode
+  engine at 8 req/s. **In C it barely pays:** −3%, 1.3 s.
 - **The 3B is only mildly slowed:** +10 ms (A, 2–4 req/s), +34 ms (A, 8 req/s),
   +11–14 ms (C).
 - **Compute utilization rises with the 3B's load** — GPU1 tensor-active from 0.06 to
   0.20 (A) and 0.15 (C) at 8 req/s. In C it is close to the sum of the two models alone
-  (0.152 vs 0.156): they overlap with little interference. In A it falls short at
-  8 req/s (0.199 vs 0.242): the 8B is not getting its own work done.
+  (0.152 vs 0.156); in A it falls short at 8 req/s (0.199 vs 0.242): the 8B is not getting
+  its own work done.
 
-### 3.1 Lighter 3B or more 8B headroom?
+### 3.1 Why the 8B queues: residence against KV slots
 
-| 3B load, 8B tok/s / TPOT / queue | A: bf16 3B, 23 GiB | B: fp8 3B, 23 GiB | C: fp8 3B, 25 GiB |
+The 8B's median gap between tokens does not move (ITL p50 14.8 → 15.0–15.3 ms in A), but
+its *mean* does: a request's 128-token decode takes 2.8 s alone and 4.1 s beside the 3B
+at 8 req/s. Most decode steps are untouched; the few that collide with a 3B prefill are
+long, and they add up. With the KV load from DRAM, each 8B request's **residence** on
+the decode engine grows:
+
+| 8B residence on its decode engine (KV load + decode) | alone | 2 req/s | 4 req/s | 8 req/s |
+|---|---|---|---|---|
+| A (bf16 3B, 23 GiB), fair | 3.10 s | 3.66 (+18%) | 4.01 (+29%) | 4.76 (+54%) |
+| B (fp8 3B, 23 GiB), fair | 3.10 s | — | 3.70 (+19%) | 4.14 (+34%) |
+| C (fp8 3B, 25 GiB), fair | 3.43 s | 3.73 (+9%) | 3.93 (+15%) | 4.89 (+43%) |
+| A, MPS 8B priority | 3.10 s | 3.45 (+11%) | 3.75 (+21%) | 4.30 (+39%) |
+
+Each request in flight holds its whole prompt's KV (6400 tokens × 0.125 MiB = 0.78 GiB),
+so the decode engine holds **~8.7 requests at 23 GiB and ~11.2 at 25 GiB**. By Little's
+law the 8B needs offered rate × residence of them.
+
+![slot pressure](../figures/pfp_slots.png)
+
+*Every non-gated P2 cell (A, B, C; fair, MPS 8B priority, MPS 3B priority; 8B alone):
+the 8B's mean queue wait on its decode engine against offered rate × residence ÷ KV
+slots.*
+
+**All cells fall on one curve.** The queue is ~0.1–0.3 s below 0.7 of the slots, ~1–2 s
+at 0.8–0.87, 4–8 s at 0.92–0.99, and 18–20 s past 1.0 (A at 8 req/s, fair and 3B
+priority). Configuration, arm and 3B rate matter only through where they put this ratio.
+It rises before 1.0 because arrivals are bursty: Poisson arrivals overfill the slots
+before the average does.
+
+### 3.2 What fp8 and two more GiB each do
+
+| 3B load | A: bf16 3B, 23 GiB | B: fp8 3B, 23 GiB | C: fp8 3B, 25 GiB |
 |---|---|---|---|
-| 4 req/s | 239.6 / 59 ms / 4.2 s | 247.9 / 41 ms / 1.7 s | 253.7 / 34 ms / 0.30 s |
-| 8 req/s | 209.3 / 166 ms / 18.2 s | 233.7 / 68 ms / 5.6 s | 246.1 / 44 ms / 1.3 s |
+| 4 req/s: 8B tok/s / TPOT / queue | 239.6 / 59 ms / 4.2 s | 247.9 / 41 ms / 1.7 s | 253.7 / 34 ms / 0.30 s |
+| 8 req/s: 8B tok/s / TPOT / queue | 209.3 / 166 ms / 18.2 s | 233.7 / 68 ms / 5.6 s | 246.1 / 44 ms / 1.3 s |
+| 8 req/s: slot ratio | 1.10 | 0.96 | 0.87 |
 
-**Both matter, about equally.** A → B (lighter 3B, same 8B) closes roughly half of the
-A → C gap; B → C (two more GiB for the 8B) closes the other half. The lighter prefill
-stretches each 8B request's stay on its decode engine less; the larger KV grant absorbs
-what stretch remains. The 3B's TTFT in B equals C's (54–56 ms): it depends on the 3B, not
-on the 8B's budget.
+- **A → B (fp8 3B, same 8B) cuts the interference by about a third:** residence +54% →
+  +34% at 8 req/s. The fp8 prefill occupies the GPU about half as long (3B alone at
+  8 req/s: tensor-active 0.096 vs 0.181; TTFT 43 vs 80 ms). Whether that is fewer FLOPs
+  or fewer weight bytes is not separable here.
+- **The large visible gap is the cliff amplifying it.** A 13% shorter residence (4.76 →
+  4.14 s) moves the 8B from just past its slots (1.10) to just under (0.96), and its queue
+  from 18 to 5.6 s.
+- **B → C (two more GiB for the 8B) adds slots, not speed:** 8.7 → 11.2 requests. The
+  residence is no shorter (4.89 s), but the ratio falls to 0.87 and the queue to 1.3 s.
 
 ---
 
@@ -155,7 +189,7 @@ on the 8B's budget.
 ![8B priority, config C](../figures/pfp_prio_C_8b.png)
 
 *P2 with the 8B as the priority model: fair vs MPS client priority vs gating vs the
-tighter gate (supplement; A at 4 and 8 req/s, C at 8). Grey = alone (for the 3B, alone at
+tighter gating (supplement; A at 4 and 8 req/s, C at 8). Grey = alone (for the 3B, alone at
 that rate); black tick in (f) = the two models' tensor-active alone, summed.*
 
 | config, 3B load | 8B TPOT p50: fair / mps8b / gate8b / gate8bt | 8B tok/s: fair / mps8b / gate8b / gate8bt | 3B TTFT p50: fair / mps8b / gate8b / gate8bt | 3B served (of offered) gate8b / gate8bt |
@@ -176,18 +210,23 @@ A fair 8 req/s 164.5 vs 166 ms; A mps8b 4 req/s 42.7 vs 42.1 ms.*
   it keeps the 8B at 247 tok/s and 43 ms (fair: 240, 59 ms) and cuts its queue from 4.2
   to 1.9 s; the 3B's TTFT goes 81 → 100 ms. At 8 req/s it is the best 8B arm by a wide
   margin: 88 ms and 227 tok/s vs 166 ms and 209 tok/s at fair. In C the same ordering
-  holds with small margins, because fair sharing costs the 8B little there.
+  holds with small margins, because fair sharing costs the 8B little there. It works on
+  the quantity that matters: the 8B's residence grows +39% instead of +54% (A, 8 req/s),
+  enough to bring the slot ratio from 1.10 to 0.99 (§3.1).
 - **Gating gives the 8B no more than fair sharing.** A at 4 req/s 64 ms (fair 59); at
   8 req/s 127 ms (fair 166, mps8b 88), with the 8B's per-token gap rising from 15 to 24 ms.
 - **…and it starves the 3B.** The gated 3B issues kernels only between 8B decode steps:
   TTFT 2× fair at 2–4 req/s, and at 8 req/s it saturates in both A (6.0 of 7.7 req/s
   served, TTFT 30 s) and C (7.2, 12 s).
-- **The tighter gate is worse on both sides.** It tested whether the 8B was waiting
-  behind the ~24 3B kernels the default credits let through. With at most one 3B kernel
-  in flight the 8B's TPOT is *higher* (A 4 req/s 78 ms) and the 3B starves further, so
-  the backlog is not the explanation. What the gate does not see — copies (the 3B's KV
-  save, the 8B's own KV loads) and the 8B's work between decode steps — is a candidate,
-  not measured.
+- **Tighter gating does not fix it.** It tested whether the 8B was waiting behind the
+  ~24 3B kernels the default credits let through, by allowing at most one in flight. In A
+  at 4 req/s — where the 3B is still fully served — the 8B gets *worse* (78 vs 64 ms) and
+  the 3B's TTFT rises to 246 ms, so the backlog is not the explanation. In C at 8 req/s
+  the 8B looks better (40 vs 44 ms, 252 tok/s), but only because the 3B is throttled:
+  it is served 6.9 of 7.7 req/s with a 20 s TTFT. MPS priority gives the 8B the same
+  there (40 ms, 250 tok/s) with the 3B fully served at 71 ms. What the gate does not
+  see — copies (the 3B's KV save, the 8B's own KV loads) and the 8B's work between
+  decode steps — is a candidate, not measured.
 
 ### 4.1 Capacity: the 8B at a higher load
 
@@ -231,33 +270,46 @@ in the 8B panels = the 8B alone with an eager decode, gate3b's baseline.*
 **Observations:**
 
 - **There is little for 3B priority to recover.** Under fair sharing the 3B is 10–34 ms
-  slower than alone; MPS priority recovers 4–10 ms of that, gating about the same.
-- **MPS 3B priority costs the 8B little**, except at the highest load in A (TPOT 181 vs
-  166 ms).
+  slower than alone — the decode is memory-bound and leaves it most of the SMs. MPS
+  priority recovers 4–10 ms of that, gating about the same.
+- **The two models are not symmetric.** The 3B's cost under sharing is tens of
+  milliseconds and grows smoothly; the 8B's is a cliff (§3.1). Priority to the 3B buys it
+  5–10 ms; priority to the 8B buys it its throughput back. MPS 3B priority costs the 8B
+  little until it sits near its slot limit (A, 8 req/s: TPOT 166 → 181 ms).
 - **Gating the 8B costs it more than the eager decode it requires.** At 8 req/s the 8B
   with an eager decode and no gate has 193 ms (A) / 45 ms (C) of TPOT; gated, 225 / 58 ms.
-  The 3B gains nothing over MPS priority for that.
 
 ## 6. Takeaways
 
-1. **To give a decode priority over a prefill neighbour, use MPS client priority.** One
-   environment variable on the low-priority process, no eager mode, and the best 8B arm
-   at every load where fair sharing hurt the 8B (A, 8 req/s: TPOT 166 → 88 ms,
-   209 → 227 tok/s). The prefill pays 20–70 ms of TTFT. When the 8B is loaded past its
-   capacity, priority keeps about a third of what fair sharing loses (§4.1).
-2. **A launch-time busy-window gate does not protect a decode from a prefill neighbour**,
-   unlike a fine-tune neighbour in the fifth study: it gives the 8B nothing over fair
-   sharing, starves the prefill, and tightening it makes both worse.
-3. **Size before you prioritize.** How much the neighbour hurts is set by its weight and
-   the 8B's headroom, about equally (§3.1): at 8 3B-requests/s, −18% (A), −8% (B), −3% (C).
-4. **Colocated prefill raises the decode GPU's compute utilization roughly additively**
-   (tensor-active ~0.06 → 0.15–0.20 at 8 req/s), as long as the incumbent has headroom.
+1. **A prefill neighbour costs a decode KV slots, not tokens.** It leaves the decode's
+   median step alone but stretches how long each request holds its KV (+10–55% here).
+   The decode is safe while offered rate × residence stays clearly below the requests its
+   KV grant holds (≤ ~0.8 of it for < 1 s of queue at Poisson arrivals); past ~0.9 it
+   queues for seconds, past 1.0 without bound (§3.1). This is a sizing rule: measure the
+   residence with the neighbour, and size the decode's KV for it.
+2. **With slot headroom, prefill on the decode GPU is nearly free.** Config C with MPS 8B
+   priority: 7.7 req/s × 2048 tokens ≈ 16k prompt tokens/s of 3B prefill at 71 ms TTFT,
+   for 1.7% of the 8B's throughput; GPU1 tensor-active 0.06 → 0.15.
+3. **A lighter neighbour and more decode KV act on different sides of the rule.** fp8 cut
+   the 8B's residence growth by about a third — near the cliff that read as a 3× shorter
+   queue; two more GiB of decode KV moved the slot limit itself. Each closed about half
+   of the A → C gap.
+4. **Give priority to the side with the cliff — the decode — with MPS client priority.**
+   One environment variable on the prefill process, no eager mode; it pulled config A at
+   8 req/s from past the slot limit back to it (TPOT 166 → 88 ms) for 20–70 ms of prefill
+   TTFT. Priority cannot create capacity: with the 8B already past its own limit it keeps
+   about a third of what sharing costs (§4.1).
+5. **Launch-time gating is the wrong tool against a prefill neighbour.** It gives the
+   decode nothing over fair sharing and starves the prefill; tighter gating helps the
+   decode only by starving the prefill further.
 
 ## Caveats
 
 - Most cells are single runs; the key A cells at 4 and 8 req/s have two (fair, mps8b),
   and clean repeats agree within 1–3%. Swap-backed cells are marked †.
 - Config B was run under fair sharing only, at 4 and 8 req/s.
+- The slot rule (§3.1) is fitted on one 8B, one workload and P2 only; the residence a
+  neighbour adds has to be measured, not derived.
 - The 3B workload is synthetic (fresh 2048-token prompts, one output token); MPS client
   priority has two levels only.
 - The 8B's own load was raised once (2.5 QPS, config A, 3B at 4 req/s, §4.1).
@@ -281,7 +333,7 @@ scripts/inf_pf_prio/queue_supp3.sh; scripts/inf_pf_prio/queue_supp4.sh   # confi
 $PY $D --cells p2 --arm gate8bt --sm-qps 8 --budget 23 --sm-quant "" --sm-util 0.205 --name-suffix _b23_r2
 scripts/inf_pf_prio/queue_supp6.sh          # §4.1, the 8B at 2.5 / 3 QPS
 # figures (view them before believing them)
-$PY scripts/plots/plot_pfp_results.py
+$PY scripts/plots/plot_pfp_results.py     # incl. pfp_slots.png (§3.1)
 ```
 
 Data: `output/summary_pfp.csv` (rebuilt from raw on every run); raw records
