@@ -224,3 +224,4 @@ The main queue raises two questions the report would otherwise leave as conjectu
   `reports/report_colocation_prio.md`, figures `pfp_prio_{A,B}_{8b,3b}.png`,
   `pfp_configs.png`; PLAN outcomes annotated; README / CLAUDE.md entries added. Not
   committed (the user commits on request).
+- **10-19 — report renamed the configurations (user):** A = bf16 3B + 8B 23 GiB (unchanged), **B = fp8 3B + 8B 23 GiB** (the cross cell / S3 here), **C = fp8 3B + 8B 25 GiB** ("config B" in this log and the plan). Figures `pfp_prio_B_*` became `pfp_prio_C_*`; data names unchanged (`_b23`, `_fp8b23`, `_fp8b25`).

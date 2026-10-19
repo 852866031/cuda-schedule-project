@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Ninth study: 8B-decode vs 3B-prefill priority on the shared GPU (scripts/inf_pf_prio/).
 
-From output/summary_pfp.csv. Two configurations:
+From output/summary_pfp.csv. Three configurations:
   A  bf16 3B + 8B decode b23   (suffix _b23)
-  B  fp8  3B + 8B decode b25   (suffix _fp8b25)
+  B  fp8  3B + 8B decode b23   (suffix _fp8b23; fair at 4 and 8 req/s only)
+  C  fp8  3B + 8B decode b25   (suffix _fp8b25)
 
   pfp_prio_<cfg>_8b.png   8B priority: fair vs mps8b vs gate8b
   pfp_prio_<cfg>_3b.png   3B priority: fair vs mps3b vs gate3b
-  pfp_configs.png         fair sharing, config A vs config B
+  pfp_configs.png         fair sharing, configs A, B, C
 
 Each priority figure, x = 3B load (req/s): (a) 8B throughput, (b) 8B TPOT p50, (c) 8B
 queue wait in its decode engine, (d) 3B TTFT p50, (e) 3B throughput, (f) GPU1
@@ -32,10 +33,10 @@ plt.rcParams.update({"font.size": 12, "axes.titlesize": 13, "axes.labelsize": 12
                      "legend.fontsize": 12})
 ROWS = {r["name"]: r for r in csv.DictReader(open(REPO / "output" / "summary_pfp.csv"))}
 RATES = (2, 4, 8)
-CFGS = {"A": ("_b23", "config A: bf16 3B, 8B decode budget 23 GiB"),
-        "B": ("_fp8b25", "config B: fp8 3B, 8B decode budget 25 GiB")}
-# S3 cross cell (fair only, 4 and 8 req/s): config B's 3B beside config A's 8B
-CROSS = ("_fp8b23", "cross: fp8 3B, 8B decode budget 23 GiB")
+CFGS = {"A": ("_b23", "config A: bf16 3B, 8B decode 23 GiB"),
+        "C": ("_fp8b25", "config C: fp8 3B, 8B decode 25 GiB")}
+# config B: the fp8 3B beside the 23 GiB 8B -- fair sharing at 4 and 8 req/s only
+CROSS = ("_fp8b23", "config B: fp8 3B, 8B decode 23 GiB")
 C_BASE = "#57606a"
 ARM_STYLE = {"fair": ("#bf8700", "fair (MPS default)"),
              "mps8b": ("#1f6feb", "8B priority: MPS client priority"),
@@ -133,10 +134,23 @@ def prio_figure(cfg, arms, tag, title):
         for hh, ll in zip(*ax.get_legend_handles_labels()):
             if ll not in l:
                 h.append(hh); l.append(ll)
-    h.insert(0, plt.Rectangle((0, 0), 1, 1, color=C_BASE))
-    l.insert(0, "alone (grey bar; for the 3B: alone at that rate)")
-    fig.legend(h, l, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.07))
-    fig.suptitle(f"P2, {title} — {CFGS[cfg][1]}", fontsize=15, fontweight="bold", y=1.12)
+    # two legend groups: what is measured (one bar colour per arm) and the references
+    arm_lab = {ARM_STYLE[a][1] for a in arms}
+    ha = [hh for hh, ll in zip(h, l) if ll in arm_lab]
+    la = [ll for ll in l if ll in arm_lab]
+    ref_names = {"model alone (baseline)": "model alone (dashed line)",
+                 "8B alone, eager decode (gate3b's baseline)": "8B alone, eager decode (dotted; gate3b's baseline)",
+                 "8B alone + 3B alone (sum), drawn over the grey bar": "8B alone + 3B alone, summed (black tick, panel f)"}
+    hr = [plt.Rectangle((0, 0), 1, 1, color=C_BASE)]
+    lr = ["alone (grey bar; 3B: alone at that rate)"]
+    for hh, ll in zip(h, l):
+        if ll in ref_names:
+            hr.append(hh); lr.append(ref_names[ll])
+    fig.legend(ha, la, loc="upper left", ncol=1, frameon=True, title="colocated, by priority arm",
+               title_fontproperties={"weight": "bold"}, bbox_to_anchor=(0.12, 1.11))
+    fig.legend(hr, lr, loc="upper right", ncol=1, frameon=True, title="references (run alone)",
+               title_fontproperties={"weight": "bold"}, bbox_to_anchor=(0.88, 1.11))
+    fig.suptitle(f"P2, {title} — {CFGS[cfg][1]}", fontsize=15, fontweight="bold", y=1.16)
     fig.text(0.5, -0.02, "8B: split, 2 requests/s, reference workload.  3B: fresh 2048-token "
              "prompt per request, prefill on GPU1 (the 8B's decode GPU), KV to DRAM "
              "(async save).  All under MPS.", ha="center", fontsize=11, color="#444")
@@ -149,15 +163,15 @@ def config_figure():
     fig, axes = plt.subplots(2, 3, figsize=(19, 9.5))
     axes = axes.ravel()
     xi = np.arange(len(RATES))
-    cols = {"A": "#bf8700", "X": "#d4a0a0", "B": "#8250df"}
+    cols = {"A": "#bf8700", "X": "#d4a0a0", "C": "#8250df"}
     for ax, (col, sc, yl, tt, base) in zip(axes, PANELS):
-        for k, cfg in enumerate(("A", "X", "B")):
+        for k, cfg in enumerate(("A", "X", "C")):
             if base == "big" and cfg != "X":
                 ax.axhline(v(cell(cfg, "base", "fair"), col, sc), color=cols[cfg], ls="--",
                            lw=1.2, zorder=0)
             if cfg == "X":
                 vals = [v(f"pfp_p2_fair_q{q}{CROSS[0]}", col, sc) for q in RATES]
-                lab = CROSS[1] + " (S3)"
+                lab = CROSS[1]
             else:
                 vals = [v(cell(cfg, "p2", "fair", q), col, sc) for q in RATES]
                 lab = CFGS[cfg][1]
@@ -172,7 +186,7 @@ def config_figure():
         ax.grid(alpha=0.3, axis="y")
     fig.legend(*axes[0].get_legend_handles_labels(), loc="upper center", ncol=3,
                frameon=False, bbox_to_anchor=(0.5, 1.02))
-    fig.suptitle("P2, fair sharing: config A vs config B, and the cross cell (dashed = 8B alone in that config)",
+    fig.suptitle("P2, fair sharing: configs A, B, C (dashed = 8B alone at 23 GiB / 25 GiB)",
                  fontsize=15, fontweight="bold", y=1.06)
     fig.tight_layout()
     fig.savefig(FIGS / "pfp_configs.png", dpi=120, bbox_inches="tight")
@@ -184,4 +198,4 @@ if __name__ == "__main__":
         prio_figure(cfg, ["fair", "mps8b", "gate8b", "gate8bt"], "8b", "8B priority")
         prio_figure(cfg, ["fair", "mps3b", "gate3b"], "3b", "3B priority")
     config_figure()
-    print("wrote figures/pfp_prio_{A,B}_{8b,3b}.png, pfp_configs.png")
+    print("wrote figures/pfp_prio_{A,C}_{8b,3b}.png, pfp_configs.png")
