@@ -168,3 +168,39 @@ on non-empty text. Consequences and fixes:
 - New: **24 GiB preempts** (9 and 12 per run). Running reached 10 (KV 99–100%) — the
   scheduler admits a 10th request on its 392 prompt blocks while the 9 running ones are
   short of their 400, then preempts when they grow.
+
+## E1 — outcome with repeats (accepted)
+
+| cell | tpot2 p50 | decode queue | preemptions | tok/s | swap-in |
+|---|---|---|---|---|---|
+| off `kv_base_b24_q2` | 25.30 ms | 200 ms | 12 | 254.3 | 12 MB |
+| off `kv_base_b24_q2_r2` | 24.78 ms | 154 ms | 10 | 254.4 | 97 MB |
+| on `kv_base_b24_q2_tr` | 24.47 ms | 153 ms | 9 | 254.4 | 102 MB |
+| on `kv_base_b24_q2_tr_r2` | 24.48 ms | 157 ms | 11 | 254.4 | 2 MB |
+
+- **Overhead prediction confirmed:** trace on − off = −0.56 ms tpot2 (mean of two each;
+  off varies by 0.5 ms run to run), throughput identical, queue wait inside the off
+  runs' own spread (154–200 ms). The trace is accepted as behaviour-neutral; E2 runs
+  with it on everywhere.
+- **Stall prediction (hypothesis 2) confirmed** (`kv_base_b24_q2_tr`, from the trace):
+  - Steps that overlap a KV load: p50 173 ms, mean 200 ms; 97% of their wall time is
+    the synchronous `start_load_kv` call. Steps without a load: p50 14.1 ms, mean 15.0,
+    p99 34 ms; by batch size p50 10.7 ms (1 running) → 16.2 ms (10).
+  - Load calls: p50 171 ms, mean 198 ms, p95 300 ms for one 6144-token request
+    (0.75 GiB) → ~4.4 GB/s, a third of the 14.47 GB/s link (Python fallback copy).
+    272 calls loaded 1 request, 21 loaded 2, 4 loaded 3.
+  - The whole batch waits: 51 s of the 150 s of decode wall time (34%) is load stall,
+    which delays the other running requests by 269 request-seconds in total, ≈ 0.9 s per
+    request. That is ~27% of a request's 3.26 s residence (sched → finished).
+  - Per request: decode queue p50 0, mean 153 ms, p95 923 ms; load (sched → first token)
+    p50 266 ms; decode (first → last) p50 3.11 s.
+
+## E2 — baseline grid (trace on)
+
+Budgets 24 / 26 / 28 GiB × QPS 1, 1.5, 2, 2.5, 3, 3.5, 4, plus 2.25 / 2.75 at 24 GiB
+(23 cells; `kv_base_b24_q2_tr` reused). One launch per cell. Predictions as in the plan
+(capacity 24: 2.0–2.5, 26: 2.5–3.0, 28: 3.0–3.5 QPS), refined with E1: at 24 GiB
+residence S ≈ 3.3 s, so c ÷ S = 9 ÷ 3.3 ≈ 2.7 req/s is the saturation throughput;
+**capacity (queue < 50 ms) at 24 GiB ≈ 2.0 QPS** (2 QPS already reads 153 ms mean, so
+the knee is at or just below 2). Preemptions grow with QPS at 24 GiB (fractional slot)
+and stay ~0 at 26 / 28 GiB (12.51 / 15.07: the slack is ≥ 0.5 request).
