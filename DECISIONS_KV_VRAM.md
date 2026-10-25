@@ -204,3 +204,32 @@ residence S ≈ 3.3 s, so c ÷ S = 9 ÷ 3.3 ≈ 2.7 req/s is the saturation thro
 **capacity (queue < 50 ms) at 24 GiB ≈ 2.0 QPS** (2 QPS already reads 153 ms mean, so
 the knee is at or just below 2). Preemptions grow with QPS at 24 GiB (fractional slot)
 and stay ~0 at 26 / 28 GiB (12.51 / 15.07: the slack is ≥ 0.5 request).
+
+### E2 interim (24 GiB row done) — effective slots, and a prediction for 26 / 28 GiB
+
+| QPS | 1 | 1.5 | 2 | 2.25 | 2.5 | 2.75 | 3 | 3.5 | 4 |
+|---|---|---|---|---|---|---|---|---|---|
+| decode queue (ms) | 0 | 7 | 153 | 941 | 4,680 | 8,913 | 10,977 | 18,409 | 21,413 |
+| replay c = 9 | 0 | 23 | 381 | 2,612 | 9,830 | 14,282 | 16,503 | 25,099 | 28,060 |
+| replay c = 10 | 0 | 7 | 153 | 932 | 4,591 | 8,759 | 10,856 | 18,216 | 21,250 |
+| preemptions | 0 | 1 | 9 | 14 | 35 | 33 | 34 | 33 | 34 |
+| tok/s | 128 | 191 | 254 | 282 | 289 | 292 | 303 | 298 | 305 |
+
+- Capacity (queue < 50 ms) at 24 GiB is **between 1.5 and 2 QPS** — below the plan's
+  2.0–2.5 (wrong by about one grid step). Saturation throughput ≈ 2.3 req/s.
+- A FCFS replay with **10** servers reproduces the measured mean wait within 2% at
+  every rate; 9 servers overpredict 1.4–3×. The replay uses each request's measured
+  residence, so it is partly circular; what it shows is that waiting is fully explained
+  by "integer slots, FCFS" and that the effective slot count at 24 GiB is 10.
+- Why 10: admission needs the prompt's 392 blocks; a running request holds 392 → 400.
+  3,980 − 9 × 392 = 452 ≥ 392, so a 10th request is admitted while the nine are young,
+  and when all ten grow (10 × 400 = 4,000 > 3,980) one is preempted (and later reloads).
+- **Prediction (written before the 26/28 GiB cells finish):** 26 GiB: 5,004 − 12 × 392
+  = 300 < 392 → effective c = 12, no preemptions at any rate. 28 GiB: 6,027 − 15 × 392
+  = 147 → c = 15, no preemptions. Replay with c (not c + 1) should match there.
+- At ≥ 3.5 QPS tpot2 *drops* (25.7 → 18.6 ms) while the queue grows: under a deep queue,
+  requests finish and are admitted in cohorts — one load call brings in up to 10
+  requests (104 calls vs 191 at 3 QPS) — so each request is interrupted by fewer
+  separate load stalls during its decode. Decode time = 128 steps + (number of load
+  stalls met while resident) × stall length; the stall count depends on the admission
+  pattern.
