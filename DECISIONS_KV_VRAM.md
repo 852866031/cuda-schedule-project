@@ -233,3 +233,42 @@ and stay ~0 at 26 / 28 GiB (12.51 / 15.07: the slack is ≥ 0.5 request).
   separate load stalls during its decode. Decode time = 128 steps + (number of load
   stalls met while resident) × stall length; the stall count depends on the admission
   pattern.
+
+### E2 — `kv_base_b28_q1.5_tr`: one failed request (router keep-alive race)
+
+Request #23 got token #1, then the router's decode-leg POST hit a broken pipe on send:
+aiohttp reused a pooled keep-alive connection to the decode server that the server had
+already closed (`lmc_proxy.py:94`, ClientOSError in `protocol.read`). The request never
+reached the decode engine (299 × 128 decode tokens). Router-level transient, not an engine
+or KV-path failure — the CLAUDE.md "lone broken pipe" case. Decision: keep the router
+unchanged (no mid-study setup change), rerun the cell as `_r2` after the grid, report the
+clean run; the failed run stays in raw.
+
+### E2 — 26 GiB row: effective-slot prediction confirmed
+
+Replay with c = 12 matches the measured mean wait to < 0.1% at every rate (56.2 vs 56.2
+ms at 2 QPS, 1,054 vs 1,054 ms at 2.5, 6.21 vs 6.21 s at 3, 16.25 vs 16.25 s at 4);
+max Running = 12; zero preemptions at every rate. c + 1 underpredicts (18 ms at 2 QPS).
+
+### E2 — why more slots buy less than proportional throughput (decode-time split)
+
+Per request, decode time (first → last token) split by the trace into executed steps
+that overlap no KV load and steps stalled by a load (any request's):
+
+| cell | mean running | step (no load) | decode | = steps | + load stalls |
+|---|---|---|---|---|---|
+| 24 GiB, 1 QPS | 3.3 | 12.2 ms | 1.90 s | 1.57 s | 0.34 s (1.8 × 185 ms) |
+| 24 GiB, 2 QPS | 7.5 | 15.0 ms | 2.96 s | 1.87 s | 1.09 s (5.5 × 198 ms) |
+| 26 GiB, 2.5 QPS | 10.9 | 17.4 ms | 3.88 s | 2.04 s | 1.84 s (8.7 × 211 ms) |
+| 26 GiB, 3 QPS | 11.6 | 17.9 ms | 3.93 s | 2.05 s | 1.86 s (8.6 × 217 ms) |
+| 28 GiB, 2.5 QPS | 11.8 | 17.6 ms | 3.93 s | 2.11 s | 1.80 s (8.6 × 209 ms) |
+| 28 GiB, 3 QPS | 14.3 | 19.4 ms | 4.80 s | 2.22 s | 2.56 s (12.1 × 211 ms) |
+
+Of the 2.9 s growth from the lightest to the heaviest cell, the larger batch makes the
+steps themselves slower by 0.65 s (decode is weight-read bound: +0.5 ms per extra
+request on a ~11 ms base), and load stalls add 2.2 s: every admission stops the whole
+batch for ~210 ms, and a request resident among more slots sits through more
+admissions (1.8 → 12.1). More slots therefore raise c but also raise S, mostly through
+stalls — the reason 26 → 28 GiB (+25% slots) barely moves saturation throughput.
+Methods that remove the stall (async / layerwise / faster copy) attack the 2.2 s;
+methods that add slots attack the queue but increase the stall count.
