@@ -17,6 +17,7 @@ import aiohttp
 import numpy as np
 
 
+
 async def _one_request(session, url, model, req, max_tokens, timeout, results, sem=None):
     body = {
         "model": model,
@@ -69,10 +70,13 @@ async def _one_request(session, url, model, req, max_tokens, timeout, results, s
                 t_prev = now
                 rec["n_chunks"] += 1
             rec["e2e"] = time.perf_counter() - t0
-            # ignore_eos: every complete request streams exactly max_tokens chunks. With the
-            # split router a broken decode leg still yields token #1 (from prefill), so a
-            # short stream is a failure, not a success.
-            rec["ok"] = rec["ttft"] is not None and rec["n_chunks"] == max_tokens
+            # Chunks are NOT tokens: vLLM's output collector merges pending deltas into
+            # one chunk when the API server lags (v1/engine/output_processor.py), so a
+            # complete 128-token request can stream 120 chunks (kv_base_b24_q2_tr). Token
+            # completeness is checked per cell from the decode engine's generation-token
+            # counter (kv_sweep.py). Per request: with the split router a broken decode leg
+            # still yields token #1 from prefill, so a stream with no decode chunk fails.
+            rec["ok"] = rec["ttft"] is not None and rec["n_chunks"] > 1
             if rec["ttft"] is not None and not rec["ok"]:
                 rec["error"] = f"short output: {rec['n_chunks']} of {max_tokens} tokens"
     except asyncio.TimeoutError:
@@ -124,13 +128,15 @@ def summarize(results, duration, max_tokens):
     # TPOT = per-REQUEST mean gap. With fixed 128-token outputs its mean equals the
     # all-gaps mean, but its percentiles differ from itl_ms (per-gap) whenever waiting
     # concentrates in a few gaps -- which is exactly the split/coloc failure signature.
-    tpots = [float(np.mean(r["itls"])) for r in ok if r["itls"]]
+    # TPOT from the time span over max_tokens - 1 token gaps (ignore_eos: every request
+    # emits exactly max_tokens), robust to merged chunks; ITL percentiles stay per chunk.
+    tpots = [float(np.sum(r["itls"])) / (max_tokens - 1) for r in ok if r["itls"]]
     # Split router with --forward-first-token: gap #1 (token 1 -> 2) holds the decode
-    # engine's queue wait + KV load. tpot2 = per-request mean of gaps 2..N (decode only).
+    # engine's queue wait + KV load. tpot2 = span of gaps 2..N over max_tokens - 2.
     gap1 = [r["itls"][0] for r in ok if r["itls"]]
-    tpot2 = [float(np.mean(r["itls"][1:])) for r in ok if len(r["itls"]) > 1]
+    tpot2 = [float(np.sum(r["itls"][1:])) / (max_tokens - 2) for r in ok if len(r["itls"]) > 1]
     itls2 = [x for r in ok for x in r["itls"][1:]]
-    out_tokens = sum(r["n_chunks"] for r in ok)
+    out_tokens = len(ok) * max_tokens
 
     return {
         "n_requests": len(results),
@@ -138,6 +144,7 @@ def summarize(results, duration, max_tokens):
         "n_failed": len(fail),
         "failures": [r["error"] for r in fail][:5],
         "n_short": sum(1 for r in fail if (r["error"] or "").startswith("short output")),
+        "n_chunk_mismatch": sum(1 for r in ok if r["n_chunks"] != max_tokens),
         "duration_s": round(duration, 2),
         "ttft_ms": {"p50": pct(ttfts, 50), "p90": pct(ttfts, 90),
                     "p95": pct(ttfts, 95), "p99": pct(ttfts, 99),

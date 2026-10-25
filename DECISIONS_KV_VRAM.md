@@ -129,3 +129,42 @@ Interpretation notes taken from the review (affect E1/E4, not the baseline):
   move more — judged against a rerun if they differ by > 30%).
 - **Prediction (stalls, hypothesis 2):** steps that admit a request take ≥ 150 ms vs
   ~15 ms otherwise.
+
+## D4 (2026-10-25) — streamed chunks are not tokens; ok rule and TPOT fixed
+
+The D3 rule "ok = exactly 128 chunks" failed 5 requests of `kv_base_b24_q2` (126/129
+chunks) and 19 of `kv_base_b24_q2_tr` (120/121 chunks, all in the first 10 requests of
+the run). The trace shows all 300 requests generated 128 tokens on the decode engine, and
+the engine's generation-token counter rose by exactly 300 × 128 = 38,400 in both cells.
+vLLM's output collector merges pending deltas into one chunk whenever the API server
+lags (`v1/engine/output_processor.py:45`), and the router's duplicate-token drop keys
+on non-empty text. Consequences and fixes:
+
+- Per request, ok = token #1 arrived and at least one decode chunk followed (catches a
+  failed decode leg). Per cell, ok additionally requires decode generation tokens ==
+  requests × 128 (`tokens_complete`).
+- Client TPOT was the mean gap per *chunk*, i.e. inflated whenever chunks merged; it is
+  now the request's time span over 127 gaps (tpot2: gaps 2..N over 126). Output tok/s
+  is now ok requests × 128 (it summed chunks). ITL percentiles stay per chunk (a merged
+  chunk's gap spans several tokens); the count of mismatched requests is recorded.
+- The ninth study used the chunk-based TPOT; differences are < 1 ms where chunks match
+  (295/300 requests here), so earlier numbers stand within noise.
+- Both E1 raws were rescored from their stored records (`scripts/kv_vram/rescore.py`,
+  field `rescored = D4`; the original summary is kept as `summary_strict`).
+
+## E0.3 + E1 — first outcome (one run each)
+
+| cell | tok/s | TPOT p50 | tpot2 p50 / mean | decode queue | KV load | preemptions | swap-in |
+|---|---|---|---|---|---|---|---|
+| trace off `kv_base_b24_q2` | 254.3 | 30.1 ms | 25.3 / 24.2 ms | 200 ms | 316 ms | 12 | 12 MB |
+| trace on `kv_base_b24_q2_tr` | 254.4 | 28.4 ms | 24.5 / 23.2 ms | 153 ms | 300 ms | 9 | 102 MB |
+
+- E0.3 confirmed: TPOT p50 30.1 ms (within ±3 ms of 27.7–29.4), 254 tok/s, 0 failed,
+  queue 200 ms between b23's 454 and b25's 126.
+- E1: every difference favours the traced run, i.e. no overhead visible, but the cells
+  differ by 3 preemptions and 47 ms of queue — that is run-to-run variance from
+  admission timing, larger than the plan's 1 ms test can resolve with one run each.
+  Decision: one repeat of each (`_r2`) before accepting.
+- New: **24 GiB preempts** (9 and 12 per run). Running reached 10 (KV 99–100%) — the
+  scheduler admits a 10th request on its 392 prompt blocks while the 9 running ones are
+  short of their 400, then preempts when they grow.

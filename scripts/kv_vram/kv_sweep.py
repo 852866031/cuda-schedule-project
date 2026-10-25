@@ -420,7 +420,7 @@ def run_cell(args, budget, qps, wl):
                                "t_submit": round(r["t_submit"], 5),
                                "ttft": r["ttft"] and round(r["ttft"], 5),
                                "e2e": r["e2e"] and round(r["e2e"], 5), "ok": r["ok"],
-                               "error": r["error"],
+                               "error": r["error"], "n_chunks": r["n_chunks"],
                                "itls": [round(x, 5) for x in r["itls"]]} for r in results]
             n_failed = rec["summary"]["n_failed"]
             rec["n_short"] = rec["summary"].get("n_short", 0)
@@ -444,9 +444,13 @@ def run_cell(args, budget, qps, wl):
                + md.get("vllm:prefix_cache_hits_total", 0.0))
         rec["decode_hit_frac"] = round(hit / qry, 4) if qry else None
         rec["n_failed"] = n_failed
+        # every request's tokens, counted by the decode engine itself (chunks can merge)
+        rec["decode_gen_tokens"] = md.get("vllm:generation_tokens_total")
+        rec["tokens_complete"] = rec["decode_gen_tokens"] == args.requests * args.max_tokens
         rec["ok"] = (not hung and n_failed == 0 and not any(rec["markers"].values())
-                     and (rec["decode_hit_frac"] or 0) >= 0.95)
-        print(f"  decode prefix hit fraction {rec['decode_hit_frac']} (6144/6272 = 0.980 expected)",
+                     and (rec["decode_hit_frac"] or 0) >= 0.95 and rec["tokens_complete"])
+        print(f"  decode prefix hit fraction {rec['decode_hit_frac']} (6144/6272 = 0.980 expected); "
+              f"decode tokens {rec['decode_gen_tokens']} (complete: {rec['tokens_complete']})",
               flush=True)
         g = rec["gpu"]
         print(f"  gpu1 smact={g.get('gpu1_sm_active_mean')} dram={g.get('gpu1_dram_active_mean')} "
