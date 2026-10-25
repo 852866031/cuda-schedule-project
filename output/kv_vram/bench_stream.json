@@ -1,0 +1,77 @@
+{
+ "gpu_index": 1,
+ "gpu": "NVIDIA GeForce RTX 5090",
+ "torch": "2.8.0.dev20250322+cu128",
+ "ctx": 6400,
+ "layers": 32,
+ "iters": 10,
+ "rows": [
+  {
+   "batch": 1,
+   "kv_gib_per_step": 0.781,
+   "resident_ms": 11.99,
+   "copy_ms": 58.052,
+   "stream_d0_ms": 70.256,
+   "stream_d1_ms": 58.504,
+   "stream_d2_ms": 58.508,
+   "stream_d4_ms": 58.505,
+   "stream_d8_ms": 58.507
+  },
+  {
+   "batch": 2,
+   "kv_gib_per_step": 1.562,
+   "resident_ms": 11.122,
+   "copy_ms": 116.03,
+   "stream_d0_ms": 127.571,
+   "stream_d1_ms": 116.484,
+   "stream_d2_ms": 116.483,
+   "stream_d4_ms": 116.481,
+   "stream_d8_ms": 116.48
+  },
+  {
+   "batch": 4,
+   "kv_gib_per_step": 3.125,
+   "resident_ms": 12.097,
+   "copy_ms": 231.988,
+   "stream_d0_ms": 244.333,
+   "stream_d1_ms": 232.47,
+   "stream_d2_ms": 232.47,
+   "stream_d4_ms": 232.468,
+   "stream_d8_ms": 232.468
+  },
+  {
+   "batch": 8,
+   "kv_gib_per_step": 6.25,
+   "resident_ms": 13.922,
+   "copy_ms": 463.897,
+   "stream_d0_ms": 478.158,
+   "stream_d1_ms": 464.442,
+   "stream_d2_ms": 464.45,
+   "stream_d4_ms": 464.478,
+   "stream_d8_ms": 464.451
+  },
+  {
+   "batch": 12,
+   "kv_gib_per_step": 9.375,
+   "resident_ms": 15.977,
+   "copy_ms": 695.823,
+   "stream_d0_ms": 712.115,
+   "stream_d1_ms": 696.433,
+   "stream_d2_ms": 696.429,
+   "stream_d4_ms": 696.43,
+   "stream_d8_ms": 696.433
+  },
+  {
+   "batch": 16,
+   "kv_gib_per_step": 12.5,
+   "resident_ms": 18.023,
+   "copy_ms": 927.739,
+   "stream_d0_ms": 946.06,
+   "stream_d1_ms": 928.406,
+   "stream_d2_ms": 928.41,
+   "stream_d4_ms": 928.42,
+   "stream_d8_ms": 928.414
+  }
+ ],
+ "wall_s": 189.1
+}

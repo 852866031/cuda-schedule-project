@@ -40,3 +40,19 @@ Reports quote tpot2 for "per-token decode speed" and TPOT only as the end-user n
   on this box the staging copy is not the bottleneck for large transfers. One request's
   KV (800 MiB) takes 58 ms at link speed; the measured ~400 ms load is ~7× slower than
   PCIe. `output/kv_vram/pcie_gpu{0,1}.json`.
+
+## E3(b) — streaming micro-benchmark (`scripts/kv_vram/bench_stream.py`, GPU1, .venv)
+
+- **Prediction** (plan, restated with the measured 14.47 GB/s): resident step 12–25 ms
+  over B = 1–16; copy floor = B × 0.78 GiB ÷ 14.47 GB/s ≈ **58 ms × B**; streamed
+  step ≈ max(copy, compute) for d ≥ 1 and ≈ copy + compute for d = 0; d > 1 gains
+  nothing over d = 1.
+- **Outcome:** confirmed. Resident 11.1–18.0 ms (B = 1 → 16). Copy floor 58.05 ms × B
+  (927.7 ms at B = 16, i.e. exactly 14.47 GB/s). Streamed with d ≥ 1 = copy floor
+  + 0.5 ms at every B, identical for d = 1, 2, 4, 8 (the compute is fully hidden behind
+  the copy already at d = 1, and deeper prefetch cannot make PCIe faster); d = 0 = copy
+  + compute (70 ms at B = 1, 946 ms at B = 16). Streaming costs 4.9× the resident step at
+  B = 1 and 52× at B = 16. Corollary for partial residency: the compute that can hide
+  copies is 12–18 ms per step, so per step at most ~12 ms ÷ 58 ms ≈ 20% of ONE request's
+  layers (≈ 6 of 32) can stream for free at B = 1, and < 1 layer at B = 16.
+  `output/kv_vram/bench_stream.json`.
