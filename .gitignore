@@ -14,3 +14,7 @@ __pycache__/
 # Local virtualenvs (multi-GB; recreate per README)
 .venv/
 .venv-matched/
+
+# venvs are symlinks to ../vram-limit (dir-only patterns above do not match symlinks)
+.venv
+.venv-matched

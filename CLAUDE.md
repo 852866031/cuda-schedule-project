@@ -42,6 +42,12 @@ box was swap-backed at 6 × 0.5B with 3.4 GiB stores.
 
 ## Layout
 
+**Branch `kvcache-vram_size` (this worktree) keeps only `scripts/common/`,
+`scripts/inf_pf_prio/`, the ninth study's results and the new `scripts/kv_vram/`** (8B
+split, decode-side KV-slot study; see `README.md`, `NOTES_KV_SLOTS.md`). The other
+directories below exist on the main branch only. This worktree shares the GPUs, ports
+and the venvs (symlinks) with `../vram-limit` — one stack at a time across both.
+
 - `scripts/inference/simple/` — colocated study (also `--backend lmcache`).
 - `scripts/inference/split_simple/` — hand-built P2P split + `p2p_patch/` (four
   connector fixes, loaded via PYTHONPATH sitecustomize) + `disagg_sweep.py`, the
