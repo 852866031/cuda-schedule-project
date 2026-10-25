@@ -7,6 +7,7 @@ Per request (measured requests only; warm-up requests are dropped by key):
   decode engine's first token = regenerated token #1), t_fin, and the client's token
   times. Derived: wait = t_sched - t_arr (the decode queue), load = t_first - t_sched,
   decode = t_fin - t_first, resident = t_fin - t_sched (how long the request held KV).
+Per scheduler call ("sch"): running, waiting, free blocks -> <name>_state.csv.
 Per step (one "upd" line = one executed batch): t, batch size, tokens, admitted, and
   the wall time since the previous executed batch (dt; NaN across idle gaps > 0.5 s).
 
@@ -44,7 +45,7 @@ def build(rec, ev):
     wl = build_workload(32, 6144, 128, rec["requests"], "zipf", 1.1, 0)
     by_key = {tuple(r.token_ids[6144:6148]): r for r in wl.requests}
     cli = {r["index"]: r for r in rec.get("records", [])}
-    reqs, steps, loads = {}, [], []
+    reqs, steps, loads, state = {}, [], [], []
     last_upd = None
     for e in ev:
         k = e.get("ev")
@@ -56,6 +57,7 @@ def build(rec, ev):
                              "t_arr": e["t"], "free_at_arr": e["free"],
                              "run_at_arr": e["run"], "wait_at_arr": e["wait"]}
         elif k == "sch":
+            state.append({"t": e["t"], "run": e["run"], "wait": e["wait"], "free": e["free"]})
             for rid, ext, nb in e.get("new", []):
                 r = reqs.get(rid)
                 if r is not None and "t_sched" not in r:
@@ -102,7 +104,7 @@ def build(rec, ev):
             r["resident"] = r["t_fin"] - r["t_sched"]
         out.append(r)
     out.sort(key=lambda r: r["index"])
-    return out, steps, loads
+    return out, steps, loads, state
 
 
 def write_csv(path, rows):
@@ -123,11 +125,12 @@ def main():
     OUTDIR.mkdir(parents=True, exist_ok=True)
     for p in sys.argv[1:]:
         rec, ev = load_cell(p)
-        reqs, steps, loads = build(rec, ev)
+        reqs, steps, loads, state = build(rec, ev)
         n = rec["name"]
         write_csv(OUTDIR / f"{n}_req.csv", reqs)
         write_csv(OUTDIR / f"{n}_steps.csv", steps)
         write_csv(OUTDIR / f"{n}_loads.csv", loads)
+        write_csv(OUTDIR / f"{n}_state.csv", state)
         done = [r for r in reqs if "resident" in r]
         print(f"{n}: {len(reqs)} measured requests traced ({len(done)} complete), "
               f"{len(steps)} steps, {len(loads)} load calls, "
