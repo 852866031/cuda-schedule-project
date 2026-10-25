@@ -1,0 +1,31 @@
+
+=== probe base b22 ===
+  RAM gate [big]: 57330 MB available, needs ~45864 MB, swap allowance 3000 MB, floor 4000 MB
+  decode KV 5.77 GiB, 47296 tokens, 2956 blocks -> 7 whole requests (7.39); GPU used [24538, 23607] MiB; up 49s
+  after stop: GPU used [143, 18] MiB
+
+=== probe base b23 ===
+  RAM gate [big]: 57279 MB available, needs ~45864 MB, swap allowance 3000 MB, floor 4000 MB
+  decode KV 6.77 GiB, 55488 tokens, 3468 blocks -> 8 whole requests (8.67); GPU used [24856, 24625] MiB; up 33s
+  after stop: GPU used [143, 18] MiB
+
+=== probe base b24 ===
+  RAM gate [big]: 57217 MB available, needs ~45864 MB, swap allowance 3000 MB, floor 4000 MB
+  decode KV 7.77 GiB, 63680 tokens, 3980 blocks -> 9 whole requests (9.95); GPU used [24856, 25645] MiB; up 43s
+  after stop: GPU used [143, 18] MiB
+
+=== probe base b25 ===
+  RAM gate [big]: 57230 MB available, needs ~45864 MB, swap allowance 3000 MB, floor 4000 MB
+  decode KV 8.77 GiB, 71872 tokens, 4492 blocks -> 11 whole requests (11.23); GPU used [24856, 26665] MiB; up 33s
+  after stop: GPU used [143, 18] MiB
+
+=== probe base b26 ===
+  RAM gate [big]: 57260 MB available, needs ~45864 MB, swap allowance 3000 MB, floor 4000 MB
+  decode KV 9.77 GiB, 80064 tokens, 5004 blocks -> 12 whole requests (12.51); GPU used [24856, 27685] MiB; up 33s
+  after stop: GPU used [143, 18] MiB
+
+=== probe base b28 ===
+  RAM gate [big]: 57231 MB available, needs ~45864 MB, swap allowance 3000 MB, floor 4000 MB
+  decode KV 11.77 GiB, 96432 tokens, 6027 blocks -> 15 whole requests (15.07); GPU used [24856, 29745] MiB; up 33s
+  after stop: GPU used [143, 18] MiB
+done

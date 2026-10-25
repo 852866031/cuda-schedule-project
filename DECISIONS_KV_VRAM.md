@@ -103,3 +103,29 @@ Interpretation notes taken from the review (affect E1/E4, not the baseline):
   backend.
 - LMCache 0.4.4 `enable_async_loading` makes the *lookup* asynchronous; the copy stays
   in `start_load_kv`. E4 will test what it actually changes.
+- **Outcome:** confirmed exactly. Grant = budget − 16.23 GiB at every budget (FLASH_ATTN
+  backend, MPS off; 23/25 GiB reproduce 55,488 / 71,872 tokens):
+
+  | budget GiB | 22 | 23 | 24 | 25 | 26 | 28 |
+  |---|---|---|---|---|---|---|
+  | KV tokens | 47,296 | 55,488 | 63,680 | 71,872 | 80,064 | 96,432 |
+  | blocks | 2,956 | 3,468 | 3,980 | 4,492 | 5,004 | 6,027 |
+  | blocks ÷ 400 | 7.39 | 8.67 | 9.95 | 11.23 | 12.51 | 15.07 |
+  | c (whole requests) | 7 | 8 | 9 | 11 | 12 | 15 |
+
+  GPU1 read 18 MiB after every stop. Note for E1: at 24 GiB the grant is 20 blocks
+  short of 10 requests. Admission needs only the prompt's 392 blocks, so a 10th request
+  can be admitted while the running ones are still short of 400 blocks and then force a
+  preemption as they grow — watch `pre` events and `vllm:num_preemptions` at 24 GiB.
+  `output/kv_vram/probe_base.json`.
+
+## E0.3 + E1 validation — 24 GiB, 2 QPS, trace off (`kv_base_b24_q2`) then on (`…_tr`)
+
+- **Prediction (E0.3, no-MPS baseline):** TPOT p50 within ±3 ms of the ninth study's
+  8B-alone 27.7–29.4 ms; throughput ≈ 254 tok/s (= 2 QPS × 128); 0 failed; decode
+  queue wait between the b23 (454 ms) and b25 (126 ms) values.
+- **Prediction (E1 overhead):** trace on vs off: tpot2 p50 within 1 ms, throughput
+  within 1%, queue wait within run-to-run noise (±15 ms p50 TTFT-scale; queue means can
+  move more — judged against a rerun if they differ by > 30%).
+- **Prediction (stalls, hypothesis 2):** steps that admit a request take ≥ 150 ms vs
+  ~15 ms otherwise.

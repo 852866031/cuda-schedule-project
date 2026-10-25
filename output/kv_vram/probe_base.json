@@ -1,0 +1,260 @@
+{
+ "b22": {
+  "budget_gib": 22.0,
+  "decode_util": 0.7017,
+  "method_env": {},
+  "gpu_used_mib_before": [
+   143,
+   18
+  ],
+  "ram_gate": {
+   "big": {
+    "avail_mb": 57330,
+    "need_mb": 45864,
+    "swap_allow_mb": 3000
+   }
+  },
+  "up_s": 49.3,
+  "decode": {
+   "kv_gib": 5.77,
+   "kv_tokens": 47296,
+   "kv_blocks": 2956,
+   "slots": 7,
+   "max_concurrency_8192": 5.77,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "prefill": {
+   "kv_gib": 6.32,
+   "kv_tokens": 51744,
+   "kv_blocks": 3234,
+   "slots": 8,
+   "max_concurrency_8192": 6.32,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "gpu_used_mib_idle": [
+   24538,
+   23607
+  ],
+  "gpu_used_mib_after": [
+   143,
+   18
+  ]
+ },
+ "b23": {
+  "budget_gib": 23.0,
+  "decode_util": 0.7336,
+  "method_env": {},
+  "gpu_used_mib_before": [
+   143,
+   18
+  ],
+  "ram_gate": {
+   "big": {
+    "avail_mb": 57279,
+    "need_mb": 45864,
+    "swap_allow_mb": 3000
+   }
+  },
+  "up_s": 33.2,
+  "decode": {
+   "kv_gib": 6.77,
+   "kv_tokens": 55488,
+   "kv_blocks": 3468,
+   "slots": 8,
+   "max_concurrency_8192": 6.77,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "prefill": {
+   "kv_gib": 6.66,
+   "kv_tokens": 54560,
+   "kv_blocks": 3410,
+   "slots": 8,
+   "max_concurrency_8192": 6.66,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "gpu_used_mib_idle": [
+   24856,
+   24625
+  ],
+  "gpu_used_mib_after": [
+   143,
+   18
+  ]
+ },
+ "b24": {
+  "budget_gib": 24.0,
+  "decode_util": 0.7655,
+  "method_env": {},
+  "gpu_used_mib_before": [
+   143,
+   18
+  ],
+  "ram_gate": {
+   "big": {
+    "avail_mb": 57217,
+    "need_mb": 45864,
+    "swap_allow_mb": 3000
+   }
+  },
+  "up_s": 43.2,
+  "decode": {
+   "kv_gib": 7.77,
+   "kv_tokens": 63680,
+   "kv_blocks": 3980,
+   "slots": 9,
+   "max_concurrency_8192": 7.77,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "prefill": {
+   "kv_gib": 6.66,
+   "kv_tokens": 54560,
+   "kv_blocks": 3410,
+   "slots": 8,
+   "max_concurrency_8192": 6.66,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "gpu_used_mib_idle": [
+   24856,
+   25645
+  ],
+  "gpu_used_mib_after": [
+   143,
+   18
+  ]
+ },
+ "b25": {
+  "budget_gib": 25.0,
+  "decode_util": 0.7974,
+  "method_env": {},
+  "gpu_used_mib_before": [
+   143,
+   18
+  ],
+  "ram_gate": {
+   "big": {
+    "avail_mb": 57230,
+    "need_mb": 45864,
+    "swap_allow_mb": 3000
+   }
+  },
+  "up_s": 33.2,
+  "decode": {
+   "kv_gib": 8.77,
+   "kv_tokens": 71872,
+   "kv_blocks": 4492,
+   "slots": 11,
+   "max_concurrency_8192": 8.77,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "prefill": {
+   "kv_gib": 6.66,
+   "kv_tokens": 54560,
+   "kv_blocks": 3410,
+   "slots": 8,
+   "max_concurrency_8192": 6.66,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "gpu_used_mib_idle": [
+   24856,
+   26665
+  ],
+  "gpu_used_mib_after": [
+   143,
+   18
+  ]
+ },
+ "b26": {
+  "budget_gib": 26.0,
+  "decode_util": 0.8293,
+  "method_env": {},
+  "gpu_used_mib_before": [
+   143,
+   18
+  ],
+  "ram_gate": {
+   "big": {
+    "avail_mb": 57260,
+    "need_mb": 45864,
+    "swap_allow_mb": 3000
+   }
+  },
+  "up_s": 33.2,
+  "decode": {
+   "kv_gib": 9.77,
+   "kv_tokens": 80064,
+   "kv_blocks": 5004,
+   "slots": 12,
+   "max_concurrency_8192": 9.77,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "prefill": {
+   "kv_gib": 6.66,
+   "kv_tokens": 54560,
+   "kv_blocks": 3410,
+   "slots": 8,
+   "max_concurrency_8192": 6.66,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "gpu_used_mib_idle": [
+   24856,
+   27685
+  ],
+  "gpu_used_mib_after": [
+   143,
+   18
+  ]
+ },
+ "b28": {
+  "budget_gib": 28.0,
+  "decode_util": 0.893,
+  "method_env": {},
+  "gpu_used_mib_before": [
+   143,
+   18
+  ],
+  "ram_gate": {
+   "big": {
+    "avail_mb": 57231,
+    "need_mb": 45864,
+    "swap_allow_mb": 3000
+   }
+  },
+  "up_s": 33.2,
+  "decode": {
+   "kv_gib": 11.77,
+   "kv_tokens": 96432,
+   "kv_blocks": 6027,
+   "slots": 15,
+   "max_concurrency_8192": 11.77,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "prefill": {
+   "kv_gib": 6.66,
+   "kv_tokens": 54560,
+   "kv_blocks": 3410,
+   "slots": 8,
+   "max_concurrency_8192": 6.66,
+   "trace_patched": false,
+   "attn_backend": "FLASH_ATTN"
+  },
+  "gpu_used_mib_idle": [
+   24856,
+   29745
+  ],
+  "gpu_used_mib_after": [
+   143,
+   18
+  ]
+ }
+}
