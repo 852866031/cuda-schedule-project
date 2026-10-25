@@ -162,7 +162,12 @@ def engine_startup(name):
         out["slots"] = out["kv_blocks"] // (REQ_TOKENS // BLOCK)
     if m := re.findall(r"Maximum concurrency for [\d,]+ tokens per request: ([\d.]+)x", text):
         out["max_concurrency_8192"] = float(m[-1])
-    out["trace_patched"] = "[kv_trace] scheduler wrapped" in text
+    out["trace_patched"] = ("[kv_trace] scheduler wrapped" in text
+                            and "[kv_trace] connector start_load_kv wrapped" in text)
+    if m := re.findall(r"Using (\S+) attention backend", text):
+        out["attn_backend"] = m[-1]
+    if m := re.findall(r"Using (\S+) backend", text):
+        out["backends"] = sorted(set(m))
     return out
 
 
@@ -299,7 +304,14 @@ def wait_drained(timeout=120):
 
 
 def cell_name(args, budget, qps):
-    return f"kv_{args.method}_b{budget:g}_q{qps:g}{args.name_suffix}"
+    return f"kv_{args.method}_b{budget:g}_q{qps:g}{'_tr' if args.trace else ''}{args.name_suffix}"
+
+
+def clear_logs():
+    """A launch that dies early must not leave the previous launch's logs to be parsed
+    or archived under this cell's tag."""
+    for lg in LOGS.glob("kvv_*.log"):
+        lg.unlink()
 
 
 def new_tag(name):
@@ -345,6 +357,7 @@ def run_cell(args, budget, qps, wl):
         if any(u >= 200 for u in info["gpu_used_mib_before"]):
             raise RuntimeError(f"GPUs not empty before launch: {info['gpu_used_mib_before']}")
         env = launch_env(args, trace_tmp)
+        clear_logs()
         sh(["guard"], env, 60, "guard up")
         t0 = time.time()
         # 24 GiB store working set + 2 pinned L1 pools + two engines' own RSS
@@ -410,6 +423,7 @@ def run_cell(args, budget, qps, wl):
                                "error": r["error"],
                                "itls": [round(x, 5) for x in r["itls"]]} for r in results]
             n_failed = rec["summary"]["n_failed"]
+            rec["n_short"] = rec["summary"].get("n_short", 0)
             s = rec["summary"]
             print(f"  TTFT p50={s['ttft_ms']['p50']} p95={s['ttft_ms']['p95']} ms | "
                   f"TPOT p50={s['tpot_ms']['p50']} (decode-only {s['tpot2_ms']['p50']}) ms | "
@@ -423,8 +437,17 @@ def run_cell(args, budget, qps, wl):
                   f"decode {1000 * md.get('vllm:request_decode_time_seconds_sum', 0) / q:.0f} ms "
                   f"(means over {q:.0f}); preemptions {md.get('vllm:num_preemptions_total', 0):.0f}",
                   flush=True)
+        # every decode leg must have found the session prefix in LMCache (or, with decode
+        # APC, in its own cache): a silent re-prefill would read as an ok cell
+        qry = md.get("vllm:prompt_tokens_total", 0.0)
+        hit = (md.get("vllm:external_prefix_cache_hits_total", 0.0)
+               + md.get("vllm:prefix_cache_hits_total", 0.0))
+        rec["decode_hit_frac"] = round(hit / qry, 4) if qry else None
         rec["n_failed"] = n_failed
-        rec["ok"] = not hung and n_failed == 0 and not any(rec["markers"].values())
+        rec["ok"] = (not hung and n_failed == 0 and not any(rec["markers"].values())
+                     and (rec["decode_hit_frac"] or 0) >= 0.95)
+        print(f"  decode prefix hit fraction {rec['decode_hit_frac']} (6144/6272 = 0.980 expected)",
+              flush=True)
         g = rec["gpu"]
         print(f"  gpu1 smact={g.get('gpu1_sm_active_mean')} dram={g.get('gpu1_dram_active_mean')} "
               f"fb={g.get('gpu1_fb_used_max_gib')} | swap {rec['swap_delta']} | host cpu "
@@ -467,8 +490,10 @@ def run_probe(args):
             if any(u >= 200 for u in r["gpu_used_mib_before"]):
                 raise RuntimeError(f"GPUs not empty: {r['gpu_used_mib_before']}")
             env = launch_env(args)
+            clear_logs()
             sh(["guard"], env, 60, "guard up")
-            ram_gate("big", int((24 + 2 * 6) * 1024 + 9000), args, r)
+            l1 = float(os.environ.get("LMC_LOCAL_CPU_GB", "6"))
+            ram_gate("big", int((24 + 2 * l1) * 1024 + 9000), args, r)
             t0 = time.time()
             sh(["big", f"{r['decode_util']:.4f}", f"{args.prefill_util:.4f}"], env, 900, "big up")
             r["up_s"] = round(time.time() - t0, 1)
@@ -520,6 +545,8 @@ def rebuild_summary():
             "decode_kv_gib": (L.get("decode") or {}).get("kv_gib"),
             "decode_kv_tokens": (L.get("decode") or {}).get("kv_tokens"),
             "slots": (L.get("decode") or {}).get("slots"),
+            "attn_backend": (L.get("decode") or {}).get("attn_backend"),
+            "decode_hit_frac": rec.get("decode_hit_frac"),
             "tok_per_s": s.get("output_tok_per_s"), "req_per_s": s.get("request_tok_per_s"),
             "ttft_p50_ms": p("ttft_ms", "p50"), "ttft_p95_ms": p("ttft_ms", "p95"),
             "tpot_p50_ms": p("tpot_ms", "p50"), "tpot_p95_ms": p("tpot_ms", "p95"),
@@ -564,7 +591,7 @@ def main():
     ap.add_argument("--max-tokens", type=int, default=128)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--model", default="NousResearch/Meta-Llama-3-8B-Instruct")
-    ap.add_argument("--timeout", type=float, default=600.0)
+    ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--stall-timeout", type=float, default=180.0)
     ap.add_argument("--mem-floor-mb", type=int, default=4000)
     ap.add_argument("--swap-allow-mb", type=int, default=3000)

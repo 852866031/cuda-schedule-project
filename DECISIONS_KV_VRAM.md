@@ -56,3 +56,50 @@ Reports quote tpot2 for "per-token decode speed" and TPOT only as the end-user n
   copies is 12–18 ms per step, so per step at most ~12 ms ÷ 58 ms ≈ 20% of ONE request's
   layers (≈ 6 of 32) can stream for free at B = 1, and < 1 layer at B = 16.
   `output/kv_vram/bench_stream.json`.
+
+## E0.1 — grant probe (`kv_sweep.py --probe --budgets 22 23 24 25 26 28`)
+
+- **Prediction** (plan): grant = budget − 16.2 GiB ± 0.1; c = 7 / 8 / 9 / 11 / 12 / 15.
+  The 23 and 25 GiB grants must reproduce the ninth study's 55,488 / 71,872 tokens
+  exactly (same flags; MPS off is not expected to change the profile run).
+
+## D3 (2026-10-25) — independent code review before the first launch
+
+A read-only review of `scripts/kv_vram/` (against vLLM 0.15.1 / LMCache 0.4.4 source)
+confirmed the hook points: the decode engine runs `AsyncScheduler` (inherits the four
+patched methods), `step_with_batch_queue` calls them as assumed, all attributes exist,
+the EngineCore is *spawned* and inherits PYTHONPATH, metric names are right, baseline
+engine flags are byte-identical to `pfp_launch.sh big`. Fixed before running:
+
+1. Trace tail could be lost (buffer flushed only by later events; `pkill -9` 3 s after
+   SIGTERM skips atexit) → flush on every `fin`.
+2. `fin.free` was read before the blocks were released → read after.
+3. A failed trace write would raise into the engine loop → every recording step in
+   try/except.
+4. Idle polling (1 ms) would write ~2000 records/s during a stall → idle iterations are
+   counted in `skip` lines.
+5. Traced and untraced cells shared a name (the second would be skipped as "exists") →
+   `_tr` suffix.
+6. A request whose decode leg failed still counted ok (token #1 comes from prefill) →
+   ok requires exactly 128 streamed tokens; short streams are failures (`n_short`).
+7. Client timeout restored to 300 s (pfp_sweep's value) for comparable failure counts.
+8. Environment difference noted, not changed: the ninth study's decode engine always had
+   `PYTHONPATH=site` with inert patches; here the baseline has none and the trace arm adds
+   it (E1 validation compares exactly this).
+
+Also added: the decode prefix-hit fraction (local + external hits ÷ prompt tokens,
+expected 6144/6272 = 0.980) is recorded and a cell is ok only if ≥ 0.95; stale
+`kvv_*.log` files are deleted before each launch; the attention backend is recorded.
+
+Interpretation notes taken from the review (affect E1/E4, not the baseline):
+- `load.dt` is host wall time of `start_load_kv`; it can include waiting for the
+  previous step's kernels (async scheduling), and undercounts under `use_layerwise`.
+- The decode engine's `first` token is the regenerated token #1 that the router drops;
+  the client's `gap1` ends at decode token #2.
+- `decode_load_ms` (vLLM's prefill time on the decode engine) also contains the
+  128-token suffix recompute.
+- `fp8` KV will likely move the engines off FLASH_ATTN (its fp8 path is FA3/Hopper);
+  the backend is now recorded and the fp8 smoke needs a bf16 control on the same
+  backend.
+- LMCache 0.4.4 `enable_async_loading` makes the *lookup* asynchronous; the copy stays
+  in `start_load_kv`. E4 will test what it actually changes.

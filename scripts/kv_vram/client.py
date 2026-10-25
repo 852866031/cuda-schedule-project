@@ -69,7 +69,12 @@ async def _one_request(session, url, model, req, max_tokens, timeout, results, s
                 t_prev = now
                 rec["n_chunks"] += 1
             rec["e2e"] = time.perf_counter() - t0
-            rec["ok"] = rec["ttft"] is not None
+            # ignore_eos: every complete request streams exactly max_tokens chunks. With the
+            # split router a broken decode leg still yields token #1 (from prefill), so a
+            # short stream is a failure, not a success.
+            rec["ok"] = rec["ttft"] is not None and rec["n_chunks"] == max_tokens
+            if rec["ttft"] is not None and not rec["ok"]:
+                rec["error"] = f"short output: {rec['n_chunks']} of {max_tokens} tokens"
     except asyncio.TimeoutError:
         rec["error"] = f"timeout after {timeout}s"
         rec["e2e"] = time.perf_counter() - t0
@@ -132,6 +137,7 @@ def summarize(results, duration, max_tokens):
         "n_ok": len(ok),
         "n_failed": len(fail),
         "failures": [r["error"] for r in fail][:5],
+        "n_short": sum(1 for r in fail if (r["error"] or "").startswith("short output")),
         "duration_s": round(duration, 2),
         "ttft_ms": {"p50": pct(ttfts, 50), "p90": pct(ttfts, 90),
                     "p95": pct(ttfts, 95), "p99": pct(ttfts, 99),

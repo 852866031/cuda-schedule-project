@@ -10,14 +10,17 @@ imports the module, which is the EngineCore (scheduler + the in-process worker):
                             newly admitted request ids + their LMCache-hit tokens)
       update_from_output -> "upd": one line per executed batch (wall time; ids whose
                             first output token appeared in it)
-      _free_request      -> "fin": request finished and released its blocks
+      _free_request      -> "fin": request finished; free blocks AFTER its release
+                            (flushed at once, so a killed engine keeps the tail)
   vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector.LMCacheConnectorV1
       start_load_kv      -> "load": CPU wall time of the connector's load call and the
                             number of requests / tokens it loaded (no CUDA sync added --
                             LMCache's retrieve already blocks the host)
 
 Nothing here changes scheduling or adds device synchronization: every wrapper calls the
-original and only reads state. Lines are JSON, appended to KV_TRACE_PATH and flushed at
+original and only reads state; every recording step is wrapped in try/except so tracing
+can never raise into the engine loop. Idle loop iterations (nothing scheduled -- the
+engine polls every 1 ms) are counted in "skip" lines instead of written. Lines are JSON, appended to KV_TRACE_PATH and flushed at
 most every 0.5 s (and at exit). Times are time.monotonic(), the same CLOCK_MONOTONIC as
 the client's perf_counter, so client and engine records share one time axis.
 A request is identified by its 4 suffix tokens (prompt[6144:6148]); the driver maps
@@ -55,14 +58,24 @@ if os.environ.get("KV_TRACE") == "1":
         def flush(self):
             if not self.buf:
                 return
+            try:
+                self._flush()
+            except Exception:
+                self.buf.clear()                  # never let tracing hurt the engine
+
+        def _flush(self):
             if self.f is None:
                 self.f = open(_PATH, "a")
                 self.f.write(json.dumps({"ev": "start", "pid": os.getpid(), "t": _now(),
                                          "wall": time.time()}) + "\n")
+            if _SKIP[0]:
+                self.buf.append({"ev": "skip", "t": _now(), "n": _SKIP[0]})
+                _SKIP[0] = 0
             self.f.write("".join(json.dumps(r, separators=(",", ":")) + "\n" for r in self.buf))
             self.f.flush()
             self.buf.clear()
 
+    _SKIP = [0]        # idle sch/upd pairs not written (ntok 0, nothing admitted/preempted)
     _W = _Writer()
     atexit.register(_W.flush)
 
@@ -81,16 +94,33 @@ if os.environ.get("KV_TRACE") == "1":
 
         def add_request(self, request):
             t = _now()
-            fb = free_blocks(self)
+            try:
+                fb = free_blocks(self)
+            except Exception:
+                fb = None
             r = o_add(self, request)
-            _W.put({"ev": "arr", "t": t, "id": request.request_id, "key": _key(request),
-                    "n_prompt": len(request.prompt_token_ids or []), "free": fb,
-                    "run": len(self.running), "wait": len(self.waiting)})
+            try:
+                _W.put({"ev": "arr", "t": t, "id": request.request_id, "key": _key(request),
+                        "n_prompt": len(request.prompt_token_ids or []), "free": fb,
+                        "run": len(self.running), "wait": len(self.waiting)})
+            except Exception:
+                pass
             return r
 
         def schedule(self):
             t0 = _now()
             out = o_sch(self)
+            try:
+                _rec_sched(self, out, t0)
+            except Exception:
+                pass
+            return out
+
+        def _rec_sched(self, out, t0):
+            if (out.total_num_scheduled_tokens == 0 and not out.scheduled_new_reqs
+                    and not out.preempted_req_ids):
+                _SKIP[0] += 1
+                return
             new = [(nr.req_id, self.requests[nr.req_id].num_external_computed_tokens
                     if nr.req_id in self.requests else None,
                     len(nr.block_ids[0]) if nr.block_ids else 0)
@@ -103,11 +133,19 @@ if os.environ.get("KV_TRACE") == "1":
             if out.preempted_req_ids:
                 rec["pre"] = list(out.preempted_req_ids)
             _W.put(rec)
-            return out
 
         def update_from_output(self, scheduler_output, model_runner_output):
             t = _now()
             res = o_upd(self, scheduler_output, model_runner_output)
+            try:
+                _rec_upd(self, scheduler_output, t)
+            except Exception:
+                pass
+            return res
+
+        def _rec_upd(self, scheduler_output, t):
+            if scheduler_output.total_num_scheduled_tokens == 0:
+                return
             firsts = []
             for rid in scheduler_output.num_scheduled_tokens:
                 if rid in first_seen:
@@ -122,13 +160,19 @@ if os.environ.get("KV_TRACE") == "1":
             if firsts:
                 rec["first"] = firsts
             _W.put(rec)
-            return res
 
         def _free_request(self, request):
-            _W.put({"ev": "fin", "t": _now(), "id": request.request_id,
-                    "nout": request.num_output_tokens, "free": free_blocks(self)})
-            first_seen.discard(request.request_id)
-            return o_free(self, request)
+            t = _now()
+            r = o_free(self, request)          # releases the blocks (unless delayed)
+            try:
+                first_seen.discard(request.request_id)
+                _W.put({"ev": "fin", "t": t, "id": request.request_id,
+                        "nout": request.num_output_tokens, "free": free_blocks(self),
+                        "left": len(self.requests)})
+                _W.flush()                     # ~300 per cell; keeps the tail on disk
+            except Exception:
+                pass
+            return r
 
         S.add_request, S.schedule = add_request, schedule
         S.update_from_output, S._free_request = update_from_output, _free_request
@@ -142,6 +186,12 @@ if os.environ.get("KV_TRACE") == "1":
             t0 = _now()
             o_load(self, forward_context, **kw)
             t1 = _now()
+            try:
+                _rec_load(self, t0, t1)
+            except Exception:
+                pass
+
+        def _rec_load(self, t0, t1):
             n = ntok = 0
             try:
                 for r in self._get_connector_metadata().requests:
