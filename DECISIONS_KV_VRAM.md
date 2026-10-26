@@ -415,3 +415,13 @@ The option engages (async lookup client active, "still waiting for async lookup 
 its 3-s timeout path and the next lookup for the same request raises. 86 requests failed,
 heartbeat tore the stack down. Not a trace artefact (the wrapper only calls through).
 Not usable in 0.4.4 without patching LMCache; dropped.
+
+**Framing for the report (2026-10-25).** The E4 load-path methods are one idea at three
+depths: *overlap the KV transfer with compute*. Baseline copies everything, then computes;
+`use_layerwise` interleaves per-layer copies with the admitting forward; the multi-process
+connector moves the copy to another process and stream so the batch never waits. The
+report must state the goal that way and then quantify, from the trace, how much overlap
+each one actually achieves: admitting-step forward time vs the sum of the 32 per-layer
+copies (≈ sum + compute ⇒ no overlap, copies merely relocated; ≈ max(copy, compute) ⇒
+real overlap). One layerwise run so far looks like the former: excess step time per
+residence did not fall; the gain was a shorter load phase and fewer preemptions.
