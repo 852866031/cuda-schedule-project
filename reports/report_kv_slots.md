@@ -316,8 +316,8 @@ answered).
 
 - At 24 GiB / 2.5 req/s the copy left in the step falls 116 → 70 ms per request and the
   extra time of load-carrying steps 0.67 → 0.41 s per request.
-- Every request pays the prefetch: TTFT-side it is ~100 ms at low load; TPOT at 1 req/s
-  is unchanged (14.5 ms).
+- Every request pays the prefetch (~100 ms at low load) before admission. It lands in the
+  first token gap, yet TPOT at 1 req/s stays 14.5 ms: the shorter stalls offset it.
 - **Unstable under deep queues.** At 24 GiB and 4–5 req/s the decode engine crashed on
   LMCache 0.4.4's lookup-timeout `KeyError` — also with the timeout raised from 3 s to
   30 s, so some lookups never completed. vLLM starts the asynchronous lookup for every

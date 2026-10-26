@@ -684,6 +684,50 @@ def fig_split_s():
     print("-> figures/slides/s_split.png")
 
 
+# ------------------------------------------------------------------ async / MP over the grid
+def fig_lever_grid(method, label, color, name, unstable=None):
+    rows = list(csv.DictReader(open(REPO / "output" / "kv_vram" / "async_summary.csv")))
+    fig, axes = plt.subplots(2, 3, figsize=(12.5, 6.2), sharex=True,
+                             gridspec_kw={"hspace": 0.25, "wspace": 0.18})
+    for j, b in enumerate(BUD):
+        for m, lab, c, mk in (("cops", "synchronous", "#9a9a95", "o"), (method, label, color, "s")):
+            rs = sorted([r for r in rows if r["method"] == m and int(r["budget"]) == b],
+                        key=lambda r: float(r["qps"]))
+            q = [float(r["qps"]) for r in rs]
+            axes[0, j].plot(q, [max(float(r["slot_wait_ms"]), 0) / 1e3 for r in rs], marker=mk, color=c,
+                            lw=2, label=lab)
+            axes[1, j].plot(q, [float(r["resid_s"]) for r in rs], marker=mk, color=c, lw=2, label=lab)
+        axes[0, j].set_yscale("symlog", linthresh=0.01)
+        axes[0, j].axhline(0.05, color=C_RED, lw=1, ls=":")
+        axes[0, j].set_title(f"{b} GiB", fontsize=14)
+        axes[1, j].set_xlabel("request rate (req/s)", fontsize=13)
+        for i in range(2):
+            axes[i, j].grid(color="#ececea", lw=0.6)
+            axes[i, j].spines[["top", "right"]].set_visible(False)
+            axes[i, j].tick_params(labelsize=12)
+        if unstable and b in unstable:
+            for i in range(2):
+                axes[i, j].axvspan(unstable[b] - 0.25, 5.25, color="#f3d6d3", alpha=0.6, lw=0)
+            axes[1, j].text(unstable[b] + 0.45, axes[1, j].get_ylim()[0] + 0.1, "crashed", color=C_RED,
+                            fontsize=12, ha="center", va="bottom")
+    axes[0, 0].set_ylabel("wait for a slot (s)", fontsize=13)
+    axes[1, 0].set_ylabel("residence (s)", fontsize=13)
+    axes[0, 0].text(1.0, 0.06, "50 ms", color=C_RED, fontsize=12)
+    h, l = axes[0, 0].get_legend_handles_labels()
+    fig.legend(h, l, loc="upper center", ncol=2, frameon=False, fontsize=13, bbox_to_anchor=(0.5, 1.02))
+    mbadge(axes[0, 2], 2.55, 0.25, 1)
+    mbadge(axes[1, 1], 3.0, 2.6, 2)
+    if unstable:
+        mbadge(axes[0, 0], 4.5, 5.0, 3)
+    fig.savefig(OUT / f"{name}.png", dpi=130, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    print(f"-> figures/slides/{name}.png")
+
+
+def fig_async_grid():
+    fig_lever_grid("cops_async", "enable_async_loading", C_DEC, "s_async_grid", unstable={24: 4})
+
+
 # ------------------------------------------------------------------ markers on report figures
 def mark(src, name, marks, boxes=(), crop=None):
     """copy figures/<src> with red circled numbers at fractional (x, y) from the top-left,
@@ -745,7 +789,7 @@ MARKED = {
 FIGS = {"system": fig_system, "testbed": fig_testbed, "workload": fig_workload, "path": fig_path,
         "method": fig_method, "kernels": fig_kernels,
         "loadpath": fig_loadpath, "async_smoke": fig_async_smoke, "mp": fig_mp, "case1": fig_case1_s, "case2": fig_case2_s, "layerwise": fig_layerwise_s, "heat": fig_heat_s,
-        "mgc": fig_mgc_s, "waitfree": fig_waitfree_s, "split": fig_split_s}
+        "mgc": fig_mgc_s, "waitfree": fig_waitfree_s, "split": fig_split_s, "async_grid": fig_async_grid}
 
 if __name__ == "__main__":
     want = sys.argv[1:] or list(FIGS) + list(MARKED)
