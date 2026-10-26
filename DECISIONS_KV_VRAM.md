@@ -775,3 +775,29 @@ everywhere — confirmed. TPOT at 1 req/s 14.5–15.5 — confirmed (14.5). Resi
 24 GiB before it destabilises, 3.57, 3.85). Capacity one step up at every budget —
 **only at 28 GiB** (24: 2.5 req/s misses by 0.3 ms; 26: 3 req/s reads 84 ms). No crash
 — **wrong at 24 GiB ≥ 4 req/s**, as the risk noted.
+
+**D11 smoke outcome (`kv_mp18_b24_q2.5_tr_r3`, 04:27): runs, and removes the stall.**
+Two launch fixes first (records kept): `_tr` — vLLM 0.18 removed `--disable-log-requests`
+(now conditional in `kv_launch.sh`); `_r2` — LMCache's install pulled in `nixl` 1.5.0, whose
+torch-2.10 extension is missing, and vLLM 0.18's fused-MoE import probe dies on it; removed
+`nixl*` from `.venv-vllm018` (LMCache's MP path does not use it).
+
+**Grant differs from 0.15.1:** 7.86 GiB = 64,400 tokens = 4,025 blocks (0.15.1: 7.77 GiB,
+3,980) → 10.06 requests: ten fit even fully grown, so **24 GiB no longer evicts** on 0.18.1.
+The ±1-block prediction is wrong (+45 blocks).
+
+| 24 GiB, 2.5 req/s | sync, compiled (0.15.1) | MP connector (0.18.1) |
+|---|---|---|
+| extra time of load-carrying steps / request | 0.67 s | **0.05 s** |
+| residence (from block grant) | 2.83 s | **1.87 s** |
+| slot wait / KV wait after block grant | 143 / — ms | 4 / 41 ms (p50 41) |
+| own load (admitted → token 1) | 178 ms | 42 ms (suffix only) |
+| decode step median | 14.4 ms | 12.4 ms |
+| TPOT p50 / TTFT p50 | 24.2 / 49 ms | 15.1 / 34 ms |
+| preemptions | 8 | 0 |
+
+Against the predictions: stall < 0.15 s — confirmed (0.05). Residence ~2.2 s — better
+(1.87). Slot wait < 50 ms — confirmed (4). KV wait 100–200 ms — better (41 ms). Caveat for
+every MP number: the run is also on vLLM 0.18.1 / torch 2.10, whose median step is 2 ms
+shorter here and whose grant is 45 blocks larger; no same-version sync control was run (by
+request). Grid started 04:27.

@@ -91,6 +91,13 @@ kv_cops_b28_q5_tr,cops,28.0,5.0,True,True,,0,11.77,96432,15,lmcache.c_ops,,FLASH
 kv_cops_lw_b24_q2.5_tr,cops_lw,24.0,2.5,True,True,,0,7.77,63680,9,lmcache.c_ops,,FLASH_ATTN,0.9796,317.11,2.477,69.34,265.31,23.45,30.04,20.61,24.18,14.95,23.2,117.98,148.9,261.78,1092.25,3078.79,136.1,188.1,2576.9,0.0,4.0,0.6417,0.5705,25.04,0.0424,0.0486,56215,0,18262,768,8,kv_cops_lw_b24_q2.5_tr_L2
 kv_lw_b24_q2.5_tr,lw,24.0,2.5,True,True,,0,7.77,63680,9,,,FLASH_ATTN,0.9796,308.32,2.409,117.32,451.03,39.48,62.08,28.14,29.82,16.22,40.86,191.76,216.31,1435.63,4427.6,5124.4,1409.2,294.5,3419.3,0.0,12.0,0.5195,0.4497,25.07,0.042,0.0512,34326,0,17882,1526,8,kv_lw_b24_q2.5_tr
 kv_lw_b24_q2.5_tr_r2,lw,24.0,2.5,True,True,,0,7.77,63680,9,,,FLASH_ATTN,0.9796,307.15,2.4,113.13,457.95,40.92,65.01,28.48,29.98,16.23,42.51,196.53,227.63,1543.84,4814.83,5287.1,1556.3,298.4,3465.5,0.0,12.0,0.5141,0.4447,25.07,0.0418,0.0534,43048,22862,17661,1529,8,kv_lw_b24_q2.5_tr_r2
+kv_mp18_b24_q2.5_tr,mp18,24.0,2.5,True,False,"RuntimeError: big 0.7655 0.8000 failed: methods: mp=1 cops=0 decode --no-enable-prefix-caching  | prefill  | lmc_pf [] lmc_dec [] | trace 1
+waiting for :8100 TIMEOUT -- see /home/jiaxuan/Documents/Projects/kvcache-vram_size/output/logs/kvv_prefill.log
+",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,0,8,kv_mp18_b24_q2.5_tr
+kv_mp18_b24_q2.5_tr_r2,mp18,24.0,2.5,True,False,"RuntimeError: big 0.7655 0.8000 failed: methods: mp=1 cops=0 decode --no-enable-prefix-caching  | prefill  | lmc_pf [] lmc_dec [] | trace 1
+waiting for :8100 TIMEOUT -- see /home/jiaxuan/Documents/Projects/kvcache-vram_size/output/logs/kvv_prefill.log
+",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,0,8,kv_mp18_b24_q2.5_tr_r2
+kv_mp18_b24_q2.5_tr_r3,mp18,24.0,2.5,True,True,,0,7.86,64400,10,mp_server,,FLASH_ATTN,0.9796,317.47,2.48,33.5,46.64,15.06,16.99,14.3,16.03,13.95,14.87,16.29,32.81,106.87,134.13,1946.24,44.8,41.7,1792.9,5.8,0.0,0.8478,0.7579,25.25,0.0426,0.0381,299,0,17319,0,8,kv_mp18_b24_q2.5_tr_r3
 kv_mp_b24_q2.5_tr,mp,24.0,2.5,True,False,"RuntimeError: big 0.7655 0.8000 failed: methods: mp=1 cops=0 decode --no-enable-prefix-caching  | prefill  | lmc_pf [] lmc_dec [] | trace 1
 MP server died -- see /home/jiaxuan/Documents/Projects/kvcache-vram_size/output/logs/kvv_mpserver.log
 ",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,0,8,kv_mp_b24_q2.5_tr
