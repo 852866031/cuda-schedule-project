@@ -138,7 +138,13 @@ fi
 MP_PORT="${MP_PORT:-5655}"
 if [ "${KV_MP:-0}" = 1 ]; then
     refuse_if_listening "$MP_PORT"
-    KV_CONN="{\"kv_connector\":\"LMCacheMPConnector\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"lmcache.mp.host\":\"tcp://127.0.0.1\",\"lmcache.mp.port\":$MP_PORT}}"
+    # torch shares expandable-segment memory as fds that the receiver must take with
+    # pidfd_getfd (ptrace rights; ptrace_scope=1 here) -> REGISTER_KV_CACHE fails. Without
+    # expandable segments it uses cudaIpcGetMemHandle. Engines only; recorded in D9.
+    unset PYTORCH_CUDA_ALLOC_CONF
+    # LMCache's own connector (token-id keys), not vLLM 0.15.1's (block-hash keys): site/lmc_mp_conn.py
+    KV_CONN="{\"kv_connector\":\"LMCacheMP044Connector\",\"kv_connector_module_path\":\"lmc_mp_conn\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"lmcache.mp.host\":\"tcp://127.0.0.1\",\"lmcache.mp.port\":$MP_PORT}}"
+    DEC_ENV="${DEC_ENV:-PYTHONPATH=$HERE/site}"; PF_ENV="PYTHONPATH=$HERE/site KV_TRACE=0"
 fi
 echo "methods: mp=${KV_MP:-0} cops=${KV_COPS:-0} decode $DEC_APC_FLAG ${DEC_X[*]:-} | prefill ${PF_X[*]:-} | lmc_pf [${LMC_PF}] lmc_dec [${LMC_DEC}] | trace ${KV_TRACE:-0}"
 

@@ -17,6 +17,10 @@ imports the module, which is the EngineCore (scheduler + the in-process worker):
       start_load_kv      -> "load": CPU wall time of the connector's load call and the
                             number of requests / tokens it loaded (no CUDA sync added --
                             LMCache's retrieve already blocks the host)
+      get_num_new_matched_tokens -> "lk0" on the first call per request (it reached the
+                            front of the waiting queue), "lk1" on the first answer that is
+                            not "still looking" (D9: with enable_async_loading the store ->
+                            L1 prefetch runs in between; synchronous arms give lk0 == lk1)
   vllm.distributed.kv_transfer.kv_connector.v1.lmcache_mp_connector.LMCacheMPConnector
       (D9, asynchronous load) update_state_after_alloc -> "alloc": blocks granted, the
                             request now waits in WAITING_FOR_REMOTE_KVS for its KV (so
@@ -216,7 +220,30 @@ if os.environ.get("KV_TRACE") == "1":
             if n:
                 _W.put({"ev": "load", "t": t0, "dt": t1 - t0, "n": n, "ntok": ntok})
 
+        o_match = C.get_num_new_matched_tokens
+        seen = {}                          # request id -> 0 asked, 1 answered
+
+        def get_num_new_matched_tokens(self, request, num_computed_tokens):
+            t = _now()
+            r = o_match(self, request, num_computed_tokens)
+            try:
+                rid = request.request_id
+                st = seen.get(rid)
+                if st is None:
+                    seen[rid] = 0
+                    _W.put({"ev": "lk0", "t": t, "id": rid})
+                    st = 0
+                if st == 0 and r[0] is not None:
+                    seen[rid] = 1
+                    _W.put({"ev": "lk1", "t": t, "id": rid, "hit": r[0]})
+                if len(seen) > 4096:
+                    seen.clear()
+            except Exception:
+                pass
+            return r
+
         C.start_load_kv = start_load_kv
+        C.get_num_new_matched_tokens = get_num_new_matched_tokens
         print("[kv_trace] connector start_load_kv wrapped", file=sys.stderr, flush=True)
 
     def _patch_mp_connector(mod):
@@ -250,7 +277,8 @@ if os.environ.get("KV_TRACE") == "1":
         print("[kv_trace] mp connector wrapped", file=sys.stderr, flush=True)
 
     _HOOKS = {_SCHED: _patch_scheduler, _CONN: _patch_connector,
-              _CONN.replace("lmcache_connector", "lmcache_mp_connector"): _patch_mp_connector}
+              _CONN.replace("lmcache_connector", "lmcache_mp_connector"): _patch_mp_connector,
+              "lmcache.integration.vllm.lmcache_mp_connector_0180": _patch_mp_connector}
 
     class _PatchOnImport:
         def find_spec(self, fullname, path=None, target=None):

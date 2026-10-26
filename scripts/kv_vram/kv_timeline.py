@@ -88,6 +88,10 @@ def build(rec, ev):
                 r.update(t_fin=e["t"], nout=e["nout"], free_after_fin=e["free"])
         elif k == "load":
             loads.append({"t": e["t"], "dt": e["dt"], "n": e["n"], "ntok": e["ntok"]})
+        elif k in ("lk0", "lk1"):                     # D9: lookup asked / answered
+            r = reqs.get(e["id"])
+            if r is not None and f"t_{k}" not in r:
+                r[f"t_{k}"] = e["t"]
     out = []
     for r in reqs.values():
         c = cli.get(r["index"], {})
@@ -101,6 +105,9 @@ def build(rec, ev):
         if "t_sched" in r:
             r["wait"] = r["t_sched"] - r["t_arr"]
             r["free_slots_at_arr"] = r["free_at_arr"] // REQ_BLOCKS
+            if "t_lk0" in r and "t_lk1" in r:     # async prefetch inside the queue time
+                r["prefetch"] = r["t_lk1"] - r["t_lk0"]
+                r["slot_wait"] = r["wait"] - r["prefetch"]
         if "t_first" in r and "t_sched" in r:
             r["load"] = r["t_first"] - r["t_sched"]
         if "t_fin" in r and "t_first" in r:

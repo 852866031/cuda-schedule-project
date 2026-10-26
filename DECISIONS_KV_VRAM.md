@@ -658,3 +658,23 @@ Queue < 100 ms — wrong: vLLM's queue time now also holds the asynchronous stor
 prefetch (p50 109 ms; every request pays it, but without holding blocks and without
 stalling the batch). The batch stall that remains is the L1 → GPU copy, still inside the
 step. One run; residence −13% is well outside the ±1% seen between the two cops runs.
+
+**Smoke B, first attempts (2026-10-26).** (1) `kv_mp_b24_q2.5_tr`: the MP server died at
+import — `.venv-lmc` was a build venv without LMCache's runtime dependencies; installed
+LMCache's declared requirements there (torch pinned, unchanged at 2.9.1+cu128; `nixl`,
+`cupy`, `cufile`, `awscrt` left out). Failed record kept under that name. (2) `_r2`:
+the server could not map the engines' KV caches — `REGISTER_KV_CACHE` → `pidfd_getfd:
+Operation not permitted`. The engines run with `expandable_segments:True`, and torch
+shares such memory as file descriptors taken with `pidfd_getfd`, which needs ptrace
+rights (`ptrace_scope=1`). Torn down by hand. Fix: the MP arm's engines start without
+`PYTORCH_CUDA_ALLOC_CONF` (classic `cudaIpcGetMemHandle`). This differs from every
+other arm; the grant must still read 7.77 GiB, and the comparison notes it.
+(3) `_r3`: both KV caches registered (grant 7.77 GiB, 63,664 tokens — one block fewer
+than with expandable segments; 3,979 − 9 × 392 = 451 still admits a 10th request), then
+every `LOOKUP` failed: `msgspec.ValidationError: Expected int, got bytes at token_ids[0]`.
+vLLM 0.15.1's built-in `LMCacheMPConnector` keys lookup / store / retrieve by vLLM block
+hashes; LMCache 0.4.4's adapter and server take token ids. LMCache 0.4.4 ships its own
+connector (`lmcache/integration/vllm/lmcache_mp_connector_0180.py`) that sends token ids
+and imports cleanly under vLLM 0.15.1. vLLM resolves registered names first, so it is
+loaded under another name (`site/lmc_mp_conn.py` → `LMCacheMP044Connector`,
+`kv_connector_module_path`). Torn down by hand; rerun as `_r4`.
