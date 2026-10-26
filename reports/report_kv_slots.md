@@ -257,6 +257,19 @@ This is the lever E4's decode-side APC test targets.
 
 ## 5. Why decode cannot stream its KV instead of holding it
 
+**The motivation.** Everything in §4 follows from one fact: a request occupies 400 blocks
+for its whole decode. If a request could hold *less* — say only the few layers the
+forward pass is currently working on, with the other layers streamed in from host RAM
+just in time and dropped afterwards — the same grant would hold several times more
+requests, and the queue of §4.1 would shrink without any extra VRAM. The question is
+whether the streaming can keep up with the compute.
+
+![streaming idea](../figures/kv_stream_idea.png)
+
+It cannot, and the reason is per-step traffic: a decode step needs every layer's KV for
+every token of every resident request, so streaming moves each request's full 0.78 GiB
+across PCIe on every step. The stand-alone benchmark below measures exactly that.
+
 ![streaming benchmark](../figures/kv_stream_bench.png)
 
 A stand-alone benchmark (`scripts/kv_vram/bench_stream.py`, no vLLM) runs one
@@ -280,6 +293,42 @@ rules out; LMCache's `use_layerwise` only splits the *one-time load at admission
 per-layer pieces — the KV is resident for the whole decode either way.)
 
 ## 6. What this means for the methods to test (E4)
+
+### 6.1 A first result: LMCache `use_layerwise` (feasibility smoke, 24 GiB, 2.5 req/s)
+
+The one layer-by-layer idea that *is* available is to split the one-time load at
+admission into per-layer pieces. The hope is to overlap the KV transfer with the
+admitting forward pass: copy layer i, compute layer i, copy layer i+1, … The smoke (two
+runs per arm) found a real gain, but not from overlap:
+
+![layerwise](../figures/kv_layerwise.png)
+
+| 24 GiB, 2.5 req/s | baseline (2 runs) | use_layerwise (2 runs) |
+|---|---|---|
+| decode queue wait | 4,680 / 3,665 ms | 1,409 / 1,556 ms |
+| TPOT (end-user) | 64 / 56 ms | 39 / 41 ms |
+| throughput | 289 / 294 tok/s | 308 / 307 tok/s |
+| load, admitted → first token (p50) | 689 / 566 ms | 217 / 219 ms |
+| preemptions per 300 requests | 35 / 34 | 12 / 12 |
+| LMCache L1 allocation failures (decode) | 3,360 / 3,360 | 0 / 0 |
+| excess step time per residence | 0.88 s | 1.40 s |
+| KV grant / slots | unchanged | unchanged |
+
+The diagnosis is in the last two rows. The baseline retrieve reserves staging space in
+the 6 GiB pinned L1 for the whole request at once and, with the pool full, fails ~11
+times per request and takes a slow path. The layer-wise retriever reserves one layer at
+a time and never fails, so a load takes the bare copy time. Faster loads mean the ten
+resident requests hit the wall less often (preemptions 35 → 12, each one a second load
+avoided), residence falls 4.1 → 3.7 s and the queue 3×. What did **not** happen is
+overlap: the copy is still synchronous inside the forward, split into 32 pieces but
+never concurrent with compute (figure). The gain is a fixed LMCache staging bug, not
+hidden transfer.
+
+The other two load-path options could not be tested: LMCache's `enable_async_loading`
+crashes the 0.4.4 engine (a bookkeeping `KeyError` on its lookup timeout path), and the
+multi-process connector — the one that would truly take the copy off the engine thread —
+needs LMCache's compiled kernels, which do not load against this torch build (a source
+build is in progress, DECISIONS E4).
 
 | lever | what it changes | expected from this study |
 |---|---|---|
