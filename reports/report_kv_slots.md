@@ -274,7 +274,10 @@ Every decode step needs every layer's KV for every resident token, so streaming 
 Prefetch depth beyond 1 changes nothing (the copy, not the compute, is the bound), and
 the compute that could hide copies is 12–18 ms per step — enough for ~6 of 32 layers of
 *one* request at batch 1. Layer-wise pipelining can therefore only shorten the one-time
-load; it cannot reduce what must be resident.
+load; it cannot reduce what must be resident. (This is the distinction between the two
+"layer by layer" ideas: streaming KV layer by layer *on every step* is what this section
+rules out; LMCache's `use_layerwise` only splits the *one-time load at admission* into
+per-layer pieces — the KV is resident for the whole decode either way.)
 
 ## 6. What this means for the methods to test (E4)
 
