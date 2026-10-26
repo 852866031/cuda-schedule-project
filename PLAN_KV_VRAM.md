@@ -114,6 +114,8 @@ p50/mean/p95, decode queue wait mean/p95, failed, swap-in, and the E1 trace.
 
 > **Outcome (2026-10-25):** 23 cells + 1 rerun, all ok. Capacity 24 / 26 / 28 GiB ≈ 1.5–2 / ~2 / 2–2.5 req/s — each one grid step below the prediction. Shape, preemption pattern and the sub-linear gain confirmed. The FCFS replay with the effective slot count (10 at 24 GiB because of the 392-block admission rule, 12, 15) matches mean wait to < 2%; Lee–Longton only near ρ ≈ 0.9. Hypothesis 1 deferred to E4. See DECISIONS E2.
 
+> **Outcome (2026-10-26, D6):** all of the above ran on LMCache's Python fallback (the wheel's `c_ops` do not load against torch 2.9.1). With the kernels built for this torch, the grid was rerun as 24 / 26 / 28 GiB × 1–5 req/s in 0.5 steps (27 cells, all ok): capacity 2–2.5 / 2.5–3 / 2.5–3 req/s, saturation 2.97 / 3.35 / 3.58 req/s; slot mechanism and re-simulation unchanged. Main report: `reports/report_kv_slots.md`; the fallback version is frozen as `reports/report_kv_slots_fallback.md`. See DECISIONS D6.
+
 ## Figures (deliverable 1)
 
 1. `kv_grid_3d.png` — 3D surface, VRAM × QPS → queue wait; companion
