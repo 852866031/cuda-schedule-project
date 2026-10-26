@@ -151,6 +151,8 @@ actually stayed (admitted → last token, as traced). The simulation uses the ce
 measured, so it cannot forecast an unmeasured budget or rate. What it answers is a yes/no
 question — does "c slots, FCFS" account for the waiting we saw?
 
+![re-simulation](../figures/kv_resim_schematic.png)
+
 ![queueing models](../figures/kv_mgc.png)
 
 **Answer: yes.** With the slot count the engine actually ran with — 10 at 24 GiB (9 whole
@@ -281,9 +283,15 @@ load; it cannot reduce what must be resident.
 
 | lever | what it changes | expected from this study |
 |---|---|---|
-| decode-side prefix caching | raises the *effective* slot count by sharing the ~1/3 duplicate prefixes; loaded blocks become cache for the next same-session request | capacity up at equal budget; also fewer loads → fewer stalls |
 | asynchronous / layer-wise load | removes or shrinks the ~200 ms batch stall per admission (2.2 s of the 4.8 s residence at 28 GiB / 3 req/s) | residence down → more throughput per slot; the 4.4 GB/s copy path is the bound, not PCIe |
 | fp8 KV | halves bytes per block → c ≈ 19 at 24 GiB | capacity up, but each slot still pays the stalls; needs a bf16 control on the same attention backend (fp8 forces a backend change on sm_120) |
+
+Decode-side prefix caching is deliberately left out. Its gain is not a property of the
+engine but of the session mix: it helps only when requests from the same session are
+resident together (§4.5: about a third of resident KV here), and every cell of this
+study varies the request rate while holding the workload fixed. Testing it would change
+what the workload is, not how the engine handles it; the duplicate-prefix share is
+reported as an observation instead.
 
 Related-work notes with sources: [related_work_notes.md](../output/kv_vram/related_work_notes.md).
 

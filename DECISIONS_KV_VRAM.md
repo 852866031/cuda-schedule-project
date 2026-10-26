@@ -318,3 +318,14 @@ budget. Test to design: same budget, same rate, admission forced into cohorts vs
 (e.g. router-side batching of releases, or a scheduler-side admission gate), with the
 prediction written before the run: tpot2 follows the stall count (≈ 16 ms + stalls ×
 ~220 ms ÷ 127), independent of which budget it is. Not run yet.
+
+## D5 (2026-10-25) — decode-side prefix caching dropped from E4/E5
+
+The APC gain depends on how many concurrently resident requests share a session — a
+property of the workload's session mix (zipf-1.1 over 32 sessions here), not of the
+engine's handling of KV. The study's independent variables are budget and request rate
+with the workload fixed; an APC arm would introduce a hidden third variable (the share of
+duplicate prefixes, ~1/3 here, §4.5) and its result would not transfer to other mixes.
+Decision: not tested; the duplicate share stays in the report as an observation. E4 now
+covers the load path only (LMCache layerwise / async_loading) and fp8 KV. Can be
+reinstated as a single smoke if the question becomes "what does this workload gain".
