@@ -160,11 +160,10 @@ def main():
             a.barh(y, r["s"] - r["a"], left=r["a"], height=0.42, color=C_WAIT,
                    edgecolor="black" if fol else "none", lw=1.6)
         a.axhline(slots - 0.5, color="black", ls="--", lw=1)
-        a.text(1.005, (slots - 0.5 + 0.7) / (q0 + max(1, nq) * 0.55 + 1.3),
-               f"{blocks / REQ_BLOCKS:.2f}\nrequests\nfit", transform=a.transAxes, ha="left",
-               va="center", fontsize=9)
+        a.text(t1 - 0.2, slots - 0.5 + 0.12, f"{blocks / REQ_BLOCKS:.2f} requests fit", ha="right",
+               va="bottom", fontsize=9, bbox=dict(fc="white", ec="none", pad=1))
         a.axhline(q0 - 0.45, color="#d0d0cc", lw=0.8)
-        a.set_ylim(-0.7, q0 + max(1, nq) * 0.55 + 0.6)
+        a.set_ylim(-0.7, q0 + max(1, nq) * 0.55 + 3.4)      # headroom for the annotation box
         a.set_yticks(list(range(ymax_lane)) + [q0 + (max(1, nq) - 1) * 0.275])
         a.set_yticklabels([str(i + 1) for i in range(ymax_lane)] + ["queue"], fontsize=9)
         if j == 0:
@@ -178,7 +177,7 @@ def main():
             free_req = fr["free_arr"] / REQ_BLOCKS
             txt = (f"request #{args.follow}: arrives t={fr['a']:.1f} s, "
                    f"{fr['free_arr']} blocks free ({free_req:.1f} requests)\n"
-                   f"waits {wait * 1000:.0f} ms, loads {1000 * (fr['f'] - fr['s']):.0f} ms, "
+                   r"$\bf{waits\ " + f"{wait * 1000:.0f}" + r"\ ms}$" + f", loads {1000 * (fr['f'] - fr['s']):.0f} ms, "
                    f"decodes {fr['e'] - fr['f']:.1f} s")
             ytxt = ln[args.follow] if wait < 0.02 else q0 + qlane.get(args.follow, 0) * 0.55
             a.annotate(txt, xy=(fr["a"], ytxt), xytext=(0.02, 0.985), textcoords="axes fraction",
