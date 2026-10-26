@@ -107,8 +107,8 @@ def main():
             args.follow = max(cand, key=lambda r: r["s"] - r["a"])["index"]
 
     ncol = len(data)
-    fig, axes = plt.subplots(4, ncol, figsize=(7.2 * ncol, 11.0), sharex=True,
-                             gridspec_kw={"height_ratios": [1.0, 3.2, 1.6, 1.4], "hspace": 0.12,
+    fig, axes = plt.subplots(4, ncol, figsize=(7.2 * ncol, 10.4), sharex=True,
+                             gridspec_kw={"height_ratios": [0.55, 3.2, 1.6, 1.4], "hspace": 0.12,
                                           "wspace": 0.12}, squeeze=False)
     ymax_lane = max(max(lanes(d[1]).values()) + 1 for d in data)
     qmax = 0
@@ -120,24 +120,17 @@ def main():
     for j, (rec, rq, st, steps, loads, slots, blocks) in enumerate(data):
         r0, a, b, c = axes[0, j], axes[1, j], axes[2, j], axes[3, j]
         ln = lanes(rq)
-        # (0) the arrival process alone: one tick per submitted request, plus a 3 s sliding
-        # arrival rate -- the offered load that the rows below respond to
+        # (0) the arrival process alone: one tick per submitted request
         subs = np.array(sorted(r["sub"] for r in rq if not np.isnan(r["sub"])))
         win = [x for x in subs if t0 <= x <= t1]
         for x in win:
             r0.plot([x, x], [0, 1], color="black", lw=1.1)
-        grid = np.arange(t0, t1, 0.1)
-        rate = np.array([((subs > g - 1.5) & (subs <= g + 1.5)).sum() / 3.0 for g in grid])
-        r0.plot(grid, rate / max(rate.max(), 1e-9) * 0.9 + 1.3, color=C_Q, lw=1.4)
-        r0.axhline(rec["qps"] / max(rate.max(), 1e-9) * 0.9 + 1.3, color=C_Q, lw=0.8, ls=":")
-        r0.set_ylim(0, 2.4)
-        r0.set_yticks([0.5, 1.3 + 0.9 * rec["qps"] / max(rate.max(), 1e-9)])
-        r0.set_yticklabels(["arrivals", f"{rec['qps']:g}/s"], fontsize=9)
+        r0.set_ylim(-0.1, 1.5)
+        r0.set_yticks([])
         if j == 0:
-            r0.set_ylabel("offered load")
-        r0.text(0.99, 0.95, f"(0) {len(win)} arrivals (|); line = arrivals/s over 3 s, "
-                f"dotted = the mean {rec['qps']:g} req/s", transform=r0.transAxes, fontsize=8.5,
-                va="top", ha="right")
+            r0.set_ylabel("arrivals")
+        r0.text(0.99, 0.93, f"(0) {len(win)} arrivals in this window, one tick each ({rec['qps']:g} req/s mean)",
+                transform=r0.transAxes, fontsize=8.5, va="top", ha="right")
         r0.set_title(f"decode {rec['budget_gib']:g} GiB: KV grant {rec['launch']['decode']['kv_gib']:.2f} GiB"
                      f" = {blocks:,} blocks, {rec['qps']:g} req/s")
         # (a) slots

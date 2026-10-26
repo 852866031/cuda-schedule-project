@@ -11,6 +11,7 @@ GPU1**. Prefill is only the source of KV; everything measured here is decode.
 
 | document | role |
 |---|---|
+| [reports/report_kv_slots.md](reports/report_kv_slots.md) | **baseline report (E0–E3)**: slots, scheduler, grid, queueing model, load stalls |
 | [NOTES_KV_SLOTS.md](NOTES_KV_SLOTS.md) | starting facts, all re-derivable from the prior study's data |
 | [PLAN_KV_VRAM.md](PLAN_KV_VRAM.md) | pre-registration: experiments and predictions (never rewritten, only annotated) |
 | [DECISIONS_KV_VRAM.md](DECISIONS_KV_VRAM.md) | per-run decision log: prediction before, outcome after |
