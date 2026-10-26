@@ -46,28 +46,21 @@ a single request; the clean rerun is reported).
 
 ![blocks](../figures/kv_blocks.png)
 
-**Block — a vLLM concept.** vLLM's PagedAttention keeps every request's KV cache in
-fixed-size *blocks* of `block_size` = 16 tokens; one block holds the K and V of those 16
-tokens for all 32 layers (2 MiB for this model). The engine's KV *grant* — what is left of
-its VRAM budget after weights, activations and CUDA graphs (budget − 16.23 GiB at every
-budget tested) — is carved into one shared pool of such blocks. The scheduler allocates
-whole blocks, never tokens: a request is admitted only when enough free blocks exist for
-its whole prompt (6,272 tokens → 392 blocks here), and during generation it takes one
-more block each time a new 16-token group starts — generating token 6,273 opens block
-393, token 6,289 opens block 394, …, token 6,385 opens block 400. If no block is free at
-such a step, vLLM preempts a request (§3, case 2). None of this is specific to our
-workload; it is how vLLM manages KV for any request.
+**Block — vLLM's unit.** PagedAttention stores KV in blocks of 16 tokens (2 MiB each
+for this model) and allocates whole blocks: a request is admitted only when its prompt's
+392 blocks are free, and takes one more block every 16 generated tokens. No free block at
+such a step → a request is preempted.
 
 ![grant](../figures/kv_grant.png)
 
-**Slot — this study's unit.** Every request of the reference workload has the same
-length (6,144 prefix + 128 new + 128 generated = 6,400 tokens = 400 blocks), so the pool
-can be read in units of "whole requests that fit": we call the 400 blocks one request
-holds from admission to its last token a *slot*, and c = ⌊blocks ÷ 400⌋ the number of
-whole slots. vLLM has no such notion — it only sees blocks — which is exactly why the
-fractional part matters (below).
+The KV grant is what the budget leaves after the model (budget − 16.23 GiB); it is one
+shared pool of blocks.
 
 ![slots](../figures/kv_slots.png)
+
+**Slot — this study's unit.** Every request here is 400 blocks, so the pool reads as
+"whole requests that fit": c = ⌊blocks ÷ 400⌋. vLLM only sees blocks — that is why the
+fractional part matters (24 GiB: 9.95 → a 10th request gets in, then one is evicted).
 
 Probed grants:
 
