@@ -145,8 +145,10 @@ to it.
 it to the measured waiting. Picture c parking spaces: cars arrive at the recorded times,
 a car that finds a free space takes it at once, otherwise it joins a first-come-first-
 served line and takes the next space that frees; each car stays for the time its request
-actually stayed (admitted → last token, as traced). The simulation uses the cell's own
-300 arrival times and each request's own residence; c comes from the probe. It is a
+actually stayed (admitted → last token, as traced). The simulation uses, for each grid cell
+of §4.1, that cell's own traced run — the unmodified stack at that budget and rate —
+taking its 300 arrival times and each request's own residence from the trace; c comes
+from the probe. It is a
 **re-simulation of a measured result, not a predictive model**: both inputs are
 measured, so it cannot forecast an unmeasured budget or rate. What it answers is a yes/no
 question — does "c slots, FCFS" account for the waiting we saw?
