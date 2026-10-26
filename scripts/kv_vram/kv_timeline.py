@@ -88,6 +88,10 @@ def build(rec, ev):
                 r.update(t_fin=e["t"], nout=e["nout"], free_after_fin=e["free"])
         elif k == "load":
             loads.append({"t": e["t"], "dt": e["dt"], "n": e["n"], "ntok": e["ntok"]})
+        elif k == "alloc":                            # D11 (MP): blocks granted, KV in flight
+            r = reqs.get(e["id"])
+            if r is not None and "t_alloc" not in r:
+                r["t_alloc"] = e["t"]
         elif k in ("lk0", "lk1"):                     # D9: lookup asked / answered
             r = reqs.get(e["id"])
             if r is not None and f"t_{k}" not in r:
@@ -105,7 +109,10 @@ def build(rec, ev):
         if "t_sched" in r:
             r["wait"] = r["t_sched"] - r["t_arr"]
             r["free_slots_at_arr"] = r["free_at_arr"] // REQ_BLOCKS
-            if "t_lk0" in r and "t_lk1" in r:     # async prefetch inside the queue time
+            if "t_alloc" in r:                    # MP: slot wait ends when blocks are granted;
+                r["slot_wait"] = r["t_alloc"] - r["t_arr"]       # the rest is waiting for KV
+                r["kv_wait"] = r["t_sched"] - r["t_alloc"]
+            elif "t_lk0" in r and "t_lk1" in r:   # async prefetch inside the queue time
                 r["prefetch"] = r["t_lk1"] - r["t_lk0"]
                 r["slot_wait"] = r["wait"] - r["prefetch"]
         if "t_first" in r and "t_sched" in r:
@@ -113,7 +120,7 @@ def build(rec, ev):
         if "t_fin" in r and "t_first" in r:
             r["decode"] = r["t_fin"] - r["t_first"]
         if "t_fin" in r and "t_sched" in r:
-            r["resident"] = r["t_fin"] - r["t_sched"]
+            r["resident"] = r["t_fin"] - r.get("t_alloc", r["t_sched"])   # holds blocks from alloc
         out.append(r)
     out.sort(key=lambda r: r["index"])
     return out, steps, loads, state
