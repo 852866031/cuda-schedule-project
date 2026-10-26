@@ -1,4 +1,16 @@
-# KV slots on the decode GPU — baseline study (E0–E3)
+# KV slots on the decode GPU — LMCache on its Python fallback (E0–E3)
+
+> **Read this first.** Every engine in this report ran LMCache 0.4.4 on its *Python
+> fallback* copy path: the prebuilt `c_ops.so` in the PyPI wheel does not load against
+> this box's torch 2.9.1 (`undefined symbol: c10_cuda_check_implementation`), and LMCache
+> silently falls back to `non_cuda_equivalents`. The same was true of the nine earlier
+> studies. With LMCache's own CUDA kernels built for this torch (2026-10-26), a KV load is
+> ~5× faster and the 24 GiB / 2.5 req/s queue falls from ~4 s to ~0.15 s. The slot
+> mechanism described here (integer slots, FCFS, waiting = all slots taken, the
+> re-simulation) does not depend on the copy speed; every absolute number does. The
+> current report with the compiled kernels is
+> [report_kv_slots.md](report_kv_slots.md); this one is kept as the degraded case.
+
 
 **Question.** On the decode engine of a prefill/decode-split Llama-3-8B, how do the KV
 space on the GPU, the number of requests it can run, and the VRAM budget relate — and
@@ -44,19 +56,19 @@ a single request; the clean rerun is reported).
 
 ## 2. Blocks (vLLM's unit) and slots (this study's unit)
 
-![blocks](../figures/kv_blocks.png)
+![blocks](../figures/fallback/kv_blocks.png)
 
 **Block — vLLM's unit.** PagedAttention stores KV in blocks of 16 tokens (2 MiB each
 for this model) and allocates whole blocks: a request is admitted only when its prompt's
 392 blocks are free, and takes one more block every 16 generated tokens. No free block at
 such a step → a request is preempted.
 
-![grant](../figures/kv_grant.png)
+![grant](../figures/fallback/kv_grant.png)
 
 The KV grant is what the budget leaves after the model (budget − 16.23 GiB); it is one
 shared pool of blocks.
 
-![slots](../figures/kv_slots.png)
+![slots](../figures/fallback/kv_slots.png)
 
 **Slot — this study's unit.** Every request here is 400 blocks, so the pool reads as
 "whole requests that fit": c = ⌊blocks ÷ 400⌋. vLLM only sees blocks — that is why the
@@ -87,8 +99,8 @@ Two situations compete for the same pool of free blocks in every scheduler step:
   returns only when a slot frees, needing more blocks than before, and its prefix is
   loaded a second time.
 
-![case 1](../figures/kv_case1_admission.png)
-![case 2](../figures/kv_case2_eviction.png)
+![case 1](../figures/fallback/kv_case1_admission.png)
+![case 2](../figures/fallback/kv_case2_eviction.png)
 
 Admission is where the synchronous load lives (Figure "case 1", left): vLLM calls the
 connector's `start_load_kv` before the forward pass of the step that admits the request,
@@ -101,7 +113,7 @@ options reach it is E4's question.
 
 ### 4.1 The grid
 
-![heatmaps](../figures/kv_grid_heat.png)
+![heatmaps](../figures/fallback/kv_grid_heat.png)
 
 Each cell is one launch and one 300-request run: (a) mean decode queue wait (log colour
 scale), (b) output tokens per second, (c) end-user TPOT (log colour scale). The same
@@ -132,7 +144,7 @@ the 10 s line. (b) rises with rate until it flattens at each budget's saturation
 throughput; (c) is flat while nobody waits and then climbs with rate, less steeply at
 the larger budgets.
 
-![3D view](../figures/kv_grid_3d.png)
+![3D view](../figures/fallback/kv_grid_3d.png)
 
 ### 4.2 Is the waiting explained by integer slots alone? A simulation of our explanation
 
@@ -154,9 +166,9 @@ from the probe. It is a
 measured, so it cannot forecast an unmeasured budget or rate. What it answers is a yes/no
 question — does "c slots, FCFS" account for the waiting we saw?
 
-![re-simulation](../figures/kv_resim_schematic.png)
+![re-simulation](../figures/fallback/kv_resim_schematic.png)
 
-![queueing models](../figures/kv_mgc.png)
+![queueing models](../figures/fallback/kv_mgc.png)
 
 **Answer: yes.** With the slot count the engine actually ran with — 10 at 24 GiB (9 whole
 slots plus the admitted 10th, §2), 12 and 15 — the simulated mean wait lies on the
@@ -183,7 +195,7 @@ matches only near ρ ≈ 0.9 (26 GiB / 2.5 req/s: 1,037 vs 1,054 ms); at ρ < 0.
 underpredicts up to 7× because a 300-request window of one Poisson sample is far from
 steady state when waits are tens of milliseconds.
 
-![wait vs free space](../figures/kv_wait_vs_free.png)
+![wait vs free space](../figures/fallback/kv_wait_vs_free.png)
 
 Per request the rule is binary: a request that reaches the decode scheduler with ≥ 1
 request-worth of free blocks waits 0 ms; one that finds the pool full waits 0.1–10 s
@@ -192,7 +204,7 @@ arrived during a multi-request load call — the scheduler thread itself was blo
 
 ### 4.3 What the slots cost: the synchronous load stalls the batch
 
-![time split](../figures/kv_time_split.png)
+![time split](../figures/fallback/kv_time_split.png)
 
 Per request, residence splits into decode steps that overlap no KV load and steps
 stalled by someone's load (the trace marks every `start_load_kv` call):
@@ -226,7 +238,7 @@ same neighbours in both runs; the only difference is the number of slots. So wha
 happens differently to it is the effect of the slots alone, seen on one request at one
 moment rather than inferred from an average.
 
-![slot timeline](../figures/kv_slots_timeline.png)
+![slot timeline](../figures/fallback/kv_slots_timeline.png)
 
 What to look at:
 
@@ -264,13 +276,13 @@ just in time and dropped afterwards — the same grant would hold several times 
 requests, and the queue of §4.1 would shrink without any extra VRAM. The question is
 whether the streaming can keep up with the compute.
 
-![streaming idea](../figures/kv_stream_idea.png)
+![streaming idea](../figures/fallback/kv_stream_idea.png)
 
 It cannot, and the reason is per-step traffic: a decode step needs every layer's KV for
 every token of every resident request, so streaming moves each request's full 0.78 GiB
 across PCIe on every step. The stand-alone benchmark below measures exactly that.
 
-![streaming benchmark](../figures/kv_stream_bench.png)
+![streaming benchmark](../figures/fallback/kv_stream_bench.png)
 
 A stand-alone benchmark (`scripts/kv_vram/bench_stream.py`, no vLLM) runs one
 8B-shaped decode step with the KV either resident in HBM or streamed per layer from
@@ -301,7 +313,7 @@ admission into per-layer pieces. The hope is to overlap the KV transfer with the
 admitting forward pass: copy layer i, compute layer i, copy layer i+1, … The smoke (two
 runs per arm) found a real gain, but not from overlap:
 
-![layerwise](../figures/kv_layerwise.png)
+![layerwise](../figures/fallback/kv_layerwise.png)
 
 | 24 GiB, 2.5 req/s | baseline (2 runs) | use_layerwise (2 runs) |
 |---|---|---|
