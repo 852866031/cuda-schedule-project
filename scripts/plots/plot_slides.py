@@ -13,6 +13,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.image as mpimg
+import matplotlib.ticker
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
@@ -723,7 +724,13 @@ def fig_split_s():
 
 
 # ------------------------------------------------------------------ async / MP over the grid
-def fig_lever_grid(method, label, color, name, unstable=None, extra=()):
+LEVER_ROWS = {"wait": ("wait_ms", 1e-3, "queue wait (s)"), "tput": ("tok_s", 1, "output tokens / s"),
+              "tpot": ("tpot_ms", 1, "TPOT p50 (ms, log)"), "resid": ("resid_s", 1, "residence (s)")}
+
+
+def fig_lever_grid(method, label, color, name, unstable=None, extra=(), panels=("wait", "resid"),
+                   collapse=None, marks=True):
+    from matplotlib.transforms import blended_transform_factory
     rows = list(csv.DictReader(open(REPO / "output" / "kv_vram" / "async_summary.csv")))
     fig, axes = plt.subplots(2, 3, figsize=(10, 5.4), sharex=True,
                              gridspec_kw={"hspace": 0.25, "wspace": 0.28})
@@ -732,30 +739,40 @@ def fig_lever_grid(method, label, color, name, unstable=None, extra=()):
             rs = sorted([r for r in rows if r["method"] == m and int(r["budget"]) == b],
                         key=lambda r: float(r["qps"]))
             q = [float(r["qps"]) for r in rs]
-            axes[0, j].plot(q, [float(r["wait_ms"]) / 1e3 for r in rs], marker=mk, color=c, lw=2, label=lab)
-            axes[1, j].plot(q, [float(r["resid_s"]) for r in rs], marker=mk, color=c, lw=2, label=lab)
-        axes[0, j].set_yscale("symlog", linthresh=0.01)
-        axes[0, j].axhline(0.05, color=C_RED, lw=1, ls=":")
+            for i, p in enumerate(panels):
+                col, sc, _ = LEVER_ROWS[p]
+                axes[i, j].plot(q, [float(r[col]) * sc for r in rs], marker=mk, color=c, lw=2, label=lab)
+        for i, p in enumerate(panels):
+            ax = axes[i, j]
+            if p == "wait":
+                ax.set_yscale("symlog", linthresh=0.01)
+                ax.axhline(0.05, color=C_RED, lw=1, ls=":")
+            if p == "tpot":
+                ax.set_yscale("log")
+                ax.set_yticks([15, 20, 30, 50, 100, 200])
+                ax.yaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
+                ax.yaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+            ax.grid(color="#ececea", lw=0.6)
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.tick_params(labelsize=12)
+            if collapse and b == collapse:
+                ax.add_patch(FancyBboxPatch((4.3, 0.03), 0.9, 0.94, boxstyle="round,pad=0,rounding_size=0.12",
+                                            transform=blended_transform_factory(ax.transData, ax.transAxes),
+                                            fill=False, ec=C_RED, lw=2.2, ls="--", clip_on=False))
         axes[0, j].set_title(f"{b} GiB", fontsize=14)
-        axes[1, j].set_xlabel("request rate (req/s)", fontsize=13)
-        for i in range(2):
-            axes[i, j].grid(color="#ececea", lw=0.6)
-            axes[i, j].spines[["top", "right"]].set_visible(False)
-            axes[i, j].tick_params(labelsize=12)
+        axes[-1, j].set_xlabel("request rate (req/s)", fontsize=13)
         if unstable and b in unstable:
             for i in range(2):
                 axes[i, j].axvspan(unstable[b] - 0.25, 5.25, color="#f3d6d3", alpha=0.6, lw=0)
-            axes[1, j].text(unstable[b] + 0.45, axes[1, j].get_ylim()[0] + 0.1, "crashed", color=C_RED,
-                            fontsize=12, ha="center", va="bottom")
-    axes[0, 0].set_ylabel("queue wait (s)", fontsize=13)
-    axes[1, 0].set_ylabel("residence (s)", fontsize=13)
-    axes[0, 0].text(1.0, 0.025, "50 ms", color=C_RED, fontsize=12, va="top")
+            axes[1, j].text(unstable[b] + 0.45, 0.04, "crashed", color=C_RED, fontsize=12, ha="center",
+                            va="bottom", transform=blended_transform_factory(axes[1, j].transData,
+                                                                             axes[1, j].transAxes))
+    for i, p in enumerate(panels):
+        axes[i, 0].set_ylabel(LEVER_ROWS[p][2], fontsize=13)
+    if panels[0] == "wait":
+        axes[0, 0].text(1.0, 0.025, "50 ms", color=C_RED, fontsize=12, va="top")
     h, l = axes[0, 0].get_legend_handles_labels()
     fig.legend(h, l, loc="upper center", ncol=3, frameon=False, fontsize=12, bbox_to_anchor=(0.5, 1.03))
-    mbadge(axes[0, 2], 2.0, 0.6, 1)
-    mbadge(axes[1, 1], 3.0, 2.6, 2)
-    if unstable:
-        mbadge(axes[0, 0], 4.5, 5.0, 3)
     for (i, j, x, y, n) in extra:
         mbadge(axes[i, j], x, y, n)
     fig.savefig(OUT / f"{name}.png", dpi=130, facecolor="white", bbox_inches="tight")
@@ -764,11 +781,19 @@ def fig_lever_grid(method, label, color, name, unstable=None, extra=()):
 
 
 def fig_mp_grid():
-    fig_lever_grid("mp18", "MP connector (vLLM 0.18.1)", C_LOAD, "s_mp_grid", extra=[(1, 2, 4.55, 5.0, 3)])
+    lab = "MP connector (vLLM 0.18.1)"
+    fig_lever_grid("mp18", lab, C_LOAD, "s_mp_grid", collapse=28,
+                   extra=[(0, 2, 2.0, 0.6, 1), (1, 1, 3.0, 2.6, 2), (1, 2, 3.7, 5.0, 3)])
+    fig_lever_grid("mp18", lab, C_LOAD, "s_mp_grid2", collapse=28, panels=("tput", "tpot"),
+                   extra=[(0, 1, 3.0, 560, 1), (1, 1, 3.0, 60, 2), (0, 2, 3.7, 220, 3)])
 
 
 def fig_async_grid():
-    fig_lever_grid("cops_async", "enable_async_loading", C_DEC, "s_async_grid", unstable={24: 4})
+    lab = "enable_async_loading"
+    fig_lever_grid("cops_async", lab, C_DEC, "s_async_grid", unstable={24: 4},
+                   extra=[(0, 2, 2.0, 0.6, 1), (1, 1, 3.0, 2.6, 2), (0, 0, 4.5, 5.0, 3)])
+    fig_lever_grid("cops_async", lab, C_DEC, "s_async_grid2", unstable={24: 4}, panels=("tput", "tpot"),
+                   extra=[(0, 2, 3.0, 470, 1), (1, 1, 3.0, 60, 2)])
 
 
 # ------------------------------------------------------------------ markers on report figures

@@ -286,7 +286,11 @@ overlap copy with compute. Measured at 24 GiB / 2.5 req/s:
 No gain: queue 143 → 136 ms, own load 0.18 → 0.19 s, residence 2.83 → 2.76 s, all within
 run-to-run noise. The direct check of overlap is the time that load-carrying steps add to
 a request's residence: 0.67 s without, 0.70 s with layerwise. If the copies overlapped the
-forward, this would shrink.
+forward, this would shrink. The rest of the decode time (each step counted up to 1.5 × the median
+step) reads 1.98 vs 1.88 s, but that is bookkeeping, not faster decoding: a request spans
+the same 127 steps in both runs, a step with no admission takes 14.5 vs 14.4 ms, and the
+synchronous run simply has more mildly slow steps (9% vs 5% over the cap) whose first
+1.5 × median lands in that part. Both parts together: 2.65 vs 2.58 s.
 
 Why there is no overlap: the admitting step, drawn to scale from the measured copy
 (115 ms) and forward (14 ms):
@@ -353,7 +357,8 @@ mixes the connector with these version effects. Full grid, 27 cells, all ok (DEC
 
 ![MP vs sync](../figures/kv_mp.png)
 
-Same metrics as §4.1, plus residence; (a) is vLLM's queue time, which includes the ~42 ms KV
+Same metrics as §4.1, plus residence; the dashed red box marks the 28 GiB collapse at
+4.5–5 req/s (5 req/s: 174 evictions, 303 tok/s, residence 6.2 s). (a) is vLLM's queue time, which includes the ~42 ms KV
 wait after the block grant (the wait for a slot alone is in the capacity table below).
 
 | | 24 GiB | 26 GiB | 28 GiB |

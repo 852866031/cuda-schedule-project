@@ -113,6 +113,17 @@ def plot_arm(rows, methods, fname, title):
         for i in range(4):
             axes[i, j].grid(color="#ececea", lw=0.6)
             axes[i, j].spines[["top", "right"]].set_visible(False)
+    if "mp18" in methods:      # 28 GiB collapses at 4.5-5 req/s: the lent 16th slot evicts, MP recomputes
+        from matplotlib.patches import FancyBboxPatch
+        from matplotlib.transforms import blended_transform_factory
+        for i in range(4):
+            ax = axes[i, 2]
+            ax.add_patch(FancyBboxPatch((4.3, 0.03), 0.9, 0.94, boxstyle="round,pad=0,rounding_size=0.12",
+                                        transform=blended_transform_factory(ax.transData, ax.transAxes),
+                                        fill=False, ec="#b3261e", lw=2, ls="--", clip_on=False))
+        axes[1, 2].text(4.15, 0.12, "collapse at 5 req/s:\n174 evictions, 303 tok/s,\nresidence 6.2 s",
+                        transform=blended_transform_factory(axes[1, 2].transData, axes[1, 2].transAxes),
+                        color="#b3261e", fontsize=9.5, ha="right", va="bottom")
     axes[0, 0].set_ylabel("(a) mean decode queue wait (s)")
     axes[1, 0].set_ylabel("(b) output tokens / s")
     axes[2, 0].set_ylabel("(c) TPOT p50, end-user (ms, log)")
