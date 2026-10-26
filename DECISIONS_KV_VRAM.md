@@ -581,7 +581,7 @@ Per request at 3 req/s (trace): the copy in `start_load_kv` falls from 179–201
 count per residence is about the same at equal load but each stall is ~120 ms instead of
 ~210 ms, so stall time per residence roughly halves (28 GiB: 2.58 → 1.07 s); residence
 falls 4.05 / 4.36 / 5.18 s → 3.15 / 3.25 / 3.35 s at 24 / 26 / 28 GiB. At 24 GiB / 2 req/s
-load stalls take 12% of decode wall time (fallback 34%).
+the extra time of load-carrying steps is 20% of decode wall time (fallback 34%, same definition).
 
 Re-simulation with c_eff = 10 / 12 / 15: within 0.1% of the measured mean wait at every
 26 / 28 GiB cell with a wait, within 0.1–2% at 24 GiB from 2.5 req/s up (−7% at 2 req/s,
