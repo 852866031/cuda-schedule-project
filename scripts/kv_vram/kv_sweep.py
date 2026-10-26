@@ -59,6 +59,9 @@ METHODS = {
     "fp8": {"KV_DTYPE": "fp8"},
     "lw": {"LMC_LAYERWISE": "1"},
     "async": {"LMC_ASYNC_LOAD": "1"},
+    # cohort-admission check (report §4.3): engines unchanged, the router releases decode
+    # legs in groups of 5 (or after 2 s) so they are admitted and loaded together
+    "cohort5": {"ROUTER_BATCH": "5", "ROUTER_BATCH_TIMEOUT": "2.0"},
 }
 PORTS = {"prefill": 8100, "decode": 8200}
 INVALID_MARKERS = ("RECV TIMEOUT", "kv_cache is None", "Insufficient memory",

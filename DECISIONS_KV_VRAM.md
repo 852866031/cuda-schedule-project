@@ -307,25 +307,26 @@ Decode queue wait, mean per request (ms); throughput in tok/s in brackets:
 - 28 GiB / 1.5 req/s: the first run lost one request to a router keep-alive race
   (recorded, `ok = False`); the `_r2` rerun is clean and is the reported cell.
 
-## E6 (planned, 2026-10-25) — does cohort admission explain the per-token time at saturation?
+## Check of the §4.3 explanation — cohort admission (2026-10-25)
 
-Observation (E2 traces): at 4 req/s the 24 GiB engine decodes faster per token than the
-28 GiB one (19 vs 31 ms) because its requests are admitted in cohorts (3.4 per load call,
-1.2 stalls per residence) while at 28 GiB admissions are spread out (2.4 per call, 3.5
-stalls per residence). Hypothesis: per-token time at saturation is set by the number of
-separate load stalls a request sits through, i.e. by the admission pattern, not by the
-budget. Test to design: same budget, same rate, admission forced into cohorts vs spread
-(e.g. router-side batching of releases, or a scheduler-side admission gate), with the
-prediction written before the run: tpot2 follows the stall count (≈ 16 ms + stalls ×
-~220 ms ÷ 127), independent of which budget it is. Not run yet.
+**What is being checked.** §4.3 reads from the baseline traces that at 4 req/s the 24 GiB
+engine decodes faster per token than the 28 GiB one (tpot2 19 vs 31 ms) because its
+requests are admitted in cohorts (3.4 per load call, 1.2 stalls per residence) while at
+28 GiB admissions are spread out (2.4 per call, 3.5 stalls per residence). That is an
+explanation read off the data, not a controlled result.
 
-## D5 (2026-10-25) — decode-side prefix caching dropped from E4/E5
+**Design.** Same engines, same budget (28 GiB), same rate (4 req/s), same arrivals. Two
+runs: *control* = as before; *batched* = the router holds each request's decode leg until
+5 are ready (or 2 s), then sends them together, so the decode engine admits them in one
+step and copies their KV in one `start_load_kv` call (`ROUTER_BATCH=5`, method
+`cohort5`). The engines and the workload are untouched; only when the decode engine sees
+a request changes. The hold time is recorded per request (`held_ms`) and is *added* to the
+client's gap #1 — it must not be read as queueing.
 
-The APC gain depends on how many concurrently resident requests share a session — a
-property of the workload's session mix (zipf-1.1 over 32 sessions here), not of the
-engine's handling of KV. The study's independent variables are budget and request rate
-with the workload fixed; an APC arm would introduce a hidden third variable (the share of
-duplicate prefixes, ~1/3 here, §4.5) and its result would not transfer to other mixes.
-Decision: not tested; the duplicate share stays in the report as an observation. E4 now
-covers the load path only (LMCache layerwise / async_loading) and fp8 KV. Can be
-reinstated as a single smoke if the question becomes "what does this workload gain".
+**Prediction (before running).** Stalls per residence fall from ~3.5 to ~1.5–2 (loads
+come in groups of ≤ 5 instead of 2.4), so decode time per request falls from 4.04 s to
+≈ 2.35 s (own steps) + ~1.7 × 0.25 s ≈ 2.8 s, and tpot2 from 31 to ≈ 22 ms. Mean load
+call duration rises (more requests per call, ~5 × 0.17 s ≈ 0.6–0.9 s). Throughput stays
+at the saturation value (≈ 350 tok/s) and the decode queue wait does not rise beyond the
+hold. If stalls per residence fall but tpot2 does not, the explanation is wrong.
+

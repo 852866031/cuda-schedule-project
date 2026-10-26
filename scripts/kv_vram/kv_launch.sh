@@ -15,6 +15,8 @@
 #   KV_DTYPE=fp8                     --kv-cache-dtype on BOTH engines (they must agree)
 #   LMC_LAYERWISE=1                  LMCache use_layerwise: true (both engines)
 #   LMC_ASYNC_LOAD=1                 LMCache enable_async_loading: true (decode engine)
+#   ROUTER_BATCH=N [ROUTER_BATCH_TIMEOUT=s]  router holds decode legs until N are ready
+#                                    (cohort-admission check; engines unchanged)
 # OMP_NUM_THREADS is inherited from the driver.
 set -u
 cd "$(dirname "$0")"
@@ -135,7 +137,9 @@ wait_health 8100 "$LOGS/kvv_prefill.log"; register prefill 8100
 wait_health 8200 "$LOGS/kvv_decode.log";  register decode 8200
 
 "$REPO/.venv/bin/python" lmc_proxy.py --prefill 127.0.0.1:8100 --decode 127.0.0.1:8200 \
-    --max-inflight 999 --forward-first-token --port 8000 > "$LOGS/kvv_proxy.log" 2>&1 &
+    --max-inflight 999 --forward-first-token --port 8000 \
+    --release-batch "${ROUTER_BATCH:-1}" --release-timeout "${ROUTER_BATCH_TIMEOUT:-2.0}" \
+    > "$LOGS/kvv_proxy.log" 2>&1 &
 echo $! > "$PID_DIR/proxy.pid"
 sleep 3
 echo "big up"
