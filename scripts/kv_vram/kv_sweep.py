@@ -168,7 +168,8 @@ def engine_startup(name):
         out["slots"] = out["kv_blocks"] // (REQ_TOKENS // BLOCK)
     if m := re.findall(r"Maximum concurrency for [\d,]+ tokens per request: ([\d.]+)x", text):
         out["max_concurrency_8192"] = float(m[-1])
-    out["cops_backend"] = "Using backend: lmcache.c_ops" in text
+    if m := re.findall(r"Using backend: (lmcache\.[a-z_]+)", text):
+        out["lmcache_backend"] = sorted(set(m))
     out["trace_patched"] = ("[kv_trace] scheduler wrapped" in text
                             and "[kv_trace] connector start_load_kv wrapped" in text)
     if m := re.findall(r"Using (\S+) attention backend", text):
@@ -377,6 +378,14 @@ def run_cell(args, budget, qps, wl):
         print(f"  up in {info['up_s']:.0f}s: decode KV {info['decode'].get('kv_gib')} GiB = "
               f"{info['decode'].get('kv_tokens')} tokens = {info['decode'].get('slots')} slots; "
               f"prefill KV {info['prefill'].get('kv_gib')} GiB", flush=True)
+        # the compiled kernels (.venv-lmc, site/cops_shim.py) must be in exactly the arms
+        # that ask for them, in both engines; every other arm must run the fallback that
+        # all baseline data used
+        want = "lmcache.c_ops" if METHODS[args.method].get("KV_COPS") == "1" else "lmcache.non_cuda_equivalents"
+        for n in ("prefill", "decode"):
+            got = info[n].get("lmcache_backend")
+            if got != [want]:
+                raise RuntimeError(f"{n} engine LMCache backend {got}, expected [{want}]")
         if args.trace and not info["decode"].get("trace_patched"):
             raise RuntimeError("KV_TRACE requested but the decode log has no [kv_trace] line")
         wu = warmup_requests(wl)
@@ -556,6 +565,7 @@ def rebuild_summary():
             "decode_kv_gib": (L.get("decode") or {}).get("kv_gib"),
             "decode_kv_tokens": (L.get("decode") or {}).get("kv_tokens"),
             "slots": (L.get("decode") or {}).get("slots"),
+            "lmcache_backend": ",".join((L.get("decode") or {}).get("lmcache_backend") or []),
             "attn_backend": (L.get("decode") or {}).get("attn_backend"),
             "decode_hit_frac": rec.get("decode_hit_frac"),
             "tok_per_s": s.get("output_tok_per_s"), "req_per_s": s.get("request_tok_per_s"),

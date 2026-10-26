@@ -485,3 +485,15 @@ ops): starts; per-request load ~190 → ~60–90 ms (the whole-request staging p
 thrashes the L1, so maybe not); with `use_layerwise` as well (`kv_cops_lw_…`): load
 ≈ 60 ms, and — if the side-stream copy now overlaps the forward — admitting-step excess
 falls below the baseline's. Both: grant and slot count unchanged, outputs identical.
+
+**Isolation of the compiled kernels (2026-10-26).** Checked that the new build cannot
+change any non-`cops` measurement: `.venv-matched`'s own `lmcache/c_ops*.so` is the
+untouched 25 Aug file; nothing in `.venv-matched` site-packages was modified on
+2026-10-25 (all installs went to `.venv-lmc`); with the study's sitecustomize on the path
+but `KV_COPS` unset, lmcache reports `Using backend: lmcache.non_cuda_equivalents`; every
+existing data cell predates the build (last 21:59, `.so` built 22:19), and their archived
+engine logs show the fallback backend. Guard added to `kv_sweep.py`: after launch, both
+engines' `Using backend:` lines must equal `lmcache.c_ops` for `KV_COPS` arms and
+`lmcache.non_cuda_equivalents` for all others, else the cell fails before measuring; the
+backend is recorded per cell in the summary. The first `cops` smoke was interrupted by a
+session restart before its stack came up (no data); it is rerun.
