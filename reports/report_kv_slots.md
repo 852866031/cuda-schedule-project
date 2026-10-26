@@ -236,20 +236,31 @@ steps + (stalls met while resident) × stall length; the stall count depends on 
 admission pattern, not only on load. *This reading is from the trace of the baseline
 runs; a controlled test of cohort vs spread-out admission is planned (DECISIONS, E6).*
 
-### 4.4 A request followed across two budgets
+### 4.4 The mechanism seen on one request, not on averages
+
+Everything above is a mean over 300 requests. This figure shows the same mechanism at
+the level of one request at one moment, which is what makes "waiting = all slots taken"
+checkable rather than inferred. Both panels use the *same* arrival sequence (the seed is
+fixed), so request #256 meets exactly the same neighbours in both; the only difference
+between the panels is the number of slots.
 
 ![slot timeline](../figures/kv_slots_timeline.png)
 
-Same arrival sequence (seeded), 2 req/s, 24 vs 28 GiB. Request #256 reaches the decode
-scheduler at t = 126.3 s. At 24 GiB it finds 14 free blocks (0.0 requests), all ten lanes
-occupied, and waits 1,306 ms for lane 1 to free; then loads for 283 ms and decodes for
-2.8 s. At 28 GiB the same request finds 888 free blocks (2.2 requests) and waits 0 ms;
-it happens to be admitted in a cohort of seven, so its own load takes 477 ms (one call
-copying seven requests), then it decodes for 2.9 s. The valley at 130–135 s in both
-panels is the arrival process, not the engine: 122–127 s brought 16 arrivals (3.2 /s)
-that filled the pool and queued, 127–133 s brought 8 (1.3 /s) while 17–20 finished.
-Row (c) shows the load stalls: every orange band is a step of 150–500 ms during which
-no running request gets a token.
+What to look at:
+
+- **The followed request.** #256 reaches the decode scheduler at t = 126.3 s. At 24 GiB
+  it finds 14 free blocks (0.0 requests), all ten lanes occupied, and waits 1,306 ms for
+  lane 1 to free. At 28 GiB the same request finds 888 free blocks (2.2 requests) and
+  waits 0 ms. Same request, same neighbours, five more slots: the wait disappears.
+- **Row (b): free space and queue are complementary.** The grey queue appears exactly
+  when the green "free space" line touches zero and vanishes when it lifts — there is no
+  waiting with a slot free. The valley at 130–135 s in both panels is the arrival process,
+  not the engine: 122–127 s brought 16 arrivals (3.2 /s) that filled the pool, 127–133 s
+  brought 8 (1.3 /s) while 17–20 finished.
+- **Row (c): the stalls of §4.3 as they happen.** Every orange band is one load call; the
+  step that contains it takes 150–500 ms instead of ~15 ms, and no running request gets a
+  token meanwhile. At 28 GiB #256 is admitted in a cohort of seven, so its own load call
+  copies seven requests and takes 477 ms.
 
 ### 4.5 Hypothesis 1 — the slots hold duplicate prefixes
 
