@@ -37,8 +37,10 @@ fp8) and E5 (re-running the grid with them) are not part of this report.
 
 Metric conventions: *decode queue wait* = vLLM's `request_queue_time` on the decode
 engine (arrival at its scheduler → admitted); *capacity* = the highest rate with mean
-queue wait < 50 ms and no failed request; *tpot2* = per-token time over gaps 2..N (gap 1
-holds the decode queue + KV load with a forwarded token #1); *residence* = admitted →
+queue wait < 50 ms and no failed request; *TPOT* = what the user sees: the mean gap from
+token #1 to the last token (token #1 is forwarded from the prefill engine, so the first
+gap holds the decode queue + KV load); *decode-only TPOT* (tpot2, used only when the
+mechanism in §4.3 is discussed) = the same over gaps 2..N; *residence* = admitted →
 last token. All 24 cells are `ok` (one cell was rerun after a router keep-alive race lost
 a single request; the clean rerun is reported).
 
@@ -104,7 +106,8 @@ options reach it is E4's question.
 ![heatmaps](../figures/kv_grid_heat.png)
 
 Each cell is one launch and one 300-request run: (a) mean decode queue wait (log colour
-scale), (b) output tokens per second, (c) decode-only per-token time. The same numbers:
+scale), (b) output tokens per second, (c) end-user TPOT (log colour scale). The same
+numbers:
 
 | req/s | 1 | 1.5 | 2 | 2.25 | 2.5 | 2.75 | 3 | 3.5 | 4 |
 |---|---|---|---|---|---|---|---|---|---|
@@ -117,9 +120,11 @@ scale), (b) output tokens per second, (c) decode-only per-token time. The same n
   step too high.
 - **Saturation throughput** ≈ 2.3 / 2.65 / 2.7 req/s: +50% slots buys +17%.
 - **While nobody waits, the budget is irrelevant:** at 1 req/s all three budgets give
-  128 tok/s, 0 ms queue and the same 14.5–14.7 ms per token.
-- **Once requests queue, per-token time rises with budget**, not falls: tpot2 at 3 req/s is 25.7 /
-  31.2 / 39.0 ms at 24 / 26 / 28 GiB — bigger batches and more stalls (§4.3).
+  128 tok/s, 0 ms queue and the same 17 ms TPOT.
+- **Once requests queue, TPOT follows the queue:** at 3 req/s it is 110 / 75 / 71 ms at
+  24 / 26 / 28 GiB, because the first token-gap carries the decode queue wait. The
+  decode-only part moves the other way (26 / 31 / 39 ms): bigger batches and more load
+  stalls per request — §4.3.
 - **Preemptions:** 1–35 per cell at 24 GiB, none at 26 / 28 GiB.
 
 The same three quantities as surfaces. In (a) height is the mean wait for a slot: the
@@ -128,8 +133,8 @@ surface join the (budget, rate) points with the same mean wait — 0.05 s (the c
 line), 0.5, 2, 5 and 10 s, interpolated between the measured cells; their slope says
 how much rate one GiB buys: about 0.25 req/s per 2 GiB along the 0.05 s line, less along
 the 10 s line. (b) rises with rate until it flattens at each budget's saturation
-throughput; (c) is flat while nobody waits and then rises with budget, not with rate
-(§4.3 explains why).
+throughput; (c) is flat while nobody waits and then climbs with rate, less steeply at
+the larger budgets.
 
 ![3D view](../figures/kv_grid_3d.png)
 
@@ -213,8 +218,9 @@ chunk by chunk.
 
 Two consequences visible in the grid: (i) more slots → more admissions during a
 residence → longer residence, which is why 26 → 28 GiB barely moves saturation
-throughput; (ii) at 4 req/s the 28 GiB engine is *slower per token* than the 24 GiB one
-(31 vs 19 ms), although both are saturated:
+throughput; (ii) at 4 req/s the 28 GiB engine is *slower per token once decoding* than
+the 24 GiB one (decode-only TPOT 31 vs 19 ms; the end-user TPOT still favours 28 GiB,
+150 vs 209 ms, because its queue is 7 s shorter), although both are saturated:
 
 | 4 req/s | 24 GiB | 28 GiB |
 |---|---|---|

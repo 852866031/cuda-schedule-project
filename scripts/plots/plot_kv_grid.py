@@ -64,12 +64,16 @@ def val(b, q, col):
 def fig_3d():
     panels = [("decode_queue_ms", 1e-3, "mean wait for a slot (s)", "(a) decode queue wait", cm.Blues),
               ("tok_per_s", 1, "output tokens / s", "(b) throughput", cm.Greens),
-              ("tpot2_p50_ms", 1, "ms per token (gaps 2..N)", "(c) decode-only TPOT p50", cm.Oranges)]
+              ("tpot_p50_ms", 1, "ms per token (token 1 → last, log)", "(c) TPOT p50, end-user", cm.Oranges)]
     fig = plt.figure(figsize=(19, 6.4))
     B, Q = np.meshgrid(BUDGETS, QPS_COMMON, indexing="ij")
     for k, (col, sc, zl, title, cmap) in enumerate(panels):
         ax = fig.add_subplot(1, 3, k + 1, projection="3d")
         Z = np.array([[val(b, q, col) * sc for q in QPS_COMMON] for b in BUDGETS])
+        if col == "tpot_p50_ms":
+            Z = np.log10(Z)
+            ax.set_zticks(np.log10([20, 50, 100, 200]))
+            ax.set_zticklabels(["20", "50", "100", "200"])
         ax.plot_surface(B, Q, Z, cmap=cmap, edgecolor="#333", lw=0.6, alpha=0.45 if k == 0 else 0.9,
                         rstride=1, cstride=1)
         if k == 0:
@@ -102,6 +106,8 @@ def fig_3d():
         for b in BUDGETS:
             for q in QPS_ALL:
                 z = val(b, q, col) * sc
+                if col == "tpot_p50_ms":
+                    z = np.log10(z)
                 if not np.isnan(z):
                     ax.scatter([b], [q], [z], color=C_B[b], s=22, depthshade=False)
         ax.set_xlabel("VRAM budget (GiB)", labelpad=8)
@@ -122,13 +128,15 @@ def fig_heat(contours=False):
     panels = [("decode_queue_ms", 1e-3, "decode queue wait, mean (s)", "(a) queue wait before decode",
                True, [0.05, 0.5, 2, 5, 10]),
               ("tok_per_s", 1, "output tokens / s", "(b) throughput", False, [200, 250, 300, 340]),
-              ("tpot2_p50_ms", 1, "ms per token (gaps 2..N)", "(c) decode-only TPOT p50", False,
-               [20, 25, 30, 35])]
+              ("tpot_p50_ms", 1, "ms per token (token 1 → last)", "(c) TPOT p50, end-user", True,
+               [20, 50, 100])]
     fig, axes = plt.subplots(1, 3, figsize=(18, 4.8))
     fig.subplots_adjust(wspace=0.5)
     for ax, (col, sc, cb, title, logc, levels) in zip(axes, panels):
         Z = np.array([[val(b, q, col) * sc for q in QPS_COMMON] for b in BUDGETS])
         norm = LogNorm(vmin=max(0.005, np.nanmin(Z[Z > 0])), vmax=np.nanmax(Z)) if logc else None
+        if col == "tpot_p50_ms":
+            norm = LogNorm(vmin=15, vmax=np.nanmax(Z))
         im = ax.imshow(Z, origin="lower", aspect="auto", cmap="Blues", norm=norm,
                        extent=[-0.5, len(QPS_COMMON) - 0.5, -0.5, len(BUDGETS) - 0.5])
         for i, b in enumerate(BUDGETS):
