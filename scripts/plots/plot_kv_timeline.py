@@ -167,7 +167,7 @@ def main():
         a.set_yticks(list(range(ymax_lane)) + [q0 + (max(1, nq) - 1) * 0.275])
         a.set_yticklabels([str(i + 1) for i in range(ymax_lane)] + ["queue"], fontsize=9)
         if j == 0:
-            a.set_ylabel("KV slot (lane)")
+            a.set_ylabel("KV slot")
         a.text(0.01, 0.985, "(a) the same requests packed into the KV slots", transform=a.transAxes,
                fontsize=8.5, va="top")
         # follow annotation
@@ -176,7 +176,7 @@ def main():
             wait = fr["s"] - fr["a"]
             free_req = fr["free_arr"] / REQ_BLOCKS
             txt = (f"request #{args.follow}: arrives t={fr['a']:.1f} s, "
-                   f"{fr['free_arr']} blocks free ({free_req:.1f} requests)\n"
+                   f"{fr['free_arr']} blocks free (= {free_req:.1f} of a 400-block slot)\n"
                    r"$\bf{waits\ " + f"{wait * 1000:.0f}" + r"\ ms}$" + f", loads {1000 * (fr['f'] - fr['s']):.0f} ms, "
                    f"decodes {fr['e'] - fr['f']:.1f} s")
             ytxt = ln[args.follow] if wait < 0.02 else q0 + qlane.get(args.follow, 0) * 0.55
@@ -226,7 +226,7 @@ def main():
                    bbox_to_anchor=(0.5, y1 + 0.003), bbox_transform=fig.transFigure)
     row_legend(1, [Patch(color=C_LOAD, label="loading its KV from host (the whole batch stops)"),
                    Patch(color=C_DEC, label="decoding (holds its 400 blocks)"),
-                   Patch(fc=C_DEC, hatch="///", ec="white", label="decoding, was preempted once"),
+                   Patch(fc=C_DEC, hatch="///", ec="white", label="decoding, was evicted once"),
                    Patch(color=C_WAIT, label="waiting for a slot"),
                    Line2D([], [], color="black", lw=1.6, label=f"outlined: request #{args.follow}")], 5)
     row_legend(2, [Patch(color=C_WAIT, alpha=0.8, label="requests waiting for a slot"),
