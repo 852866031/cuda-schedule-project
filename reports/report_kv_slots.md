@@ -253,15 +253,17 @@ What to look at:
   it finds 14 free blocks (0.0 requests), all ten lanes occupied, and waits 1,306 ms for
   lane 1 to free. At 28 GiB the same request finds 888 free blocks (2.2 requests) and
   waits 0 ms. Same request, same neighbours, five more slots: the wait disappears.
-- **Row (b): free space and queue are complementary.** The grey queue appears exactly
-  when the green "free space" line touches zero and vanishes when it lifts — there is no
-  waiting with a slot free. The valley at 130–135 s in both panels is the arrival process,
-  not the engine: 122–127 s brought 16 arrivals (3.2 /s) that filled the pool, 127–133 s
-  brought 8 (1.3 /s) while 17–20 finished.
-- **Row (c): the stalls of §4.3 as they happen.** Every orange band is one load call; the
-  step that contains it takes 150–500 ms instead of ~15 ms, and no running request gets a
-  token meanwhile. At 28 GiB #256 is admitted in a cohort of seven, so its own load call
-  copies seven requests and takes 477 ms.
+- **Row (b): the queue.** How many requests are waiting for a slot at each moment; the
+  dashed and dotted lines mark #256's arrival and admission. At 24 GiB it joins a queue of
+  three and waits 1.3 s; at 28 GiB the queue is empty and it is admitted at once. The
+  empty stretch at 130–135 s in both panels is the arrival process, not the engine:
+  122–127 s brought 16 arrivals (3.2 /s) that filled the pool, 127–133 s brought 8
+  (1.3 /s) while 17–20 finished.
+- **Row (c): the stalls of §4.3 as they happen.** Each dot is one engine step; each pale
+  orange band is one synchronous KV load call, and the step that contains it takes
+  150–500 ms instead of ~15 ms — no running request gets a token meanwhile. The darker
+  band is the call that loads #256: at 28 GiB it is admitted in a cohort of seven, so that
+  one call copies seven requests and takes 477 ms.
 
 ### 4.5 Hypothesis 1 — the slots hold duplicate prefixes
 

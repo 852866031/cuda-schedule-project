@@ -107,8 +107,8 @@ def main():
             args.follow = max(cand, key=lambda r: r["s"] - r["a"])["index"]
 
     ncol = len(data)
-    fig, axes = plt.subplots(4, ncol, figsize=(7.2 * ncol, 10.4), sharex=True,
-                             gridspec_kw={"height_ratios": [0.55, 3.2, 1.6, 1.4], "hspace": 0.12,
+    fig, axes = plt.subplots(4, ncol, figsize=(7.2 * ncol, 11.6), sharex=True,
+                             gridspec_kw={"height_ratios": [0.55, 3.2, 1.4, 1.4], "hspace": 0.42,
                                           "wspace": 0.12}, squeeze=False)
     ymax_lane = max(max(lanes(d[1]).values()) + 1 for d in data)
     qmax = 0
@@ -186,40 +186,58 @@ def main():
                        arrowprops=dict(arrowstyle="->", color="black", lw=0.9))
         # (b) free space and queue, in requests
         m = (st[:, 0] > t0 - 1) & (st[:, 0] < t1 + 1)
-        b.step(st[m, 0], st[m, 3] / REQ_BLOCKS, where="post", color=C_FREE, lw=1.8)
-        b.fill_between(st[m, 0], 0, st[m, 2], step="post", color=C_WAIT, alpha=0.75, lw=0)
-        b.axhline(392 / REQ_BLOCKS, color=C_FREE, ls=":", lw=1)
-        b.text(1.005, 392 / REQ_BLOCKS, "admission\nneeds 392\nblocks", transform=b.get_yaxis_transform(),
-               ha="left", va="center", fontsize=9, color="#1a7a55")
-        b.set_ylim(0, max(qmax, blocks / REQ_BLOCKS) + 0.5)
+        b.fill_between(st[m, 0], 0, st[m, 2], step="post", color=C_WAIT, alpha=0.8, lw=0)
+        b.set_ylim(0, max(qmax, 1) + 0.5)
         if j == 0:
-            b.set_ylabel("requests")
+            b.set_ylabel("requests\nwaiting")
+        b.text(0.01, 0.95, "(b) how many requests are waiting for a slot", transform=b.transAxes,
+               fontsize=8.5, va="top")
         # (c) step durations
         ms = (steps[:, 0] > t0) & (steps[:, 0] < t1) & ~np.isnan(steps[:, 1])
         c.plot(steps[ms, 0], 1000 * steps[ms, 1], ".", ms=2.5, color=C_STEP)
+        own = None
+        if fr is not None:
+            own = next(((lt, ld) for lt, ld in loads if lt <= fr["s"] + 0.05 and lt + ld >= fr["s"]), None)
         for lt, ld in loads:
             if t0 < lt < t1:
-                c.axvspan(lt, lt + ld, color=C_LOAD, alpha=0.22, lw=0)
+                is_own = own is not None and lt == own[0]
+                c.axvspan(lt, lt + ld, color=C_LOAD, alpha=0.6 if is_own else 0.22, lw=0)
         c.set_yscale("log")
         c.set_ylim(5, 800)
+        c.text(0.01, 0.95, "(c) wall time of each engine step; orange = a KV load call inside the step",
+               transform=c.transAxes, fontsize=8.5, va="top")
+        if fr is not None:
+            for ax_ in (b, c):
+                ax_.axvline(fr["a"], color="black", lw=1, ls="--")
+                ax_.axvline(fr["s"], color="black", lw=1, ls=":")
+            b.text(fr["a"], b.get_ylim()[1] * 0.78, f" #{args.follow} arrives", fontsize=8, va="center")
+            b.text(fr["s"], b.get_ylim()[1] * 0.6,
+                   f" #{args.follow} admitted" if fr["s"] - fr["a"] > 0.3 else "  admitted at once",
+                   fontsize=8, va="center")
         if j == 0:
-            c.set_ylabel("decode step (ms)")
+            c.set_ylabel("engine step (ms)")
         c.set_xlabel("time since the run started (s)")
         c.set_xlim(t0, t1)
     for ax in axes.flat:
         ax.spines[["top", "right"]].set_visible(False)
         ax.grid(axis="x", color="#ececea", lw=0.6)
-    handles = [Patch(color=C_LOAD, label="loading KV from host (blocks the whole batch)"),
-               Patch(color=C_DEC, label="decoding (holds its 400 blocks)"),
-               Patch(fc=C_DEC, hatch="///", ec="white", label="decoding, was preempted once"),
-               Patch(color=C_WAIT, label="waiting for a slot"),
-               Line2D([], [], color=C_FREE, lw=1.8, label="(b) free KV space, in requests that fit"),
-               Patch(color=C_WAIT, alpha=0.75, label="(b) requests waiting"),
-               Line2D([], [], color=C_STEP, marker=".", ls="", label="(c) one decode step")]
-    fig.legend(handles=handles, loc="upper center", ncol=4, frameon=False,
-               bbox_to_anchor=(0.5, 0.995))
-    fig.suptitle("Decode engine KV slots, free KV space and step time per request "
-                 "(Llama-3-8B decode on GPU1, 6400-token requests)", y=1.025, fontsize=13)
+    def row_legend(row, handles, ncol):
+        y1 = axes[row, 0].get_position().y1
+        fig.legend(handles=handles, loc="lower center", ncol=ncol, frameon=False, fontsize=9.5,
+                   bbox_to_anchor=(0.5, y1 + 0.003), bbox_transform=fig.transFigure)
+    row_legend(1, [Patch(color=C_LOAD, label="loading its KV from host (the whole batch stops)"),
+                   Patch(color=C_DEC, label="decoding (holds its 400 blocks)"),
+                   Patch(fc=C_DEC, hatch="///", ec="white", label="decoding, was preempted once"),
+                   Patch(color=C_WAIT, label="waiting for a slot"),
+                   Line2D([], [], color="black", lw=1.6, label=f"outlined: request #{args.follow}")], 5)
+    row_legend(2, [Patch(color=C_WAIT, alpha=0.8, label="requests waiting for a slot"),
+                   Line2D([], [], color="black", lw=1, ls="--", label=f"#{args.follow} arrives"),
+                   Line2D([], [], color="black", lw=1, ls=":", label=f"#{args.follow} admitted")], 3)
+    row_legend(3, [Line2D([], [], color=C_STEP, marker=".", ls="", label="one engine step (one forward pass)"),
+                   Patch(color=C_LOAD, alpha=0.22, label="a synchronous KV load call (start_load_kv)"),
+                   Patch(color=C_LOAD, alpha=0.6, label=f"the call that loads #{args.follow}")], 3)
+    fig.suptitle("Decode engine KV slots, queue and step time per request "
+                 "(Llama-3-8B decode on GPU1, 6400-token requests)", y=0.95, fontsize=13)
     fig.savefig(args.out, dpi=150, bbox_inches="tight")
     print("->", args.out, "window", round(t0, 1), "follow", args.follow)
 
