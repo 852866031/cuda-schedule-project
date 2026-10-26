@@ -330,3 +330,22 @@ call duration rises (more requests per call, ~5 × 0.17 s ≈ 0.6–0.9 s). Thro
 at the saturation value (≈ 350 tok/s) and the decode queue wait does not rise beyond the
 hold. If stalls per residence fall but tpot2 does not, the explanation is wrong.
 
+**Outcome (`kv_cohort5_b28_q4_tr` vs `kv_base_b28_q4_tr`): the prediction failed, and
+the explanation was wrong in its mechanism.** The router did batch (144 releases, 22 of
+them full groups of 5, p50 hold 169 ms) and the engine did admit in bigger groups (3.4
+requests per load call, as at 24 GiB, vs 2.4). Stalls per residence halved (4.0 → 2.1)
+but each stall was longer (308 → 508 ms), because a call that loads five requests takes
+five times as long — the copy path has no batching advantage (187–194 ms per request in
+every cell). Stall time per residence barely moved (1.23 → 1.08 s), decode time 4.04 →
+3.94 s, tpot2 30.9 → 32.7 ms (within noise), throughput 351 → 358 tok/s.
+
+Corrected statement: *stall time per residence = (requests loaded while this request is
+resident) × ~190 ms*, independent of how the admissions are grouped. 24 GiB is faster per
+token at saturation not because its loads are grouped but because its loads happen
+*between* cohorts: the pool holds almost exactly ten, eviction re-synchronises the
+turnover, so a whole batch finishes and the next whole batch is loaded while almost
+nobody is decoding (0.36 s of stall per residence vs 1.23 s). With 15 slots and spread-out
+completions, five requests admitted together still land in the middle of ten others'
+decode. §4.3 of the report corrected accordingly. A control rerun (`kv_base_b28_q4_tr_r2`)
+was run alongside for run-to-run variance.
+
