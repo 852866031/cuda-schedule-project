@@ -678,3 +678,37 @@ connector (`lmcache/integration/vllm/lmcache_mp_connector_0180.py`) that sends t
 and imports cleanly under vLLM 0.15.1. vLLM resolves registered names first, so it is
 loaded under another name (`site/lmc_mp_conn.py` → `LMCacheMP044Connector`,
 `kv_connector_module_path`). Torn down by hand; rerun as `_r4`.
+
+**Smoke B paused (user, 2026-10-26).** `_r4` (LMCache's own connector via the shim) passed
+warm-up without errors and was stopped by request before measuring: the MP connector is to
+run on vLLM 0.18 instead, whose built-in `LMCacheMPConnector` already keys by token ids
+(verified in the 0.18.1 source; it differs from LMCache's `_0180` copy by 28 lines). Source
+review of 0.15.1 vs 0.18.1 (scheduler, KV manager, memory profiling, attention selection,
+CUDA graphs, connector hooks): same grant formula at defaults, same FLASH_ATTN (FA2) on
+sm_120, same graph mode, same FCFS admission / preemption / load placement; differences are
+torch 2.10, a new `skipped_waiting` queue served first under FCFS (matters only for
+asynchronous lookups), and `kv_load_failure_policy` default "fail". The user asked for no
+version-comparison run; the MP results will state the version.
+
+## D10 (2026-10-26) — `enable_async_loading` grid (E5), vLLM 0.15.1, compiled kernels
+
+Method `cops_async`, same 27 cells as the D6 grid (24 / 26 / 28 GiB × 1–5 req/s, step
+0.5), one launch per cell, trace on. The trace now marks when each request's lookup is
+first asked (`lk0`) and first answered (`lk1`); the store → L1 prefetch runs in between.
+vLLM's queue time contains that prefetch, so the study's capacity criterion is applied to
+**slot wait = queue wait − prefetch** (mean < 50 ms); vLLM's queue time is reported too.
+
+**Predictions (from the 24 GiB / 2.5 smoke: copy 121 → 73 ms, residence −13%).**
+- Grant and slots unchanged (c_eff 10 / 12 / 15).
+- Every request pays a prefetch of ~100–150 ms (p50) at every rate, so vLLM's mean queue
+  time is ≥ ~100 ms in every cell, and TTFT (end-user gap 1) rises by about that much at
+  low load; TPOT at 1 req/s 14.5–15.5 ms (prefetch adds ~0.9 ms per token through gap 1,
+  shorter stalls remove a little).
+- Residence −10 to −15% at equal load → saturation throughput 3.3 / 3.7 / 4.0 req/s
+  (cops 2.97 / 3.35 / 3.58).
+- Capacity on slot wait: 24 GiB 2.5–3, 26 GiB 3–3.5, 28 GiB 3–3.5 req/s (one grid step
+  above cops at each budget).
+- Load-stall share of decode wall time at 24 GiB / 2 req/s ≈ 13% (cops 20%).
+- No crash in any cell (the 3-s lookup-timeout branch needs a lookup that slow; at
+  saturation the store fetch could queue — if a cell crashes, it is rerun as
+  `cops_async_t30`).
