@@ -724,6 +724,10 @@ def fig_lever_grid(method, label, color, name, unstable=None):
     print(f"-> figures/slides/{name}.png")
 
 
+def fig_mp_grid():
+    fig_lever_grid("mp18", "MP connector (vLLM 0.18.1)", C_LOAD, "s_mp_grid")
+
+
 def fig_async_grid():
     fig_lever_grid("cops_async", "enable_async_loading", C_DEC, "s_async_grid", unstable={24: 4})
 
@@ -789,7 +793,7 @@ MARKED = {
 FIGS = {"system": fig_system, "testbed": fig_testbed, "workload": fig_workload, "path": fig_path,
         "method": fig_method, "kernels": fig_kernels,
         "loadpath": fig_loadpath, "async_smoke": fig_async_smoke, "mp": fig_mp, "case1": fig_case1_s, "case2": fig_case2_s, "layerwise": fig_layerwise_s, "heat": fig_heat_s,
-        "mgc": fig_mgc_s, "waitfree": fig_waitfree_s, "split": fig_split_s, "async_grid": fig_async_grid}
+        "mgc": fig_mgc_s, "waitfree": fig_waitfree_s, "split": fig_split_s, "async_grid": fig_async_grid, "mp_grid": fig_mp_grid}
 
 if __name__ == "__main__":
     want = sys.argv[1:] or list(FIGS) + list(MARKED)

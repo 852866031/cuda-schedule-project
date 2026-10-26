@@ -1,2 +1,372 @@
 
-=== kv_mp18_b24_q2.5_tr  (method mp18, decode 24 GiB, 2.5 QPS, trace on) ===
+=== kv_mp18_b24_q2.5_tr_r3  (method mp18, decode 24 GiB, 2.5 QPS, trace on) ===
+  RAM gate [big]: 57434 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 77s: decode KV 7.86 GiB = 64400 tokens = 10 slots; prefill KV 6.47 GiB
+  warm-up 75s, drained; avail RAM 17680 MB, RSS {'decode': 3638, 'prefill': 4080, 'proxy': 39, 'store': 33840}, GPU used [29612, 25861] MiB
+    [measure] 04:25:21 tokens=1250713 decode run=2 wait=0 kv=20% avail RAM 17359 MB
+    [measure] 04:25:51 tokens=2188135 decode run=6 wait=0 kv=59% avail RAM 17405 MB
+    [measure] 04:26:21 tokens=3183047 decode run=6 wait=0 kv=59% avail RAM 17315 MB
+    [measure] 04:26:51 tokens=4203511 decode run=2 wait=0 kv=20% avail RAM 17319 MB
+  TTFT p50=33.5 p95=46.64 ms | TPOT p50=15.06 (decode-only 14.3) ms | ITL p50/mean=13.95/14.87 ms | 317.47 tok/s | failed=0
+  decode: queue 45 ms, KV load 42 ms, decode 1793 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8478 dram=0.7579 fb=25.25 | swap {'pswpin': 299, 'pswpout': 0} | host cpu 0.04 | avail 17319 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+done
+mp18 smoke ok=True 04:27
+
+=== kv_mp18_b24_q1_tr_g  (method mp18, decode 24 GiB, 1 QPS, trace on) ===
+  RAM gate [big]: 57459 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 37s: decode KV 8.33 GiB = 68256 tokens = 10 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18318 MB, RSS {'decode': 3327, 'prefill': 3571, 'proxy': 37, 'store': 33839}, GPU used [26560, 26369] MiB
+    [measure] 04:29:38 tokens=756343 decode run=2 wait=0 kv=18% avail RAM 18256 MB
+    [measure] 04:30:08 tokens=1022567 decode run=2 wait=0 kv=19% avail RAM 18272 MB
+    [measure] 04:30:38 tokens=1428079 decode run=2 wait=0 kv=19% avail RAM 18273 MB
+    [measure] 04:31:08 tokens=1871360 decode run=6 wait=0 kv=56% avail RAM 18266 MB
+    [measure] 04:31:39 tokens=2188500 decode run=1 wait=0 kv=9% avail RAM 18289 MB
+    [measure] 04:32:09 tokens=2562270 decode run=2 wait=0 kv=19% avail RAM 18316 MB
+    [measure] 04:32:39 tokens=2936207 decode run=1 wait=0 kv=9% avail RAM 18318 MB
+    [measure] 04:33:09 tokens=3430429 decode run=2 wait=0 kv=19% avail RAM 18318 MB
+    [measure] 04:33:39 tokens=3810733 decode run=0 wait=0 kv=0% avail RAM 18327 MB
+  TTFT p50=33.94 p95=48.07 ms | TPOT p50=12.45 (decode-only 11.84) ms | ITL p50/mean=11.67/12.48 ms | 128.0 tok/s | failed=0
+  decode: queue 33 ms, KV load 33 ms, decode 1511 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.6757 dram=0.6209 fb=25.75 | swap {'pswpin': 880, 'pswpout': 0} | host cpu 0.03 | avail 18288 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b24_q1.5_tr_g  (method mp18, decode 24 GiB, 1.5 QPS, trace on) ===
+  RAM gate [big]: 57586 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 8.33 GiB = 68256 tokens = 10 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18379 MB, RSS {'decode': 3282, 'prefill': 3527, 'proxy': 38, 'store': 33840}, GPU used [26560, 26369] MiB
+    [measure] 04:36:43 tokens=844969 decode run=4 wait=0 kv=37% avail RAM 18396 MB
+    [measure] 04:37:13 tokens=1428029 decode run=2 wait=0 kv=19% avail RAM 18469 MB
+    [measure] 04:37:43 tokens=2036432 decode run=1 wait=0 kv=9% avail RAM 18469 MB
+    [measure] 04:38:13 tokens=2555875 decode run=4 wait=0 kv=37% avail RAM 18480 MB
+    [measure] 04:38:43 tokens=3183305 decode run=4 wait=1 kv=46% avail RAM 18471 MB
+    [measure] 04:39:13 tokens=3810664 decode run=2 wait=0 kv=19% avail RAM 18493 MB
+  TTFT p50=33.86 p95=47.03 ms | TPOT p50=13.03 (decode-only 12.39) ms | ITL p50/mean=12.02/13.18 ms | 191.51 tok/s | failed=0
+  decode: queue 37 ms, KV load 36 ms, decode 1593 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.7883 dram=0.7189 fb=25.75 | swap {'pswpin': 292, 'pswpout': 0} | host cpu 0.03 | avail 18486 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b24_q2_tr_g  (method mp18, decode 24 GiB, 2 QPS, trace on) ===
+  RAM gate [big]: 57804 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 8.33 GiB = 68256 tokens = 10 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18399 MB, RSS {'decode': 3289, 'prefill': 3534, 'proxy': 38, 'store': 33840}, GPU used [26560, 26369] MiB
+    [measure] 04:42:08 tokens=1022442 decode run=3 wait=0 kv=28% avail RAM 18399 MB
+    [measure] 04:42:38 tokens=1864813 decode run=7 wait=0 kv=65% avail RAM 18400 MB
+    [measure] 04:43:08 tokens=2555762 decode run=5 wait=0 kv=46% avail RAM 18415 MB
+    [measure] 04:43:38 tokens=3430172 decode run=7 wait=0 kv=65% avail RAM 18532 MB
+    [measure] 04:44:08 tokens=4203538 decode run=1 wait=0 kv=9% avail RAM 18539 MB
+  TTFT p50=33.93 p95=46.22 ms | TPOT p50=14.08 (decode-only 13.39) ms | ITL p50/mean=12.44/14.01 ms | 254.65 tok/s | failed=0
+  decode: queue 40 ms, KV load 39 ms, decode 1692 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.824 dram=0.7442 fb=25.75 | swap {'pswpin': 469, 'pswpout': 0} | host cpu 0.04 | avail 18539 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b24_q2.5_tr_g  (method mp18, decode 24 GiB, 2.5 QPS, trace on) ===
+  RAM gate [big]: 57846 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 8.33 GiB = 68256 tokens = 10 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18464 MB, RSS {'decode': 3278, 'prefill': 3524, 'proxy': 38, 'store': 33840}, GPU used [26560, 26369] MiB
+    [measure] 04:46:43 tokens=1250714 decode run=2 wait=0 kv=19% avail RAM 18293 MB
+    [measure] 04:47:13 tokens=2188138 decode run=6 wait=0 kv=56% avail RAM 18507 MB
+    [measure] 04:47:43 tokens=3183047 decode run=6 wait=0 kv=56% avail RAM 18529 MB
+    [measure] 04:48:13 tokens=4203511 decode run=2 wait=0 kv=19% avail RAM 18525 MB
+  TTFT p50=33.6 p95=47.27 ms | TPOT p50=15.05 (decode-only 14.3) ms | ITL p50/mean=13.96/14.87 ms | 317.47 tok/s | failed=0
+  decode: queue 45 ms, KV load 42 ms, decode 1792 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.843 dram=0.7543 fb=25.75 | swap {'pswpin': 681, 'pswpout': 0} | host cpu 0.04 | avail 18525 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b24_q3_tr_g  (method mp18, decode 24 GiB, 3 QPS, trace on) ===
+  RAM gate [big]: 57853 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 8.33 GiB = 68256 tokens = 10 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18456 MB, RSS {'decode': 3280, 'prefill': 3524, 'proxy': 38, 'store': 33840}, GPU used [26560, 26369] MiB
+    [measure] 04:50:47 tokens=1427805 decode run=7 wait=0 kv=65% avail RAM 18439 MB
+    [measure] 04:51:17 tokens=2549296 decode run=7 wait=0 kv=65% avail RAM 18482 MB
+    [measure] 04:51:47 tokens=3810520 decode run=3 wait=0 kv=28% avail RAM 18502 MB
+  TTFT p50=33.78 p95=49.44 ms | TPOT p50=15.89 (decode-only 15.05) ms | ITL p50/mean=14.22/15.9 ms | 379.86 tok/s | failed=0
+  decode: queue 65 ms, KV load 44 ms, decode 1900 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8538 dram=0.7557 fb=25.75 | swap {'pswpin': 33, 'pswpout': 0} | host cpu 0.04 | avail 18496 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b24_q3.5_tr_g  (method mp18, decode 24 GiB, 3.5 QPS, trace on) ===
+  RAM gate [big]: 57815 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 8.33 GiB = 68256 tokens = 10 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18456 MB, RSS {'decode': 3271, 'prefill': 3517, 'proxy': 37, 'store': 33840}, GPU used [26560, 26369] MiB
+    [measure] 04:54:30 tokens=1661966 decode run=8 wait=1 kv=93% avail RAM 18436 MB
+    [measure] 04:55:00 tokens=2929709 decode run=5 wait=0 kv=46% avail RAM 18439 MB
+  TTFT p50=33.9 p95=51.74 ms | TPOT p50=17.1 (decode-only 16.01) ms | ITL p50/mean=14.81/17.49 ms | 441.78 tok/s | failed=0
+  decode: queue 154 ms, KV load 46 ms, decode 2011 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8617 dram=0.753 fb=25.75 | swap {'pswpin': 440, 'pswpout': 0} | host cpu 0.04 | avail 18527 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b24_q4_tr_g  (method mp18, decode 24 GiB, 4 QPS, trace on) ===
+  RAM gate [big]: 57842 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 8.33 GiB = 68256 tokens = 10 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18455 MB, RSS {'decode': 3285, 'prefill': 3530, 'proxy': 38, 'store': 33840}, GPU used [26560, 26369] MiB
+    [measure] 04:57:59 tokens=1845592 decode run=10 wait=2 kv=93% avail RAM 18435 MB
+    [measure] 04:58:29 tokens=3385213 decode run=9 wait=7 kv=84% avail RAM 18437 MB
+  TTFT p50=33.75 p95=53.58 ms | TPOT p50=19.52 (decode-only 17.09) ms | ITL p50/mean=16.02/21.42 ms | 495.67 tok/s | failed=0
+  decode: queue 549 ms, KV load 48 ms, decode 2112 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8654 dram=0.7492 fb=25.75 | swap {'pswpin': 48, 'pswpout': 0} | host cpu 0.04 | avail 18449 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b24_q4.5_tr_g  (method mp18, decode 24 GiB, 4.5 QPS, trace on) ===
+  RAM gate [big]: 57774 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 8.33 GiB = 68256 tokens = 10 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18433 MB, RSS {'decode': 3277, 'prefill': 3522, 'proxy': 38, 'store': 33840}, GPU used [26560, 26369] MiB
+    [measure] 05:01:19 tokens=1971911 decode run=10 wait=10 kv=93% avail RAM 18416 MB
+    [measure] 05:01:49 tokens=3669315 decode run=9 wait=22 kv=93% avail RAM 18440 MB
+  TTFT p50=33.93 p95=54.29 ms | TPOT p50=34.0 (decode-only 17.45) ms | ITL p50/mean=16.08/37.28 ms | 517.09 tok/s | failed=0
+  decode: queue 2495 ms, KV load 50 ms, decode 2178 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8635 dram=0.7431 fb=25.75 | swap {'pswpin': 153, 'pswpout': 0} | host cpu 0.04 | avail 18454 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b24_q5_tr_g  (method mp18, decode 24 GiB, 5 QPS, trace on) ===
+  RAM gate [big]: 57802 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 8.33 GiB = 68256 tokens = 10 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18413 MB, RSS {'decode': 3283, 'prefill': 3527, 'proxy': 37, 'store': 33840}, GPU used [26560, 26369] MiB
+    [measure] 05:04:36 tokens=2085480 decode run=10 wait=16 kv=93% avail RAM 18390 MB
+    [measure] 05:05:06 tokens=3902205 decode run=10 wait=47 kv=93% avail RAM 18387 MB
+  TTFT p50=33.78 p95=56.77 ms | TPOT p50=49.77 (decode-only 17.31) ms | ITL p50/mean=16.08/55.02 ms | 527.56 tok/s | failed=0
+  decode: queue 4754 ms, KV load 49 ms, decode 2172 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.867 dram=0.7447 fb=25.75 | swap {'pswpin': 43, 'pswpout': 0} | host cpu 0.04 | avail 18385 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+done
+mp18 budget 24 exit 0 05:05
+
+=== kv_mp18_b26_q1_tr_g  (method mp18, decode 26 GiB, 1 QPS, trace on) ===
+  RAM gate [big]: 57619 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 10.33 GiB = 84640 tokens = 13 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18340 MB, RSS {'decode': 3286, 'prefill': 3531, 'proxy': 37, 'store': 33840}, GPU used [26566, 28417] MiB
+    [measure] 05:07:59 tokens=756344 decode run=2 wait=0 kv=15% avail RAM 18369 MB
+    [measure] 05:08:29 tokens=1022566 decode run=2 wait=0 kv=15% avail RAM 18372 MB
+    [measure] 05:08:59 tokens=1428076 decode run=2 wait=0 kv=15% avail RAM 18366 MB
+    [measure] 05:09:29 tokens=1871363 decode run=6 wait=0 kv=45% avail RAM 18368 MB
+    [measure] 05:10:00 tokens=2188491 decode run=2 wait=0 kv=15% avail RAM 18370 MB
+    [measure] 05:10:30 tokens=2555975 decode run=2 wait=0 kv=15% avail RAM 18447 MB
+    [measure] 05:11:00 tokens=2936195 decode run=1 wait=0 kv=7% avail RAM 18445 MB
+    [measure] 05:11:30 tokens=3430403 decode run=2 wait=0 kv=15% avail RAM 18449 MB
+    [measure] 05:12:00 tokens=3810733 decode run=0 wait=0 kv=0% avail RAM 18453 MB
+  TTFT p50=34.4 p95=47.94 ms | TPOT p50=12.47 (decode-only 11.85) ms | ITL p50/mean=11.67/12.49 ms | 128.0 tok/s | failed=0
+  decode: queue 34 ms, KV load 33 ms, decode 1513 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.6756 dram=0.6203 fb=27.75 | swap {'pswpin': 819, 'pswpout': 0} | host cpu 0.03 | avail 18447 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b26_q1.5_tr_g  (method mp18, decode 26 GiB, 1.5 QPS, trace on) ===
+  RAM gate [big]: 57739 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 10.33 GiB = 84640 tokens = 13 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18463 MB, RSS {'decode': 3283, 'prefill': 3528, 'proxy': 37, 'store': 33840}, GPU used [26566, 28417] MiB
+    [measure] 05:15:04 tokens=844969 decode run=4 wait=0 kv=30% avail RAM 18453 MB
+    [measure] 05:15:34 tokens=1428029 decode run=2 wait=0 kv=15% avail RAM 18439 MB
+    [measure] 05:16:04 tokens=2036432 decode run=1 wait=0 kv=7% avail RAM 18444 MB
+    [measure] 05:16:34 tokens=2555872 decode run=4 wait=0 kv=30% avail RAM 18446 MB
+    [measure] 05:17:04 tokens=3183301 decode run=4 wait=1 kv=37% avail RAM 18450 MB
+    [measure] 05:17:34 tokens=3810663 decode run=2 wait=0 kv=15% avail RAM 18458 MB
+  TTFT p50=33.85 p95=46.6 ms | TPOT p50=13.04 (decode-only 12.4) ms | ITL p50/mean=12.03/13.19 ms | 191.5 tok/s | failed=0
+  decode: queue 37 ms, KV load 36 ms, decode 1594 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.7887 dram=0.7183 fb=27.75 | swap {'pswpin': 117, 'pswpout': 0} | host cpu 0.03 | avail 18453 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b26_q2_tr_g  (method mp18, decode 26 GiB, 2 QPS, trace on) ===
+  RAM gate [big]: 57761 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 10.33 GiB = 84640 tokens = 13 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18457 MB, RSS {'decode': 3276, 'prefill': 3522, 'proxy': 37, 'store': 33840}, GPU used [26560, 28417] MiB
+    [measure] 05:20:27 tokens=1022448 decode run=3 wait=0 kv=22% avail RAM 18492 MB
+    [measure] 05:20:57 tokens=1871093 decode run=7 wait=0 kv=52% avail RAM 18486 MB
+    [measure] 05:21:27 tokens=2555784 decode run=5 wait=0 kv=37% avail RAM 18483 MB
+    [measure] 05:21:57 tokens=3430193 decode run=7 wait=0 kv=53% avail RAM 18480 MB
+    [measure] 05:22:27 tokens=4203543 decode run=1 wait=0 kv=8% avail RAM 18485 MB
+  TTFT p50=33.8 p95=46.51 ms | TPOT p50=14.09 (decode-only 13.39) ms | ITL p50/mean=12.46/14.02 ms | 254.66 tok/s | failed=0
+  decode: queue 40 ms, KV load 39 ms, decode 1692 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8249 dram=0.7441 fb=27.75 | swap {'pswpin': 31, 'pswpout': 0} | host cpu 0.04 | avail 18486 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b26_q2.5_tr_g  (method mp18, decode 26 GiB, 2.5 QPS, trace on) ===
+  RAM gate [big]: 57799 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 10.33 GiB = 84640 tokens = 13 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18487 MB, RSS {'decode': 3278, 'prefill': 3521, 'proxy': 37, 'store': 33839}, GPU used [26560, 28417] MiB
+    [measure] 05:25:00 tokens=1250714 decode run=2 wait=0 kv=15% avail RAM 18481 MB
+    [measure] 05:25:30 tokens=2188141 decode run=6 wait=0 kv=45% avail RAM 18473 MB
+    [measure] 05:26:00 tokens=3183052 decode run=6 wait=0 kv=45% avail RAM 18489 MB
+    [measure] 05:26:30 tokens=4203512 decode run=2 wait=0 kv=15% avail RAM 18482 MB
+  TTFT p50=33.95 p95=47.22 ms | TPOT p50=15.04 (decode-only 14.32) ms | ITL p50/mean=13.95/14.86 ms | 317.45 tok/s | failed=0
+  decode: queue 42 ms, KV load 42 ms, decode 1794 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8436 dram=0.7538 fb=27.75 | swap {'pswpin': 233, 'pswpout': 0} | host cpu 0.04 | avail 18483 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b26_q3_tr_g  (method mp18, decode 26 GiB, 3 QPS, trace on) ===
+  RAM gate [big]: 57808 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 10.33 GiB = 84640 tokens = 13 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18489 MB, RSS {'decode': 3277, 'prefill': 3522, 'proxy': 38, 'store': 33840}, GPU used [26560, 28417] MiB
+    [measure] 05:29:04 tokens=1427805 decode run=7 wait=0 kv=53% avail RAM 18474 MB
+    [measure] 05:29:34 tokens=2549296 decode run=7 wait=0 kv=52% avail RAM 18473 MB
+    [measure] 05:30:04 tokens=3810520 decode run=3 wait=0 kv=22% avail RAM 18468 MB
+  TTFT p50=33.82 p95=49.15 ms | TPOT p50=15.81 (decode-only 15.07) ms | ITL p50/mean=14.22/15.79 ms | 379.87 tok/s | failed=0
+  decode: queue 45 ms, KV load 44 ms, decode 1906 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8549 dram=0.7556 fb=27.75 | swap {'pswpin': 92, 'pswpout': 0} | host cpu 0.04 | avail 18469 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b26_q3.5_tr_g  (method mp18, decode 26 GiB, 3.5 QPS, trace on) ===
+  RAM gate [big]: 57794 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 10.33 GiB = 84640 tokens = 13 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18485 MB, RSS {'decode': 3289, 'prefill': 3534, 'proxy': 37, 'store': 33840}, GPU used [26560, 28417] MiB
+    [measure] 05:32:47 tokens=1668435 decode run=11 wait=0 kv=83% avail RAM 18488 MB
+    [measure] 05:33:17 tokens=2929709 decode run=5 wait=0 kv=37% avail RAM 18492 MB
+  TTFT p50=33.73 p95=50.43 ms | TPOT p50=16.95 (decode-only 16.03) ms | ITL p50/mean=14.8/16.88 ms | 441.87 tok/s | failed=0
+  decode: queue 57 ms, KV load 46 ms, decode 2029 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8634 dram=0.7553 fb=27.75 | swap {'pswpin': 37, 'pswpout': 0} | host cpu 0.04 | avail 18487 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b26_q4_tr_g  (method mp18, decode 26 GiB, 4 QPS, trace on) ===
+  RAM gate [big]: 57807 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 10.33 GiB = 84640 tokens = 13 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18408 MB, RSS {'decode': 3279, 'prefill': 3524, 'proxy': 38, 'store': 33840}, GPU used [26560, 28417] MiB
+    [measure] 05:36:16 tokens=1858220 decode run=12 wait=0 kv=90% avail RAM 18399 MB
+    [measure] 05:36:47 tokens=3423253 decode run=12 wait=1 kv=90% avail RAM 18449 MB
+  TTFT p50=33.88 p95=54.49 ms | TPOT p50=18.25 (decode-only 17.14) ms | ITL p50/mean=16.03/18.2 ms | 503.14 tok/s | failed=0
+  decode: queue 100 ms, KV load 49 ms, decode 2150 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8701 dram=0.754 fb=27.75 | swap {'pswpin': 9, 'pswpout': 0} | host cpu 0.04 | avail 18448 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b26_q4.5_tr_g  (method mp18, decode 26 GiB, 4.5 QPS, trace on) ===
+  RAM gate [big]: 57761 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 10.33 GiB = 84640 tokens = 13 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18474 MB, RSS {'decode': 3287, 'prefill': 3533, 'proxy': 38, 'store': 33840}, GPU used [26560, 28417] MiB
+    [measure] 05:39:35 tokens=2035790 decode run=11 wait=0 kv=82% avail RAM 18459 MB
+    [measure] 05:40:05 tokens=3797281 decode run=12 wait=2 kv=97% avail RAM 18459 MB
+  TTFT p50=34.04 p95=56.8 ms | TPOT p50=19.69 (decode-only 18.33) ms | ITL p50/mean=16.63/20.63 ms | 562.79 tok/s | failed=0
+  decode: queue 279 ms, KV load 52 ms, decode 2277 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8779 dram=0.7513 fb=27.75 | swap {'pswpin': 60, 'pswpout': 0} | host cpu 0.04 | avail 18460 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b26_q5_tr_g  (method mp18, decode 26 GiB, 5 QPS, trace on) ===
+  RAM gate [big]: 57797 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 10.33 GiB = 84640 tokens = 13 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18475 MB, RSS {'decode': 3279, 'prefill': 3525, 'proxy': 38, 'store': 33840}, GPU used [26560, 28417] MiB
+    [measure] 05:42:48 tokens=2181279 decode run=13 wait=1 kv=97% avail RAM 18451 MB
+    [measure] 05:43:18 tokens=4138843 decode run=13 wait=10 kv=98% avail RAM 18448 MB
+  TTFT p50=33.99 p95=59.03 ms | TPOT p50=24.01 (decode-only 18.99) ms | ITL p50/mean=17.07/25.77 ms | 603.45 tok/s | failed=0
+  decode: queue 851 ms, KV load 52 ms, decode 2358 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8825 dram=0.749 fb=27.75 | swap {'pswpin': 9, 'pswpout': 0} | host cpu 0.04 | avail 18446 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+done
+mp18 budget 26 exit 0 05:43
+
+=== kv_mp18_b28_q1_tr_g  (method mp18, decode 28 GiB, 1 QPS, trace on) ===
+  RAM gate [big]: 57736 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 12.33 GiB = 101008 tokens = 15 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18405 MB, RSS {'decode': 3273, 'prefill': 3518, 'proxy': 37, 'store': 33840}, GPU used [26560, 30465] MiB
+    [measure] 05:46:02 tokens=756346 decode run=2 wait=0 kv=12% avail RAM 18427 MB
+    [measure] 05:46:32 tokens=1022566 decode run=2 wait=0 kv=13% avail RAM 18425 MB
+    [measure] 05:47:02 tokens=1428085 decode run=2 wait=0 kv=13% avail RAM 18425 MB
+    [measure] 05:47:32 tokens=1871409 decode run=6 wait=0 kv=38% avail RAM 18427 MB
+    [measure] 05:48:03 tokens=2188510 decode run=1 wait=0 kv=6% avail RAM 18432 MB
+    [measure] 05:48:33 tokens=2568577 decode run=3 wait=0 kv=19% avail RAM 18463 MB
+    [measure] 05:49:03 tokens=2936229 decode run=1 wait=0 kv=6% avail RAM 18466 MB
+    [measure] 05:49:33 tokens=3430477 decode run=2 wait=0 kv=13% avail RAM 18469 MB
+    [measure] 05:50:03 tokens=3810733 decode run=0 wait=0 kv=0% avail RAM 18464 MB
+  TTFT p50=34.31 p95=47.88 ms | TPOT p50=12.47 (decode-only 11.84) ms | ITL p50/mean=11.67/12.51 ms | 128.0 tok/s | failed=0
+  decode: queue 33 ms, KV load 33 ms, decode 1512 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.6755 dram=0.6202 fb=29.75 | swap {'pswpin': 68, 'pswpout': 0} | host cpu 0.03 | avail 18465 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b28_q1.5_tr_g  (method mp18, decode 28 GiB, 1.5 QPS, trace on) ===
+  RAM gate [big]: 57699 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 12.33 GiB = 101008 tokens = 15 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18409 MB, RSS {'decode': 3279, 'prefill': 3525, 'proxy': 38, 'store': 33840}, GPU used [26560, 30465] MiB
+    [measure] 05:53:05 tokens=844969 decode run=4 wait=0 kv=25% avail RAM 18406 MB
+    [measure] 05:53:35 tokens=1428027 decode run=2 wait=0 kv=13% avail RAM 18407 MB
+    [measure] 05:54:05 tokens=2036432 decode run=1 wait=0 kv=6% avail RAM 18411 MB
+    [measure] 05:54:35 tokens=2555874 decode run=4 wait=0 kv=25% avail RAM 18412 MB
+    [measure] 05:55:05 tokens=3183307 decode run=4 wait=1 kv=31% avail RAM 18417 MB
+    [measure] 05:55:35 tokens=3810665 decode run=2 wait=0 kv=13% avail RAM 18418 MB
+  TTFT p50=33.95 p95=46.34 ms | TPOT p50=13.02 (decode-only 12.4) ms | ITL p50/mean=12.01/13.19 ms | 191.49 tok/s | failed=0
+  decode: queue 38 ms, KV load 36 ms, decode 1593 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.788 dram=0.7188 fb=29.75 | swap {'pswpin': 199, 'pswpout': 0} | host cpu 0.03 | avail 18409 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b28_q2_tr_g  (method mp18, decode 28 GiB, 2 QPS, trace on) ===
+  RAM gate [big]: 57739 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 12.33 GiB = 101008 tokens = 15 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18395 MB, RSS {'decode': 3285, 'prefill': 3528, 'proxy': 38, 'store': 33840}, GPU used [26560, 30465] MiB
+    [measure] 05:58:28 tokens=1022442 decode run=3 wait=0 kv=19% avail RAM 18390 MB
+    [measure] 05:58:58 tokens=1864813 decode run=7 wait=0 kv=44% avail RAM 18387 MB
+    [measure] 05:59:28 tokens=2555765 decode run=5 wait=0 kv=31% avail RAM 18389 MB
+    [measure] 05:59:58 tokens=3430172 decode run=7 wait=0 kv=44% avail RAM 18391 MB
+    [measure] 06:00:28 tokens=4203538 decode run=1 wait=0 kv=6% avail RAM 18408 MB
+  TTFT p50=33.8 p95=46.14 ms | TPOT p50=14.06 (decode-only 13.38) ms | ITL p50/mean=12.43/14.0 ms | 254.65 tok/s | failed=0
+  decode: queue 40 ms, KV load 39 ms, decode 1690 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8243 dram=0.7448 fb=29.75 | swap {'pswpin': 777, 'pswpout': 0} | host cpu 0.04 | avail 18408 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b28_q2.5_tr_g  (method mp18, decode 28 GiB, 2.5 QPS, trace on) ===
+  RAM gate [big]: 57723 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 12.33 GiB = 101008 tokens = 15 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18418 MB, RSS {'decode': 3286, 'prefill': 3530, 'proxy': 37, 'store': 33840}, GPU used [26566, 30465] MiB
+    [measure] 06:03:03 tokens=1250713 decode run=2 wait=0 kv=13% avail RAM 18426 MB
+    [measure] 06:03:33 tokens=2188140 decode run=6 wait=0 kv=38% avail RAM 18423 MB
+    [measure] 06:04:03 tokens=3183050 decode run=6 wait=0 kv=38% avail RAM 18421 MB
+    [measure] 06:04:33 tokens=4203511 decode run=2 wait=0 kv=13% avail RAM 18326 MB
+  TTFT p50=33.78 p95=46.72 ms | TPOT p50=15.05 (decode-only 14.32) ms | ITL p50/mean=13.96/14.85 ms | 317.47 tok/s | failed=0
+  decode: queue 42 ms, KV load 42 ms, decode 1793 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8432 dram=0.7545 fb=29.75 | swap {'pswpin': 37, 'pswpout': 150} | host cpu 0.04 | avail 18327 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b28_q3_tr_g  (method mp18, decode 28 GiB, 3 QPS, trace on) ===
+  RAM gate [big]: 57728 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 12.33 GiB = 101008 tokens = 15 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18424 MB, RSS {'decode': 3283, 'prefill': 3528, 'proxy': 38, 'store': 33840}, GPU used [26566, 30465] MiB
+    [measure] 06:07:06 tokens=1427805 decode run=7 wait=0 kv=44% avail RAM 18452 MB
+    [measure] 06:07:36 tokens=2549295 decode run=7 wait=0 kv=44% avail RAM 18449 MB
+    [measure] 06:08:07 tokens=3810518 decode run=3 wait=0 kv=19% avail RAM 18455 MB
+  TTFT p50=33.87 p95=48.92 ms | TPOT p50=15.82 (decode-only 15.08) ms | ITL p50/mean=14.22/15.79 ms | 379.86 tok/s | failed=0
+  decode: queue 45 ms, KV load 44 ms, decode 1906 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8537 dram=0.7565 fb=29.75 | swap {'pswpin': 21, 'pswpout': 0} | host cpu 0.04 | avail 18449 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b28_q3.5_tr_g  (method mp18, decode 28 GiB, 3.5 QPS, trace on) ===
+  RAM gate [big]: 57760 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 31s: decode KV 12.33 GiB = 101008 tokens = 15 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18471 MB, RSS {'decode': 3276, 'prefill': 3520, 'proxy': 37, 'store': 33840}, GPU used [26560, 30465] MiB
+    [measure] 06:10:50 tokens=1668436 decode run=11 wait=0 kv=69% avail RAM 18450 MB
+    [measure] 06:11:20 tokens=2929705 decode run=4 wait=1 kv=31% avail RAM 18453 MB
+  TTFT p50=33.85 p95=51.45 ms | TPOT p50=16.93 (decode-only 16.06) ms | ITL p50/mean=14.81/16.86 ms | 441.86 tok/s | failed=0
+  decode: queue 50 ms, KV load 47 ms, decode 2035 ms (means over 300); preemptions 0
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8625 dram=0.7555 fb=29.75 | swap {'pswpin': 50, 'pswpout': 0} | host cpu 0.04 | avail 18452 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b28_q4_tr_g  (method mp18, decode 28 GiB, 4 QPS, trace on) ===
+  RAM gate [big]: 57777 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 12.33 GiB = 101008 tokens = 15 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18467 MB, RSS {'decode': 3283, 'prefill': 3527, 'proxy': 37, 'store': 33840}, GPU used [26560, 30465] MiB
+    [measure] 06:14:21 tokens=1858226 decode run=12 wait=0 kv=75% avail RAM 18445 MB
+    [measure] 06:14:51 tokens=3423250 decode run=13 wait=0 kv=81% avail RAM 18459 MB
+  TTFT p50=34.01 p95=54.16 ms | TPOT p50=18.18 (decode-only 17.26) ms | ITL p50/mean=16.07/18.38 ms | 503.18 tok/s | failed=0
+  decode: queue 70 ms, KV load 51 ms, decode 2200 ms (means over 300); preemptions 1
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8687 dram=0.7488 fb=29.75 | swap {'pswpin': 60, 'pswpout': 0} | host cpu 0.04 | avail 18456 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b28_q4.5_tr_g  (method mp18, decode 28 GiB, 4.5 QPS, trace on) ===
+  RAM gate [big]: 57781 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 12.33 GiB = 101008 tokens = 15 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18460 MB, RSS {'decode': 3287, 'prefill': 3531, 'proxy': 38, 'store': 33840}, GPU used [26560, 30465] MiB
+    [measure] 06:17:42 tokens=2035835 decode run=11 wait=0 kv=69% avail RAM 18440 MB
+    [measure] 06:18:12 tokens=3739428 decode run=15 wait=11 kv=94% avail RAM 18428 MB
+  TTFT p50=33.96 p95=54.48 ms | TPOT p50=20.04 (decode-only 18.84) ms | ITL p50/mean=16.87/31.77 ms | 486.65 tok/s | failed=0
+  decode: queue 990 ms, KV load 62 ms, decode 2964 ms (means over 300); preemptions 31
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8724 dram=0.6444 fb=29.75 | swap {'pswpin': 112, 'pswpout': 0} | host cpu 0.04 | avail 18417 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+
+=== kv_mp18_b28_q5_tr_g  (method mp18, decode 28 GiB, 5 QPS, trace on) ===
+  RAM gate [big]: 57757 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 12.33 GiB = 101008 tokens = 15 slots; prefill KV 6.57 GiB
+  warm-up 75s, drained; avail RAM 18466 MB, RSS {'decode': 3283, 'prefill': 3528, 'proxy': 38, 'store': 33840}, GPU used [26560, 30465] MiB
+    [measure] 06:21:05 tokens=1963647 decode run=16 wait=33 kv=96% avail RAM 18441 MB
+    [measure] 06:21:35 tokens=3396149 decode run=16 wait=84 kv=96% avail RAM 18384 MB
+    [measure] 06:22:05 tokens=3690656 decode run=15 wait=80 kv=92% avail RAM 18383 MB
+    [measure] 06:22:36 tokens=4132134 decode run=16 wait=11 kv=96% avail RAM 18376 MB
+  TTFT p50=34.17 p95=57.63 ms | TPOT p50=182.83 (decode-only 45.15) ms | ITL p50/mean=18.32/234.41 ms | 302.51 tok/s | failed=0
+  decode: queue 21016 ms, KV load 95 ms, decode 5950 ms (means over 300); preemptions 174
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.8668 dram=0.3861 fb=29.75 | swap {'pswpin': 2, 'pswpout': 0} | host cpu 0.04 | avail 18381 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {}, 'decode': {}} | ok=True
+done
+mp18 budget 28 exit 0 06:22
+mp18 grid complete 06:22

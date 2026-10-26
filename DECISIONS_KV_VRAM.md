@@ -801,3 +801,36 @@ Against the predictions: stall < 0.15 s — confirmed (0.05). Residence ~2.2 s �
 every MP number: the run is also on vLLM 0.18.1 / torch 2.10, whose median step is 2 ms
 shorter here and whose grant is 45 blocks larger; no same-version sync control was run (by
 request). Grid started 04:27.
+
+## D11 outcome — MP connector grid on vLLM 0.18.1 (2026-10-26, 06:22, 27/27 cells ok)
+
+**Grant on 0.18.1** (every launch of the grid; the smoke read 7.86 GiB once): 8.33 / 10.33 /
+12.33 GiB = 4,266 / 5,290 / 6,313 blocks = 10.67 / 13.2 / 15.8 requests (0.15.1: 3,980 /
+5,004 / 6,027). By the 392-block admission rule: 24 GiB → 10 slots, 346 left, never
+evicts; 26 GiB → 13, 194 left, never evicts; **28 GiB → a 16th request is admitted (433
+free after 15) and 16 × 400 > 6,313 → evictions**, as at 24 GiB on 0.15.1.
+
+| | 24 GiB | 26 GiB | 28 GiB |
+|---|---|---|---|
+| capacity (slot wait < 50 ms), sync 0.15.1 → MP 0.18.1 | 2 → **3** req/s | 2.5 → **3.5** (4 reads 51 ms) | 2.5 → **4** (20 ms) |
+| best throughput, sync → MP | 380 → 528 tok/s (+39%) | 429 → 603 (+41%, still rising at 5) | 458 → 503 at 4 req/s; **collapses** above |
+| residence at 3 req/s | 3.15 → 1.99 s | 3.25 → 1.99 | 3.35 → 1.99 |
+| residence at 1 → 5 req/s | 1.58 → 2.27 s | 1.58 → 2.46 | 1.58 → 6.17 |
+| evictions (4.5 / 5 req/s) | 0 / 0 | 0 / 0 | **31 / 174** |
+
+- The stall is gone at every cell: extra time of load-carrying steps 0.05–0.06 s per request
+  (sync 0.67 at 24 GiB / 2.5); KV wait after the block grant 41–44 ms p50.
+- **28 GiB at 4.5–5 req/s collapses** (5 req/s: 303 tok/s, residence 6.2 s): the connector
+  does not reload evicted requests (`TODO: support loading KV for preempted requests`), so
+  each eviction recomputes the 6,144-token prefix on the decode GPU. The 16th slot, lent by
+  the admission rule, costs more than it gives once evictions start.
+- Residence now grows only with the batch's compute (1.58 → ~2.3 s), not with neighbours'
+  admissions — the diminishing-returns mechanism of §4.3 is removed.
+
+**Against the predictions:** grant ±1 block — **wrong** (+0.5–0.6 GiB per budget, one more
+slot at 26 GiB, a lent 16th at 28 GiB). Stall < 0.15 s — confirmed (0.05–0.06). Residence
+~2.2 s at 2.5 req/s — better (1.87). Slot wait < 50 ms at 2.5 req/s — confirmed (1–4 ms).
+Saturation +20–30% — **exceeded** (+39–41% at 24 / 26 GiB). KV wait 100–200 ms — better
+(41–44). Evictions recompute — confirmed, and at 28 GiB they dominate at high rates.
+Caveat for all MP numbers: vLLM 0.18.1 / torch 2.10 with no same-version synchronous
+control (by request); its grant is larger and its decode step ~2 ms shorter at low batch.
