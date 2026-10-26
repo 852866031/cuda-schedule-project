@@ -390,3 +390,28 @@ The asynchronous path therefore cannot be tested without a working c_ops build.
   of the ~190 ms per request, which this smoke measures (unknown; guess 30–50%). If the
   engine log shows no async lookups at all, the option is inert in 0.4.4's v1 adapter
   (the review found the enabling check commented out) and the result equals baseline.
+
+**Smoke 2 outcome (`kv_lw_b24_q2.5_tr`, one run): better than predicted, but one run.**
+Both engines echo `use_layerwise: True`; grant unchanged (c_eff = 10); ok (0 failed, hit
+0.98, 38,400 tokens). Queue 1,409 ms (baseline 4,680), TPOT 39 ms (64), 308 tok/s (289),
+TTFT unchanged. Where it comes from, per the trace: `start_load_kv` now returns in 7 ms
+(the per-layer copies run inside the forward pass), so the admitting step itself shrinks
+(p50 45 → 2 ms), the per-request load (admitted → first token) falls 865 → 294 ms
+mean (p50 689 → 217), residence 4.10 → 3.71 s. The batch is *not* freed: the excess step
+time per residence (steps above 1.5× the 16.2 ms median) is 1.40 s vs 0.88 s baseline —
+the copy still blocks the forward it rides in — and decode time is 3.42 vs 3.23 s. The
+residence gain is in the load phase and in preemptions: 12 vs 35 at baseline, each
+avoided preemption saving a reload. Prediction "stall shrinks < 30%, queue ±20%" failed
+on the queue; whether the preemption difference is layerwise's doing or run-to-run luck is
+open — reruns of both (`_r2`) queued before any conclusion. The old stall attribution
+(step overlaps a `start_load_kv` window) is invalid for layerwise; the excess-step metric
+above is used for both.
+
+**Smoke 3 outcome (`kv_async_b24_q2.5_tr`): infeasible — crashes LMCache 0.4.4.**
+The option engages (async lookup client active, "still waiting for async lookup after
+3 seconds" warnings), then the EngineCore dies on
+`lmcache/v1/lookup_client/lmcache_async_lookup_client.py:175`
+`KeyError: first_lookup_time[lookup_id]` — the client drops a request's bookkeeping on
+its 3-s timeout path and the next lookup for the same request raises. 86 requests failed,
+heartbeat tore the stack down. Not a trace artefact (the wrapper only calls through).
+Not usable in 0.4.4 without patching LMCache; dropped.
