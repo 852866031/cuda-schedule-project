@@ -76,7 +76,8 @@ def main():
             bottom += v
         for i, d in enumerate(vals):
             tot = sum(d.values())
-            ax.text(i, min(tot, 14.5) + 0.2, f"{tot:.1f} s", ha="center", fontsize=8.5)
+            ax.text(i, min(tot, 14.5) + 0.2, f"{tot:.0f} s" if tot >= 10 else f"{tot:.1f} s", ha="center",
+                    fontsize=8.5)
         ax.set_xticks(range(len(xs)))
         ax.set_xticklabels([f"{q:g}" for q in xs])
         ax.set_xlabel("request rate (req/s)")

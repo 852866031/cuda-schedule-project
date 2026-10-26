@@ -179,7 +179,7 @@ case1(axes[0], False)
 case1(axes[1], True)
 axes[0].set_title("today: synchronous load (LMCache 0.4.4, measured)",
                   fontsize=12.5, fontweight="bold", color="#222", pad=8)
-axes[1].set_title("hypothetical: asynchronous load (not usable in LMCache 0.4.4, §6)",
+axes[1].set_title("alternative: asynchronous load (the options tested in §6)",
                   fontsize=12.5, fontweight="bold", color="#7c2d12", pad=8)
 fig.suptitle("CASE 1 — admitting a request: no slot → queue; slot → the batch stalls while its KV loads",
              fontsize=13.5, y=0.975)
