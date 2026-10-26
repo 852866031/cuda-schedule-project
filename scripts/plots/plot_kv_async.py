@@ -86,6 +86,61 @@ def main(methods):
                               ("mp18", "kv_mp.png", "MP connector (vLLM 0.18.1)")):
         if arm in methods:
             plot_arm(rows, ["cops", arm], fname, title)
+            plot_arm_3d(rows, arm, fname.replace(".png", "_3d.png"), title)
+
+
+def plot_arm_3d(rows, arm, fname, title):
+    """§4.1's surfaces (queue wait, throughput, TPOT) plus residence over budget x rate:
+    the load-path arm as a coloured surface, the synchronous baseline as a grey wireframe.
+    Cells that did not complete (async at 24 GiB, 4-5 req/s) are holes."""
+    from matplotlib import cm
+    panels = [("wait_ms", 1e-3, "mean decode queue wait (s)", "(a) decode queue wait", cm.Blues, False),
+              ("tok_s", 1, "output tokens / s", "(b) throughput", cm.Greens, False),
+              ("tpot_ms", 1, "TPOT p50, end-user (ms, log)", "(c) TPOT p50, end-user", cm.Oranges, True),
+              ("resid_s", 1, "residence (s)", "(d) residence", cm.Purples, False)]
+    B, Q = np.meshgrid(BUDGETS, QPS, indexing="ij")
+
+    def grid(m, col, sc, log):
+        Z = np.full(B.shape, np.nan)
+        for r in rows:
+            if r["method"] == m:
+                i, j = BUDGETS.index(r["budget"]), QPS.index(r["qps"])
+                Z[i, j] = r[col] * sc
+        return np.log10(Z) if log else Z
+
+    fig = plt.figure(figsize=(15, 12.5))
+    lab, c, _, _ = ARMS[arm]
+    for k, (col, sc, zl, ttl, cmap, log) in enumerate(panels):
+        ax = fig.add_subplot(2, 2, k + 1, projection="3d")
+        Zs, Za = grid("cops", col, sc, log), grid(arm, col, sc, log)
+        ax.plot_surface(B, Q, np.ma.masked_invalid(Za), cmap=cmap, edgecolor="#333", lw=0.5, alpha=0.85,
+                        rstride=1, cstride=1)
+        ax.plot_wireframe(B, Q, Zs, color="#6b6b66", lw=1.3, rstride=1, cstride=1)
+        for i, b in enumerate(BUDGETS):
+            for j, q in enumerate(QPS):
+                if not np.isnan(Za[i, j]):
+                    ax.scatter([b], [q], [Za[i, j]], color=c, s=16, depthshade=False)
+        if log:
+            ticks = [15, 20, 30, 50, 100, 200]
+            ax.set_zticks(np.log10(ticks))
+            ax.set_zticklabels([str(t) for t in ticks])
+        ax.set_xlabel("VRAM budget (GiB)", labelpad=8)
+        ax.set_ylabel("request rate (req/s)", labelpad=8)
+        ax.set_zlabel(zl, labelpad=10)
+        ax.set_xticks(BUDGETS)
+        ax.view_init(elev=24, azim=-55)
+        ax.set_box_aspect(None, zoom=0.82)
+        ax.set_title(ttl, pad=4)
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    fig.legend([Patch(fc=c, alpha=0.8, ec="#333"), Line2D([], [], color="#6b6b66", lw=1.3)],
+               [f"{lab} (surface, dots = measured cells)", "synchronous, compiled kernels (grey wireframe)"],
+               loc="upper center", ncol=2, frameon=False, fontsize=12, bbox_to_anchor=(0.5, 0.955))
+    fig.suptitle(f"{title} over the grid: x = decode VRAM budget, y = request rate, z = the measured quantity",
+                 y=0.985, fontsize=14)
+    fig.savefig(REPO / "figures" / fname, dpi=150, bbox_inches="tight", pad_inches=0.3)
+    plt.close(fig)
+    print(f"-> figures/{fname}")
 
 
 def plot_arm(rows, methods, fname, title):
