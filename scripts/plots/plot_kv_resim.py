@@ -40,7 +40,7 @@ ax0.set_xlim(-0.3, 9.5)
 ax0.set_ylim(0, 1)
 ax0.axis("off")
 ax0.add_patch(FancyBboxPatch((-0.2, 0.05), 9.6, 0.9, boxstyle="round,pad=0.1", fc=C_IN, ec="#1a7a55", lw=1.4))
-ax0.text(0.0, 0.72, "INPUTS — measured in the same grid cell (same budget, rate and run as §4.1)", fontsize=12, fontweight="bold", color="#0f4d35", va="center")
+ax0.text(0.0, 0.72, "INPUTS — measured in the same grid cell (same budget, rate and run)", fontsize=12, fontweight="bold", color="#0f4d35", va="center")
 for a in arr:
     ax0.plot([a * 0.45, a * 0.45], [0.12, 0.42], color="black", lw=1.6)
 ax0.text(3.3, 0.27, "arrival time of each request (ticks)", fontsize=10.5, va="center")

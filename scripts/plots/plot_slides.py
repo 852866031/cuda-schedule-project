@@ -76,11 +76,11 @@ def fig_system():
     # GPU0 prefill
     rbox(ax, 56, 56, 48, 30, "#e8f4ef", C_PF, lw=2)
     txt(ax, 58, 82, "GPU0 — prefill engine", 15, C_PF, ha="left", bold=True)
-    txt(ax, 80, 68, "computes all 6,272 prompt tokens\n→ token #1 + the prompt's KV", 13)
+    txt(ax, 80, 68, "computes the 6,272-token prompt\n→ token #1; saves its prefix KV\nto LMCache (24 chunks of 256)", 13)
     # GPU1 decode
     rbox(ax, 56, 4, 48, 30, C_GPU, C_DEC, lw=2)
     txt(ax, 58, 30, "GPU1 — decode engine", 15, C_DEC, ha="left", bold=True)
-    txt(ax, 80, 16, "budget 24 / 26 / 28 GiB\nloads the prefix KV, computes the\n128-token suffix, decodes 128 tokens", 13)
+    txt(ax, 80, 16, "budget 24 / 26 / 28 GiB: loads the\n6,144-token prefix KV, recomputes the\n128-token suffix, generates the rest", 13)
     # host RAM / LMCache
     rbox(ax, 112, 24, 46, 42, C_HOST, "#b9b3a1", lw=2)
     txt(ax, 114, 62, "host RAM — LMCache", 15, "#4a4639", ha="left", bold=True)
@@ -100,7 +100,8 @@ def fig_system():
     badge(ax, 49, 30, 4)
     arrow(ax, (56, 9), (10.5, 36.5), C_DEC, ls="--", rad=-0.25)
     txt(ax, 24, 12, "tokens 2…128\nstream back", 12.5, C_DEC)
-    txt(ax, 80, 45, "PCIe Gen4 ×8 per GPU, 14.5 GB/s", 12.5, "#6b6b66", bold=True)
+    txt(ax, 142, 84, "PCIe Gen4 ×8, 14.5 GB/s", 12, "#6b6b66", bold=True)
+    txt(ax, 133, 8, "PCIe Gen4 ×8, 14.5 GB/s", 12, "#6b6b66", bold=True)
     save(fig, "s_system")
 
 
@@ -317,19 +318,32 @@ def fig_loadpath():
 
 # ------------------------------------------------------------------ async_loading, smoke (24 GiB, 2.5 req/s)
 def fig_async_smoke():
+    """24 GiB, 2.5 req/s: kv_cops_b24_q2.5_tr_r2 vs kv_cops_async_b24_q2.5_tr_g (D10 grid cell)"""
     fig, axes = plt.subplots(1, 4, figsize=(12.5, 4.2), gridspec_kw={"wspace": 0.55})
-    data = [("copy inside the step\n(ms per load)", 121, 73, "{:.0f}"),
+    data = [("KV copy inside the step\n(ms per request)", 116, 70, "{:.0f}"),
             ("stalls from others'\nloads (s per request)", 0.75, 0.47, "{:.2f}"),
-            ("residence (s)", 2.83, 2.47, "{:.2f}"),
-            ("queue wait, p50 (ms)", 0, 109, "{:.0f}")]
+            ("residence (s)", 2.83, 2.48, "{:.2f}")]
     for i, (ax, (t, a, b, fmt)) in enumerate(zip(axes, data)):
         ax.bar([0, 1], [a, b], color=["#c9c6bd", C_DEC], width=0.6)
         for x, v in ((0, a), (1, b)):
             ax.text(x, v + max(a, b) * 0.03, fmt.format(v), ha="center", va="bottom", fontsize=13)
+        ax.set_ylim(0, max(a, b) * 1.25)
+        ax.set_title(t, fontsize=13.5)
+    ax = axes[3]                                   # queue time = wait for a slot + async prefetch
+    ax.bar([0], [143], color="#c9c6bd", width=0.6)
+    ax.bar([1], [50], color=C_DEC, width=0.6, label="wait for a slot")
+    ax.bar([1], [130], bottom=[50], color="white", edgecolor=C_DEC, hatch="///", width=0.6,
+           label="async prefetch (no slot held)")
+    ax.text(0, 147, "143", ha="center", va="bottom", fontsize=13)
+    ax.text(1, 50 / 2, "50", ha="center", va="center", fontsize=13, color="white")
+    ax.text(1, 50 + 130 / 2, "130", ha="center", va="center", fontsize=13, color=C_DEC,
+            bbox=dict(fc="white", ec="none", pad=1))
+    ax.set_ylim(0, 230)
+    ax.set_title("vLLM queue time, mean (ms)", fontsize=13.5)
+    ax.legend(frameon=False, fontsize=10.5, loc="upper left", bbox_to_anchor=(-0.1, 1.0))
+    for i, ax in enumerate(axes):
         ax.set_xticks([0, 1])
         ax.set_xticklabels(["sync", "async"], fontsize=13)
-        ax.set_title(t, fontsize=13.5)
-        ax.set_ylim(0, max(a, b) * 1.25)
         ax.spines[["top", "right"]].set_visible(False)
         ax.text(-0.12, 1.2, MARK[i], transform=ax.transAxes, fontsize=18, color=C_RED, ha="center",
                 va="center", fontweight="bold")
@@ -359,6 +373,143 @@ def fig_mp():
     badge(ax, 66, 18, 2)
     txt(ax, 66, 40, "lookup / store / retrieve\nrequests over ZMQ", 12, "#6b6b66")
     save(fig, "s_mp")
+
+
+# ------------------------------------------------------------------ mechanism, slide-native versions
+def pool(ax, x0, y0, held, w_slot=8.6, h=9, wall=True, label=None):
+    """KV pool of 24 GiB as slots; held = list of (label, kind) with kind run|new|gone|evict"""
+    x = x0
+    for lab, kind in held:
+        fc, ec, tc, ls = {"run": (C_DEC, "white", "white", "-"), "new": (C_LOAD, "white", "white", "-"),
+                          "gone": ("#f6f6f4", C_RED, C_RED, ":"), "evict": (C_DEC, C_RED, "white", "-")}[kind]
+        ax.add_patch(Rectangle((x, y0), w_slot - 0.6, h, fc=fc, ec=ec, lw=2.5 if kind == "evict" else 1, ls=ls))
+        txt(ax, x + (w_slot - 0.6) / 2, y0 + h / 2, lab, 12.5, tc, bold=True)
+        x += w_slot
+    if wall:
+        xw = x0 + 9.95 * w_slot
+        ax.plot([xw, xw], [y0 - 2, y0 + h + 2], color=C_RED, lw=3)
+        txt(ax, xw + 1, y0 + h + 1.5, "pool ends", 12, C_RED, ha="left", bold=True)
+    if label:
+        txt(ax, x0, y0 + h + 3.5, label, 13.5, C_INK, ha="left", bold=True)
+
+
+def steps_row(ax, x0, y0, seq, unit=0.75, h=6):
+    x = x0
+    for lab, ms, c in seq:
+        w = ms * unit
+        ax.add_patch(Rectangle((x, y0), w - 0.3, h, fc=c, ec="white"))
+        if lab:
+            txt(ax, x + w / 2, y0 + h / 2, lab, 12.5, "white", bold=True)
+        x += w
+    return x
+
+
+def fig_case1_s():
+    fig, ax = canvas(16, 8)
+    ax.set_ylim(0, 80)
+    held = [(f"#{i}", "run") for i in range(1, 10)] + [("#10", "new")]
+    pool(ax, 4, 58, held, label="decode GPU, 24 GiB: KV pool of 3,980 blocks = 9.95 slots")
+    # queue
+    rbox(ax, 4, 22, 46, 24, "#fafaf8", "#888")
+    txt(ax, 6, 25, "waiting queue, first come first served", 13, ha="left", bold=True)
+    for i in range(4):
+        ax.add_patch(Rectangle((7 + i * 9, 30), 8, 8, fc="#6b6b66" if i == 0 else C_WAIT, ec="white"))
+    txt(ax, 11, 34, "head", 12, "white", bold=True)
+    txt(ax, 27, 24.5, "", 1)
+    arrow(ax, (11, 38.5), (84, 57.5), C_INK, rad=-0.15)
+    badge(ax, 54, 33, 1)
+    txt(ax, 57, 33, "the head is admitted only\nif 392 blocks are free;\nuntil then all of them wait", 12.5, ha="left")
+    # LMCache
+    rbox(ax, 106, 22, 50, 24, C_HOST, "#b9b3a1")
+    txt(ax, 108, 42, "host RAM: LMCache", 13, "#4a4639", ha="left", bold=True)
+    txt(ax, 131, 31, "the request's 6,144-token\nprefix KV, 0.75 GiB", 12.5, "#7c2d12")
+    arrow(ax, (115, 46), (87, 57.5), C_LOAD, lw=3.5, rad=0.1)
+    badge(ax, 108, 53, 2)
+    txt(ax, 111, 53, "copy ≈ 115 ms, inside the step", 13, C_LOAD, ha="left", bold=True)
+    # engine steps
+    txt(ax, 4, 15.5, "engine steps (one forward pass of the whole batch each):", 13, ha="left", bold=True)
+    end = steps_row(ax, 4, 4, [("", 16, C_DEC)] * 3 + [("copy for #10: the 9 running get no token", 115, C_LOAD)]
+                    + [("", 16, C_DEC)] * 3, unit=0.6)
+    badge(ax, end + 3, 7, 3)
+    txt(ax, end + 6, 7, "≈ 20% of decode\nwall time", 12.5, C_LOAD, ha="left")
+    save(fig, "s_case1")
+
+
+def fig_case2_s():
+    fig, ax = canvas(16, 8)
+    ax.set_ylim(0, 80)
+    txt(ax, 4, 75, "Step 1: all ten grow toward 400 blocks, and 10 × 400 > 3,980", 13.5, ha="left", bold=True)
+    held = [(f"#{i}", "run") for i in range(1, 10)] + [("#10", "evict")]
+    pool(ax, 4, 58, held)
+    ax.add_patch(Rectangle((4 + 9 * 8.6, 56), 8.0, 1.2, fc=C_RED, ec="none"))
+    badge(ax, 100, 63, 1)
+    txt(ax, 103, 63, "no free block → the last admitted (#10)\nis evicted: blocks freed, progress lost", 12.5,
+        C_RED, ha="left")
+    arrow(ax, (82, 57), (22, 44), C_RED, ls="--", rad=0.1)
+    rbox(ax, 4, 30, 43, 13, "#fafaf8", "#888")
+    ax.add_patch(Rectangle((7, 32.5), 9, 8, fc=C_RED, ec="white"))
+    txt(ax, 11.5, 36.5, "#10", 12, "white", bold=True)
+    for i in range(1, 4):
+        ax.add_patch(Rectangle((7 + i * 10, 32.5), 9, 8, fc=C_WAIT, ec="white"))
+    badge(ax, 51, 36.5, 2)
+    txt(ax, 54, 36.5, "back to the HEAD of the queue; nothing stalls yet", 13, C_RED, ha="left")
+    # later
+    txt(ax, 4, 22, "Step 2: seconds later a slot frees; #10 is admitted again and its prefix copied again", 13.5,
+        ha="left", bold=True)
+    end = steps_row(ax, 4, 6, [("", 16, C_DEC)] * 3 + [("copy for #10, again", 115, C_LOAD)]
+                    + [("", 16, C_DEC)] * 3, unit=0.6)
+    badge(ax, end + 3, 9, 3)
+    txt(ax, end + 6, 9, "another ≈ 115 ms\nbatch stall", 12.5, C_LOAD, ha="left")
+    save(fig, "s_case2")
+
+
+# ------------------------------------------------------------------ layerwise: where the residence goes
+def fig_layerwise_s():
+    tl = REPO / "output" / "kv_vram" / "timeline"
+    arms = [("synchronous", "kv_cops_b24_q2.5_tr_r2"), ("use_layerwise", "kv_cops_lw_b24_q2.5_tr")]
+    parts = []
+    for _, n in arms:
+        rq = [r for r in csv.DictReader(open(tl / f"{n}_req.csv")) if r.get("resident")]
+        st = list(csv.DictReader(open(tl / f"{n}_steps.csv")))
+        t = np.array([float(x["t"]) for x in st])
+        dt = np.r_[np.nan, np.diff(t)]
+        ok = dt < 2
+        med = np.nanmedian(dt[ok])
+        norm, exc = [], []
+        for r in rq:
+            m = ok & (t > float(r["t_first"])) & (t <= float(r["t_fin"]))
+            norm.append(np.minimum(dt[m], 1.5 * med).sum())
+            exc.append(np.maximum(dt[m] - 1.5 * med, 0).sum())
+        parts.append([np.mean([float(r["load"]) for r in rq]), np.mean(norm), np.mean(exc)])
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    labs = ["own KV load (admitted → token 1)", "decode steps at normal speed",
+            "extra time of steps that carried a load (anyone's)"]
+    cols = [C_LOAD, C_DEC, "#f4b48f"]
+    for i, (name, _) in enumerate(arms):
+        left = 0
+        for k in range(3):
+            v = parts[i][k]
+            ax.barh(i, v, left=left, color=cols[k], height=0.55, label=labs[k] if i == 0 else None,
+                    edgecolor="white")
+            if v > 0.3:
+                ax.text(left + v / 2, i, f"{v:.2f} s", ha="center", va="center", fontsize=13,
+                        color="white" if k < 2 else C_INK)
+            left += v
+        ax.text(left + 0.05, i, f"{left:.2f} s", va="center", fontsize=13)
+    ax.set_yticks([0, 1])
+    ax.set_yticklabels([a for a, _ in arms], fontsize=13)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 3.4)
+    ax.set_xlabel("seconds per request, admitted → last token (24 GiB, 2.5 req/s)", fontsize=12)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=1, fontsize=12)
+    ax.text(parts[0][0] + parts[0][1] + parts[0][2] / 2, -0.45, MARK[0], fontsize=18, color=C_RED,
+            ha="center", fontweight="bold")
+    ax.text(parts[1][0] + parts[1][1] + parts[1][2] / 2, 0.55, MARK[1], fontsize=18, color=C_RED,
+            ha="center", fontweight="bold")
+    fig.savefig(OUT / "s_layerwise.png", dpi=130, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    print("-> figures/slides/s_layerwise.png", [[round(x, 2) for x in p] for p in parts])
 
 
 # ------------------------------------------------------------------ markers on report figures
@@ -396,7 +547,7 @@ def mark(src, name, marks, boxes=(), crop=None):
 # figure from its top-left, read off the rendered PNGs
 MARKED = {
     "m_blocks": ("kv_blocks.png", [(0.015, 0.47, 1), (0.497, 0.60, 2), (0.497, 0.735, 3)], [],
-                 (0, 0.1, 1, 1)),
+                 (0, 0.135, 1, 1)),
     "m_grant": ("kv_grant.png", [(0.25, 0.44, 1), (0.61, 0.44, 2), (0.015, 0.81, 3)], [],
                 (0, 0.12, 1, 0.9)),
     "m_slots": ("kv_slots.png", [(0.285, 0.207, 1), (0.285, 0.44, 2), (0.285, 0.672, 3)], [],
@@ -410,17 +561,18 @@ MARKED = {
     "m_3d": ("kv_grid_3d.png", [(0.07, 0.63, 1), (0.105, 0.47, 2)], [], (0, 0.15, 0.34, 0.92)),
     "m_mgc": ("kv_mgc.png", [(0.285, 0.37, 1), (0.17, 0.37, 2), (0.72, 0.65, 3)], [], None),
     "m_wait_free": ("kv_wait_vs_free.png", [(0.1, 0.18, 1), (0.25, 0.82, 2), (0.73, 0.75, 3)], [], None),
-    "m_time_split": ("kv_time_split.png", [(0.825, 0.84, 1), (0.885, 0.76, 2), (0.185, 0.6, 3)], [], None),
+    "m_time_split": ("kv_time_split.png", [(0.854, 0.855, 1), (0.854, 0.78, 2), (0.185, 0.6, 3)], [], None),
     "m_timeline": ("kv_slots_timeline.png", [(0.08, 0.23, 1), (0.535, 0.23, 2), (0.1, 0.66, 3),
                                              (0.55, 0.85, 4)], [], None),
     "m_stream": ("kv_stream_idea.png", [(0.47, 0.56, 1), (0.92, 0.69, 2)], [], None),
     "m_layerwise": ("kv_layerwise_measured.png", [(0.28, 0.24, 1), (0.785, 0.2, 2)], [], None),
+    "m_timeline_s": ("kv_slots_timeline.png", [(0.08, 0.23, 1), (0.535, 0.23, 2)], [], (0, 0.172, 1, 0.545)),
 }
 
 
 FIGS = {"system": fig_system, "testbed": fig_testbed, "workload": fig_workload, "path": fig_path,
         "method": fig_method, "kernels": fig_kernels,
-        "loadpath": fig_loadpath, "async_smoke": fig_async_smoke, "mp": fig_mp}
+        "loadpath": fig_loadpath, "async_smoke": fig_async_smoke, "mp": fig_mp, "case1": fig_case1_s, "case2": fig_case2_s, "layerwise": fig_layerwise_s}
 
 if __name__ == "__main__":
     want = sys.argv[1:] or list(FIGS) + list(MARKED)

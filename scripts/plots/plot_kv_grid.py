@@ -193,9 +193,12 @@ def fig_mgc():
         ceff = c + 1 if b == 24 else c
         ax.plot(q, meas, "o-", color="#111", lw=3.2, ms=8, label="measured", zorder=4)
         ax.plot(q, rep1 if b == 24 else rep, "s--", color=C_B[b], lw=1.4, ms=4.5, zorder=6,
-                label=f"FCFS replay, c = {ceff}" + (" (effective)" if b == 24 else "") + " — coincides")
+                label="FCFS replay with the slots the engine ran with (10 / 12 / 15) — coincides")
+        coff = c if b == 24 else c + 1
         ax.plot(q, rep if b == 24 else rep1, "^:", color="#9a9a95", lw=1.3, ms=5,
-                label=f"FCFS replay, c = {c if b == 24 else c + 1}")
+                label="FCFS replay with one slot off (9 / 13 / 16)")
+        ax.text(0.97, 0.06, f"grey: c = {coff}", transform=ax.transAxes, ha="right", fontsize=10,
+                color="#6b6b66")
         ax.plot(q, ll, "d-.", color="#8a6d00", lw=1.2, ms=5, label="Lee–Longton M/G/c")
         ax.set_yscale("symlog", linthresh=0.05)
         ax.set_xlabel("request rate (req/s)")
@@ -206,9 +209,9 @@ def fig_mgc():
     axes[0].set_ylabel("decode queue wait, mean (s, symlog)")
     axes[0].text(1.02, 0.055, "50 ms capacity line", color="#b3261e", fontsize=8.5, va="bottom")
     h, l = axes[0].get_legend_handles_labels()
-    fig.legend(h, l, loc="upper center", ncol=4, frameon=False, bbox_to_anchor=(0.5, 1.06))
+    fig.legend(h, l, loc="upper center", ncol=2, frameon=False, bbox_to_anchor=(0.5, 1.12))
     fig.suptitle("Measured decode queue wait vs queueing models (service time = each request's "
-                 "measured residence, Poisson-like arrivals)", y=1.13)
+                 "measured residence, Poisson-like arrivals)", y=1.2)
     fig.savefig(FIGS / "kv_mgc.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -226,20 +229,24 @@ def fig_scatter():
             if not p.exists():
                 continue
             rq = [r for r in csv.DictReader(open(p)) if r.get("wait")]
-            fs = np.array([int(r["free_at_arr"]) / 400 for r in rq])
+            # admissions left for THIS request: free admissions at arrival minus requests
+            # already waiting ahead of it (FCFS: they take the free blocks first)
+            fs = np.array([int(r["free_at_arr"]) // 392 - int(float(r["wait_at_arr"])) for r in rq])
             w = np.array([float(r["wait"]) for r in rq])
-            ax.scatter(fs + rng.uniform(-0.12, 0.12, len(fs)), w * 1000 + 1, s=16, marker=mk,
+            print(f"  {p.name}: waited > 20 ms with >= 1 admission left: {int(((fs >= 1) & (w > 0.02)).sum())}; "
+                  f"waited 0 with none left: {int(((fs < 1) & (w < 0.002)).sum())}")
+            ax.scatter(fs + rng.uniform(-0.15, 0.15, len(fs)), w * 1000 + 1, s=16, marker=mk,
                        color=C_B[b], alpha=al, lw=0, label=f"{q:g} req/s")
-        ax.axvline(392 / 400, color="#b3261e", lw=1, ls="--")
-        ax.text(392 / 400 + 0.08, 3, "392 blocks\n= 1 admission", color="#b3261e", fontsize=8.5, va="bottom")
+        ax.axvline(0.5, color="#b3261e", lw=1, ls="--")
+        ax.text(0.62, 3, "one admission\nleft for it", color="#b3261e", fontsize=8.5, va="bottom")
         ax.set_yscale("log")
-        ax.set_xlabel("free KV space at arrival (requests of 400 blocks)")
+        ax.set_xlabel("admissions left for it at arrival\n(free ÷ 392 blocks − requests queued ahead)")
         ax.set_title(f"{b} GiB ({SLOTS[b]})")
         ax.grid(color="#ececea", lw=0.6)
         ax.spines[["top", "right"]].set_visible(False)
         ax.legend(frameon=False, loc="upper right")
     axes[0].set_ylabel("this request's decode queue wait (ms + 1, log)")
-    fig.suptitle("A request waits only when it arrives to a full pool: queue wait vs free KV space at arrival "
+    fig.suptitle("A request waits exactly when the requests ahead of it use up the free admissions "
                  "(each dot = one request)", y=1.02)
     fig.savefig(FIGS / "kv_wait_vs_free.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
