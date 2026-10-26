@@ -130,7 +130,10 @@ that give the same mean wait, so its slope says how much rate one GiB buys — a
 
 ![heatmaps with contours](../figures/kv_grid_heat_contours.png)
 
-The 3D view of the same surface is [kv_grid_3d.png](../figures/kv_grid_3d.png).
+The same surface in 3D — the knee is the cliff, and it moves right by about one grid
+step per 2 GiB:
+
+![3D view](../figures/kv_grid_3d.png)
 
 ### 4.2 Waiting is integer slots, FCFS, and nothing else
 
