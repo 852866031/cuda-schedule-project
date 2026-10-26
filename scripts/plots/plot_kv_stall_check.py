@@ -25,7 +25,7 @@ TL = REPO / "output" / "kv_vram" / "timeline"
 plt.rcParams.update({"font.size": 11, "axes.titlesize": 12, "axes.labelsize": 11})
 C_LOAD, C_DEC, C_G = "#eb6834", "#2a78d6", "#9a9a95"
 CELLS = [("kv_base_b24_q4_tr", "24 GiB\nas is"), ("kv_base_b28_q4_tr", "28 GiB\nas is"),
-         ("kv_base_b28_q4_tr_r2", "28 GiB\nas is, rerun"), ("kv_cohort5_b28_q4_tr", "28 GiB\nrouter groups of 5")]
+         ("kv_base_b28_q4_tr_r2", "28 GiB\nas is (rerun)"), ("kv_cohort5_b28_q4_tr", "28 GiB\ngroups of 5")]
 
 
 def f(x):
@@ -64,8 +64,8 @@ for i, (lab, r) in enumerate(rows):
     ax.text(i, r["stall_s"] + 0.03, f"{r['stalls']:.1f} stalls\n× {r['len_ms']:.0f} ms\n= {r['stall_s']:.2f} s",
             ha="center", va="bottom", fontsize=9.5)
 ax.set_xticks(x)
-ax.set_xticklabels([f"{lab}\n{r['per_call']:.1f} req per load call\n{r['per_req_ms']:.0f} ms per request"
-                    for lab, r in rows], fontsize=9.5)
+ax.set_xticklabels([f"{lab}\n{r['per_call']:.1f} req/call\n{r['per_req_ms']:.0f} ms/req"
+                    for lab, r in rows], fontsize=9)
 ax.set_ylim(0, max(r["stall_s"] for _, r in rows) * 1.45)
 ax.set_ylabel("time stalled by others' KV loads, per request (s)")
 ax.set_title("(a) grouping admissions halves the stall count, doubles the stall length\n"
