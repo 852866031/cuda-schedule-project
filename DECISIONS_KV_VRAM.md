@@ -272,3 +272,37 @@ admissions (1.8 → 12.1). More slots therefore raise c but also raise S, mostly
 stalls — the reason 26 → 28 GiB (+25% slots) barely moves saturation throughput.
 Methods that remove the stall (async / layerwise / faster copy) attack the 2.2 s;
 methods that add slots attack the queue but increase the stall count.
+
+## E2 — outcome (23 cells + 1 rerun, all ok; `output/summary_kv.csv`, traces in `output/kv_vram/trace/`)
+
+Decode queue wait, mean per request (ms); throughput in tok/s in brackets:
+
+| QPS | 1 | 1.5 | 2 | 2.25 | 2.5 | 2.75 | 3 | 3.5 | 4 |
+|---|---|---|---|---|---|---|---|---|---|
+| 24 GiB (c_eff = 10) | 0 (128) | 8 (191) | 153 (254) | 941 (282) | 4,680 (289) | 8,913 (292) | 10,977 (303) | 18,409 (298) | 21,413 (305) |
+| 26 GiB (c = 12) | 0 (128) | 0 (191) | 56 (254) | – | 1,054 (309) | – | 6,210 (330) | 12,224 (335) | 16,252 (340) |
+| 28 GiB (c = 15) | 0 (128) | 0 (191) | 10 (254) | – | 235 (316) | – | 4,511 (340) | 9,858 (348) | 14,294 (351) |
+
+- **Capacity (queue < 50 ms, 0 failed):** 24 GiB between 1.5 and 2 req/s; 26 GiB at
+  ~2 (56 ms, just over); 28 GiB between 2 and 2.5. The plan predicted 2.0–2.5 /
+  2.5–3.0 / 3.0–3.5: **all three about one grid step too high**. Saturation throughput
+  ≈ 2.3 / 2.65 / 2.7 req/s — +4 GiB (+50% slots) buys +17% throughput.
+- **Shape as predicted:** flat below the knee, roughly linear growth of the queue above
+  it; tpot2 is 14.5–14.7 ms at 1 req/s at every budget (VRAM is irrelevant below the
+  knee) and **rises** with budget at equal high load (39 ms at 28 GiB / 3 req/s vs
+  25.7 at 24 GiB) — bigger batches and more load stalls per residence (see the
+  decode-time split above).
+- **M/G/c:** the FCFS replay with the effective slot count (10 / 12 / 15) matches the
+  measured mean wait to < 2% at 24 GiB and < 0.1% at 26 / 28 GiB at every rate; with
+  c ± 1 it is off by 1.5–3×. Integer slots, FCFS, and the measured residence fully
+  explain the waiting. Lee–Longton (M/G/c with the measured S mean and CV²) is within
+  ±10% only near ρ ≈ 0.9 (26 GiB / 2.5: 1,037 vs 1,054 ms); at ρ < 0.7 it underpredicts
+  up to 7× (28 GiB / 2: 1.4 vs 10 ms) because the fixed 300-request window is far from
+  steady state at small waits — the prediction "within a factor 2 below ρ = 0.9" holds
+  only above ρ ≈ 0.7.
+- **Preemptions:** 24 GiB 1–35 per cell (0 at 1 req/s), 26 / 28 GiB none at any rate —
+  as predicted from the 392-block admission rule.
+- **Hypothesis 1 (no sharing):** not yet evaluated from the traces (needs the
+  session-per-running-set count); deferred to the E4 APC comparison where it matters.
+- 28 GiB / 1.5 req/s: the first run lost one request to a router keep-alive race
+  (recorded, `ok = False`); the `_r2` rerun is clean and is the reported cell.

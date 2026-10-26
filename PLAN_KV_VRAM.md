@@ -61,6 +61,8 @@ start-up per cell.
    the ninth study's b23/b25 `base` rows.
    - **Prediction:** TPOT p50 within ±3 ms of 27.7–29.4 ms; throughput ≈ 254 tok/s.
 
+> **Outcome (2026-10-25):** E0 confirmed exactly (grant = budget − 16.23 GiB; c = 7/8/9/11/12/15; pinned H2D 14.47 GB/s; the pageable prediction was wrong, 14.2 GB/s). No-MPS baseline matched the ninth study. See DECISIONS E0.
+
 ## E1 — per-request timeline instrumentation
 
 `site/kv_trace.py`, loaded via PYTHONPATH sitecustomize into the decode EngineCore only
@@ -83,6 +85,8 @@ client's per-request records by request id.
   **≥ 150 ms** (vs ~15 ms otherwise); they account for most of the gap between ITL p50
   (~15 ms) and mean (~28 ms). If admit steps are < 50 ms the hypothesis is rejected and
   the ITL tail has another cause (to be found from the step trace).
+
+> **Outcome (2026-10-25):** trace overhead nil (tpot2 −0.56 ms vs off, same throughput). Stall prediction confirmed: load-overlapping steps p50 173 ms vs 14 ms; 34% of decode wall time at 24 GiB / 2 req/s. See DECISIONS E1.
 
 ## E2 — baseline grid (sweeps A and B)
 
@@ -107,6 +111,8 @@ p50/mean/p95, decode queue wait mean/p95, failed, swap-in, and the E1 trace.
 - **Prediction on hypothesis 1 (no sharing):** in the trace, at Running = c, the
   running set spans ~0.7 × c distinct sessions (from the arrival simulation: 10.3
   requests / 6.8 sessions).
+
+> **Outcome (2026-10-25):** 23 cells + 1 rerun, all ok. Capacity 24 / 26 / 28 GiB ≈ 1.5–2 / ~2 / 2–2.5 req/s — each one grid step below the prediction. Shape, preemption pattern and the sub-linear gain confirmed. The FCFS replay with the effective slot count (10 at 24 GiB because of the 392-block admission rule, 12, 15) matches mean wait to < 2%; Lee–Longton only near ρ ≈ 0.9. Hypothesis 1 deferred to E4. See DECISIONS E2.
 
 ## Figures (deliverable 1)
 
