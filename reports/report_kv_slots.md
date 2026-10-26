@@ -15,7 +15,9 @@ of KV from host RAM *synchronously inside the engine thread*, and the whole batc
 for ~120 ms each time. A request among more neighbours sits through more of these stalls
 (1.6 at 1 req/s → 8.7 at 28 GiB / 3 req/s). So +50% slots (24 → 28 GiB) buys +21%
 saturation throughput: 2.97 → 3.58 req/s. Up to 2 req/s nobody waits at any budget, and
-the budget does not matter.
+the budget does not matter. The load path is the lever: LMCache's
+multi-process connector (on vLLM 0.18.1) takes the copy out of the step, residence stops
+growing with the slot count, and capacity rises by 1–1.5 req/s (§6).
 
 **What changed from the first version.** The first version of this study
 ([report_kv_slots_fallback.md](report_kv_slots_fallback.md)) ran LMCache on its Python
@@ -333,20 +335,32 @@ decode engine's blocks over CUDA IPC while the batch keeps decoding; a new reque
 granted its blocks and joins when its KV has arrived. vLLM 0.15.1's copy of this connector
 keys lookups by block hashes and does not work with LMCache 0.4.4, so this part runs on
 **vLLM 0.18.1** (torch 2.10, where LMCache's stock kernels load natively). A source review
-found the same admission, eviction and grant formula as 0.15.1; measured, the grant is 45
-blocks larger (4,025 at 24 GiB = 10.06 slots, so 24 GiB no longer evicts) and the median
-decode step is ~2 ms shorter. No same-version synchronous control was run.
+found the same admission and eviction rules as 0.15.1, but the measured grant is
+**0.5–0.6 GiB larger at every budget**: 4,266 / 5,290 / 6,313 blocks = 10.67 / 13.2 / 15.8
+requests (0.15.1: 9.95 / 12.51 / 15.07), and the median decode step is ~2 ms shorter at
+small batches. No same-version synchronous control was run, so every comparison below
+mixes the connector with these version effects. Full grid, 27 cells, all ok (DECISIONS D11):
 
-Smoke, 24 GiB / 2.5 req/s (DECISIONS D11):
+![MP vs sync](../figures/kv_async.png)
 
-| | sync, compiled (0.15.1) | MP connector (0.18.1) |
-|---|---|---|
-| extra time of load-carrying steps / request | 0.67 s | **0.05 s** |
-| residence (from block grant) | 2.83 s | **1.87 s** |
-| slot wait / KV wait after block grant | 143 ms / — | 4 / 41 ms |
-| TPOT p50 | 24.2 ms | 15.1 ms |
+| | 24 GiB | 26 GiB | 28 GiB |
+|---|---|---|---|
+| slots on 0.18.1 (by the 392-block rule) | 10, never evicts | 13, never evicts | 15 + a lent 16th → evicts |
+| capacity, sync 0.15.1 → MP 0.18.1 | 2 → **3** req/s | 2.5 → **3.5** | 2.5 → **4** |
+| best throughput, sync → MP | 380 → 528 tok/s (+39%) | 429 → 603 (+41%, still rising) | 458 → 503 at 4 req/s, then collapses |
+| residence at 3 req/s | 3.15 → 1.99 s | 3.25 → 1.99 | 3.35 → 1.99 |
 
-[Grid results pending.]
+- **The stall is gone.** Extra time of load-carrying steps 0.05–0.06 s per request in every
+  cell (synchronous: 0.67 s at 24 GiB / 2.5 req/s). A new request waits 41–44 ms (p50) for
+  its KV after getting its blocks, without stalling anyone.
+- **Residence no longer grows with the neighbours.** From 1 to 5 req/s it rises only
+  1.58 → 2.3–2.5 s, the cost of a bigger batch; the §4.3 mechanism behind the diminishing
+  returns is removed, and each extra slot is worth close to a full slot.
+- **28 GiB collapses at 4.5–5 req/s** (5 req/s: 174 evictions, 303 tok/s, residence 6.2 s).
+  The larger 0.18.1 grant lets the admission rule lend a 16th slot, so evictions return, and
+  this connector does not reload an evicted request (`TODO: support loading KV for
+  preempted requests` in its source): each eviction recomputes the 6,144-token prefix on
+  the decode GPU. With the copy off the critical path, evictions become the dominant cost.
 
 ### 6.5 Summary of the levers
 
@@ -355,7 +369,7 @@ Smoke, 24 GiB / 2.5 req/s (DECISIONS D11):
 | compiled LMCache kernels | copy 190 → 114 ms; saturation +25–30% | adopted as the baseline (§5) |
 | `use_layerwise` | none (no overlap) | not useful on this stack |
 | `enable_async_loading` | residence −5 to −16%; +7% saturation; unstable at 24 GiB ≥ 4 req/s | usable with care |
-| MP connector (vLLM 0.18.1) | stall removed; residence −34% in the smoke | grid [pending] |
+| MP connector (vLLM 0.18.1) | stall removed; capacity +1 to +1.5 req/s; +40% throughput; collapses when evictions recompute | best lever; avoid budgets whose admission rule lends a slot |
 | fp8 KV | would halve bytes per block (≈ 20 slots at 24 GiB) | not run; needs a bf16 control on the same attention backend |
 | decode-side prefix caching | would free the duplicated third of resident KV (§4.5) | not tested: it changes the workload |
 
