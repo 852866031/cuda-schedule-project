@@ -176,6 +176,8 @@ baseline.
 
 New venvs only if a smoke needs another vLLM version; `.venv-matched` is never modified.
 
+> **Outcome (2026-10-26, D5–D9):** APC not tested (changes the workload, by decision); fp8 not run (needs a backend-matched bf16 control). `use_layerwise`: no overlap (compiled kernels). `enable_async_loading`: crashed under the Python fallback, runs with the compiled kernels. MP connector: infeasible on vLLM 0.15.1 (block-hash keys vs LMCache 0.4.4's token ids; ptrace-gated IPC with expandable segments) — runs on vLLM 0.18.1. The rebuilt compiled kernels themselves became the new baseline (D6).
+
 ## E5 — rerun the grid for feasible methods (deliverable 5)
 
 Every method that passes E4 runs the identical E2 grid (or the subset that shows its
@@ -186,6 +188,8 @@ knee — confirmed with the user before queueing). Figures overlay it on the bas
 - **Prediction:** decode APC moves 24 GiB capacity above 3.5 QPS (raises effective c);
   fp8 roughly doubles c, capacity +60–80% at equal budget (S slightly longer from the
   larger batch); layerwise changes capacity by < 10%.
+
+> **Outcome (2026-10-26, D10–D11):** grids rerun for `enable_async_loading` (vLLM 0.15.1; residence −5 to −16%, +7% saturation, capacity +0.5 req/s at 28 GiB only, crashes at 24 GiB ≥ 4 req/s) and the MP connector (vLLM 0.18.1; batch stall removed, capacity +1 to +1.5 req/s, +40% throughput; 28 GiB collapses above 4 req/s when a lent 16th slot causes evictions that recompute). See `reports/report_kv_slots.md` §6.
 
 ## Deliverable 3 — related work
 
