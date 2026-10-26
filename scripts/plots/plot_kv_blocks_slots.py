@@ -90,10 +90,10 @@ ax.set_xlim(0, 100)
 ax.set_ylim(0, 100)
 ax.axis("off")
 t(ax, 2, 95, "Slots: how many whole requests the pool holds (this study's unit)", 14, bold=True)
-t(ax, 2, 87, "slot = the 400 blocks one request holds from admission to its last token;  c = ⌊blocks ÷ 400⌋", 11.5, "#444")
-rows = [(24, 3980, 9, 380, "9.95 → 10 in practice: a 10th fits on its 392 prompt blocks, then one is evicted"),
-        (26, 5004, 12, 204, "12.51 → 12: the spare 204 blocks admit nothing"),
-        (28, 6027, 15, 27, "15.07 → 15")]
+t(ax, 2, 87, "slot = the 400 blocks one request holds by its last token; admission checks only its 392 prompt blocks", 11.5, "#444")
+rows = [(24, 3980, 9, 380, "9.95 slots: after 9 admissions 452 blocks free ≥ 392 → a 10th gets in, later one is evicted"),
+        (26, 5004, 12, 204, "12.51 slots: after 12 admissions 300 blocks free < 392 → 12"),
+        (28, 6027, 15, 27, "15.07 slots: after 15 admissions 147 free < 392 → 15")]
 k = 94 / 6100
 BY = 70
 for b, blocks, c, spare, note in rows:
@@ -111,7 +111,7 @@ for b, blocks, c, spare, note in rows:
         if spare > 100:
             t(ax, x + spare * k / 2, BY + 4, str(spare), 9.5, "#444", "center")
     BY -= 24
-t(ax, 2, 6, "blue = one slot (400 blocks, 0.78 GiB);  grey = spare blocks, fewer than one request needs", 11, "#444")
+t(ax, 2, 6, "blue = one slot (400 blocks, 0.78 GiB);  grey = what is left once every slot is full", 11, "#444")
 fig.savefig(FIGS / "kv_slots.png", dpi=150, bbox_inches="tight")
 plt.close(fig)
 print("-> kv_blocks.png kv_grant.png kv_slots.png")

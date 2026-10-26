@@ -50,7 +50,7 @@ def badge(ax, x, y, n, fs=22):
 
 
 def canvas(w=16, h=9):
-    fig, ax = plt.subplots(figsize=(w * 0.75, h * 0.75))   # 0.75: figure text >= 24 px on a slide
+    fig, ax = plt.subplots(figsize=(w * 0.75, h * 0.75))   # 0.75: tested; smaller canvases overflow the boxes
     ax.set_xlim(0, 160)
     ax.set_ylim(0, 90)
     ax.axis("off")
@@ -76,7 +76,7 @@ def fig_system():
     # GPU0 prefill
     rbox(ax, 56, 56, 48, 30, "#e8f4ef", C_PF, lw=2)
     txt(ax, 58, 82, "GPU0 — prefill engine", 15, C_PF, ha="left", bold=True)
-    txt(ax, 80, 68, "computes the 6,272-token prompt\n→ token #1; saves its prefix KV\nto LMCache (24 chunks of 256)", 13)
+    txt(ax, 80, 68, "finds the session prefix in its cache\n(or LMCache), computes the rest\n→ token #1; saves the prefix KV", 13)
     # GPU1 decode
     rbox(ax, 56, 4, 48, 30, C_GPU, C_DEC, lw=2)
     txt(ax, 58, 30, "GPU1 — decode engine", 15, C_DEC, ha="left", bold=True)
@@ -321,7 +321,7 @@ def fig_async_smoke():
     """24 GiB, 2.5 req/s: kv_cops_b24_q2.5_tr_r2 vs kv_cops_async_b24_q2.5_tr_g (D10 grid cell)"""
     fig, axes = plt.subplots(1, 4, figsize=(12.5, 4.2), gridspec_kw={"wspace": 0.55})
     data = [("KV copy inside the step\n(ms per request)", 116, 70, "{:.0f}"),
-            ("stalls from others'\nloads (s per request)", 0.75, 0.47, "{:.2f}"),
+            ("extra time of load-carrying\nsteps (s per request)", 0.67, 0.41, "{:.2f}"),
             ("residence (s)", 2.83, 2.48, "{:.2f}")]
     for i, (ax, (t, a, b, fmt)) in enumerate(zip(axes, data)):
         ax.bar([0, 1], [a, b], color=["#c9c6bd", C_DEC], width=0.6)
@@ -512,6 +512,178 @@ def fig_layerwise_s():
     print("-> figures/slides/s_layerwise.png", [[round(x, 2) for x in p] for p in parts])
 
 
+# ------------------------------------------------------------------ slide-native result figures
+QS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
+BUD = [24, 26, 28]
+CB = {24: "#2a78d6", 26: "#eb6834", 28: "#1baf7a"}
+
+
+def summary_cops():
+    rows = {}
+    for r in csv.DictReader(open(REPO / "output" / "summary_kv.csv")):
+        if r["method"] != "cops" or r["ok"] != "True" or r.get("trace_invalid"):
+            continue
+        k = (float(r["budget_gib"]), float(r["qps"]))
+        if k not in rows or r["name"].endswith("_r2"):
+            rows[k] = r
+    return rows
+
+
+def mbadge(ax, x, y, n, fs=20, **kw):
+    ax.text(x, y, MARK[n - 1], fontsize=fs, color=C_RED, ha="center", va="center", fontweight="bold",
+            zorder=30, bbox=dict(boxstyle="circle,pad=0.05", fc="white", ec="none", alpha=0.9), **kw)
+
+
+def fig_heat_s():
+    from matplotlib.colors import LogNorm
+    R = summary_cops()
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.0), gridspec_kw={"wspace": 0.12})
+    for ax, (col, scale, title, fmt, cmap, norm) in zip(axes, [
+            ("decode_queue_ms", 1e-3, "(a) mean queue wait (s)", None, "Blues", LogNorm(0.005, 20)),
+            ("tok_per_s", 1, "(b) output tokens / s", "{:.0f}", "Greens", None)]):
+        M = np.array([[float(R[(b, q)][col]) * scale if (b, q) in R else np.nan for q in QS] for b in BUD])
+        im = ax.imshow(np.maximum(M, 0.005) if norm else M, cmap=cmap, norm=norm, aspect="auto",
+                       origin="lower")
+        for i in range(3):
+            for j in range(9):
+                v = M[i, j]
+                t = (f"{v:.2f}" if v < 0.995 else f"{v:.1f}" if v < 9.95 else f"{v:.0f}") if fmt is None else fmt.format(v)
+                dark = (np.log10(max(v, 0.005)) > 0) if norm else v > 340
+                ax.text(j, i, t, ha="center", va="center", fontsize=13, color="white" if dark else C_INK)
+        ax.set_xticks(range(9))
+        ax.set_xticklabels([f"{q:g}" for q in QS], fontsize=13)
+        ax.set_yticks(range(3))
+        ax.set_yticklabels([f"{b} GiB" for b in BUD], fontsize=13)
+        ax.set_xlabel("request rate (req/s)", fontsize=13)
+        ax.set_title(title, loc="right" if norm else "left", fontsize=14)
+    axes[1].set_yticklabels([])
+    axes[0].add_patch(Rectangle((-0.5, -0.5), 3, 3, fill=False, ec=C_RED, lw=3))
+    mbadge(axes[0], 1.0, 2.75, 1, clip_on=False)
+    for i, j in ((0, 2), (1, 3), (2, 3)):                    # last cell under 50 ms per budget
+        axes[0].add_patch(Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, ec=C_RED, lw=2, ls="--"))
+    mbadge(axes[0], 3.5, 2.75, 2, clip_on=False)
+    mbadge(axes[1], 8, 2.75, 3, clip_on=False)
+    fig.savefig(OUT / "s_heat.png", dpi=130, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    print("-> figures/slides/s_heat.png")
+
+
+def fig_mgc_s():
+    rows = [r for r in csv.DictReader(open(REPO / "output" / "kv_vram" / "mgc.csv")) if r["method"] == "cops"]
+    names = {r["name"] for r in rows}
+    rows = [r for r in rows if not (r["name"].endswith("_r2") and r["name"][:-3] in names)
+            or r["name"] == "kv_cops_b24_q1_tr_r2"]
+    rows = [r for r in rows if r["name"] != "kv_cops_b24_q1_tr"]
+    fig, axes = plt.subplots(1, 3, figsize=(12.5, 4.3), sharey=True, gridspec_kw={"wspace": 0.08})
+    for ax, b in zip(axes, BUD):
+        rs = sorted([r for r in rows if float(r["budget_gib"]) == b], key=lambda r: float(r["qps"]))
+        q = [float(r["qps"]) for r in rs]
+        meas = [float(r["wait_meas_ms"]) / 1e3 for r in rs]
+        rep, rep1 = ([float(r[k]) / 1e3 for r in rs] for k in ("wait_replay_ms", "wait_replay_c1_ms"))
+        on, off = (rep1, rep) if b == 24 else (rep, rep1)
+        c = int(rs[0]["c"])
+        ceff, coff = (c + 1, c) if b == 24 else (c, c + 1)
+        ax.plot(q, meas, "o-", color=C_INK, lw=3.5, ms=8, label="measured", zorder=4)
+        ax.plot(q, on, "s--", color=CB[b], lw=1.6, ms=5, zorder=6, label="replay, slots the engine had")
+        ax.plot(q, off, "^:", color="#9a9a95", lw=1.6, ms=6, label="replay, one slot off")
+        ax.set_yscale("symlog", linthresh=0.05)
+        ax.axhline(0.05, color=C_RED, lw=1, ls=":")
+        ax.set_title(f"{b} GiB: c = {ceff} (grey: {coff})", fontsize=14)
+        ax.set_xlabel("request rate (req/s)", fontsize=13)
+        ax.tick_params(labelsize=12)
+        ax.grid(color="#ececea", lw=0.6)
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[0].set_ylabel("mean queue wait (s)", fontsize=13)
+    axes[0].text(1.0, 0.06, "50 ms", color=C_RED, fontsize=12)
+    h, l = axes[0].get_legend_handles_labels()
+    fig.legend(h, l, loc="upper center", ncol=3, frameon=False, fontsize=13, bbox_to_anchor=(0.5, 1.1))
+    mbadge(axes[1], 2.55, 1.0, 1)                    # the coinciding lines
+    mbadge(axes[0], 3.0, 9.0, 2)                     # grey off at 24 GiB
+    mbadge(axes[2], 1.6, 0.08, 3)
+    fig.savefig(OUT / "s_mgc.png", dpi=130, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    print("-> figures/slides/s_mgc.png")
+
+
+def fig_waitfree_s():
+    tl = REPO / "output" / "kv_vram" / "timeline"
+    rng = np.random.default_rng(0)
+    fig, axes = plt.subplots(1, 3, figsize=(12.5, 4.3), sharey=True, gridspec_kw={"wspace": 0.08})
+    for ax, b in zip(axes, BUD):
+        for q, mk, al in ((2.5, "o", 0.85), (3.0, "^", 0.55)):
+            p = tl / f"kv_cops_b{b}_q{q:g}_tr_r2_req.csv"
+            if not p.exists():
+                p = tl / f"kv_cops_b{b}_q{q:g}_tr_req.csv"
+            rq = [r for r in csv.DictReader(open(p)) if r.get("wait")]
+            x = np.array([int(r["free_at_arr"]) // 392 - int(float(r["wait_at_arr"])) for r in rq])
+            x = np.minimum(x, 1)                          # 0 or fewer = none left; 1 = at least one
+            w = np.array([float(r["wait"]) for r in rq]) * 1e3 + 1
+            ax.scatter(np.where(x >= 1, 1, 0) + rng.uniform(-0.25, 0.25, len(x)), w, s=14, marker=mk,
+                       color=CB[b], alpha=al, lw=0, label=f"{q:g} req/s")
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(["none left\nfor it", "≥ 1 left\nfor it"], fontsize=13)
+        ax.set_xlim(-0.6, 1.6)
+        ax.set_yscale("log")
+        ax.set_title(f"{b} GiB", fontsize=14)
+        ax.legend(frameon=False, fontsize=12, loc="upper right")
+        ax.grid(axis="y", color="#ececea", lw=0.6)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.tick_params(axis="y", labelsize=12)
+    axes[0].set_ylabel("queue wait (ms + 1, log)", fontsize=13)
+    mbadge(axes[0], -0.45, 3000, 1)
+    mbadge(axes[0], 1.0, 2.6, 2)
+    mbadge(axes[0], -0.45, 1.6, 3)
+    fig.text(0.5, -0.06, "admissions left for this request at arrival = free blocks ÷ 392 − requests already queued ahead",
+             ha="center", fontsize=13)
+    fig.savefig(OUT / "s_waitfree.png", dpi=130, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    print("-> figures/slides/s_waitfree.png")
+
+
+def fig_split_s():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import plot_kv_split as S
+    S.METHOD = "cops"
+    tl = REPO / "output" / "kv_vram" / "timeline"
+    C = {"queue": "#9a9a95", "load": C_LOAD, "steps": C_DEC, "stall": "#f4b48f"}
+    fig, axes = plt.subplots(1, 3, figsize=(12.5, 4.5), sharey=True, gridspec_kw={"wspace": 0.08})
+    for ax, b in zip(axes, BUD):
+        xs, vals = [], []
+        for q in QS:
+            p = tl / f"kv_cops_b{b}_q{q:g}_tr_r2_req.csv"
+            if not p.exists():
+                p = tl / f"kv_cops_b{b}_q{q:g}_tr_req.csv"
+            xs.append(q)
+            vals.append(S.split(p.name[:-8]))
+        bottom = np.zeros(len(xs))
+        for k, lab in (("steps", "own decode steps"), ("stall", "in steps carrying others' copies"),
+                       ("load", "own load"), ("queue", "queue")):
+            v = np.array([d[k] for d in vals])
+            ax.bar(range(len(xs)), v, bottom=bottom, color=C[k], width=0.72, label=lab, edgecolor="white")
+            bottom += v
+        ax.set_xticks(range(len(xs)))
+        ax.set_xticklabels([f"{q:g}" for q in xs], fontsize=12)
+        ax.set_xlabel("request rate (req/s)", fontsize=13)
+        ax.set_title(f"{b} GiB", fontsize=14)
+        ax.set_ylim(0, 8)
+        ax.grid(axis="y", color="#ececea", lw=0.6)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.tick_params(axis="y", labelsize=12)
+        if b == 28:
+            j = xs.index(3)
+            d = vals[j]
+            mbadge(ax, j, d["steps"] / 2, 1)
+            mbadge(ax, j, d["steps"] + d["stall"] / 2, 2)
+        if b == 24:
+            mbadge(ax, xs.index(4), 2.78, 3)
+    axes[0].set_ylabel("seconds per request (clipped at 8)", fontsize=13)
+    h, l = axes[0].get_legend_handles_labels()
+    fig.legend(h[::-1], l[::-1], loc="upper center", ncol=4, frameon=False, fontsize=13, bbox_to_anchor=(0.5, 1.08))
+    fig.savefig(OUT / "s_split.png", dpi=130, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    print("-> figures/slides/s_split.png")
+
+
 # ------------------------------------------------------------------ markers on report figures
 def mark(src, name, marks, boxes=(), crop=None):
     """copy figures/<src> with red circled numbers at fractional (x, y) from the top-left,
@@ -572,7 +744,8 @@ MARKED = {
 
 FIGS = {"system": fig_system, "testbed": fig_testbed, "workload": fig_workload, "path": fig_path,
         "method": fig_method, "kernels": fig_kernels,
-        "loadpath": fig_loadpath, "async_smoke": fig_async_smoke, "mp": fig_mp, "case1": fig_case1_s, "case2": fig_case2_s, "layerwise": fig_layerwise_s}
+        "loadpath": fig_loadpath, "async_smoke": fig_async_smoke, "mp": fig_mp, "case1": fig_case1_s, "case2": fig_case2_s, "layerwise": fig_layerwise_s, "heat": fig_heat_s,
+        "mgc": fig_mgc_s, "waitfree": fig_waitfree_s, "split": fig_split_s}
 
 if __name__ == "__main__":
     want = sys.argv[1:] or list(FIGS) + list(MARKED)
