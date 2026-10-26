@@ -244,6 +244,8 @@ completions are spread out, so loads land in the middle of other requests' decod
 admissions does not change where they land. Decode time = 128 steps + (loads met while
 resident) × ~190 ms. (Test and numbers: DECISIONS, "Check of the §4.3 explanation".)
 
+![stall check](../figures/kv_stall_check.png)
+
 ### 4.4 Same request scheduling in VRAM 24 vs VRAM 28
 
 **Why this section.** Everything above is a mean over 300 requests. Here the same 300
