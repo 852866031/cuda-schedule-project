@@ -537,35 +537,73 @@ def mbadge(ax, x, y, n, fs=20, **kw):
 def fig_heat_s():
     from matplotlib.colors import LogNorm
     R = summary_cops()
-    fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.0), gridspec_kw={"wspace": 0.12})
-    for ax, (col, scale, title, fmt, cmap, norm) in zip(axes, [
-            ("decode_queue_ms", 1e-3, "(a) mean queue wait (s)", None, "Blues", LogNorm(0.005, 20)),
-            ("tok_per_s", 1, "(b) output tokens / s", "{:.0f}", "Greens", None)]):
+    fig, axes = plt.subplots(1, 3, figsize=(16, 3.6), gridspec_kw={"wspace": 0.06})
+    for k, (ax, (col, scale, title, fmt, cmap, norm, dark_at)) in enumerate(zip(axes, [
+            ("decode_queue_ms", 1e-3, "(a) mean queue wait (s)", None, "Blues", LogNorm(0.005, 20), 1),
+            ("tok_per_s", 1, "(b) output tokens / s", "{:.0f}", "Greens", None, 340),
+            ("tpot_p50_ms", 1, "(c) TPOT p50 (ms)", "{:.0f}", "Oranges", LogNorm(14, 200), 50)])):
         M = np.array([[float(R[(b, q)][col]) * scale if (b, q) in R else np.nan for q in QS] for b in BUD])
-        im = ax.imshow(np.maximum(M, 0.005) if norm else M, cmap=cmap, norm=norm, aspect="auto",
-                       origin="lower")
+        ax.imshow(np.maximum(M, 0.005) if col == "decode_queue_ms" else M, cmap=cmap, norm=norm,
+                  aspect="auto", origin="lower")
         for i in range(3):
             for j in range(9):
                 v = M[i, j]
-                t = (f"{v:.2f}" if v < 0.995 else f"{v:.1f}" if v < 9.95 else f"{v:.0f}") if fmt is None else fmt.format(v)
-                dark = (np.log10(max(v, 0.005)) > 0) if norm else v > 340
-                ax.text(j, i, t, ha="center", va="center", fontsize=13, color="white" if dark else C_INK)
+                t = ("0" if v < 0.005 else f"{v:.2f}" if v < 0.995 else f"{v:.1f}" if v < 9.95 else f"{v:.0f}") if fmt is None else fmt.format(v)
+                ax.text(j, i, t, ha="center", va="center", fontsize=12,
+                        color="white" if v > dark_at else C_INK)
         ax.set_xticks(range(9))
         ax.set_xticklabels([f"{q:g}" for q in QS], fontsize=13)
         ax.set_yticks(range(3))
-        ax.set_yticklabels([f"{b} GiB" for b in BUD], fontsize=13)
+        ax.set_yticklabels([f"{b} GiB" for b in BUD] if k == 0 else [], fontsize=13)
         ax.set_xlabel("request rate (req/s)", fontsize=13)
-        ax.set_title(title, loc="right" if norm else "left", fontsize=14)
-    axes[1].set_yticklabels([])
+        ax.set_title(title, loc="left", fontsize=14, pad=34)
     axes[0].add_patch(Rectangle((-0.5, -0.5), 3, 3, fill=False, ec=C_RED, lw=3))
-    mbadge(axes[0], 1.0, 2.75, 1, clip_on=False)
+    mbadge(axes[0], 1.0, 2.72, 1, clip_on=False)
     for i, j in ((0, 2), (1, 3), (2, 3)):                    # last cell under 50 ms per budget
         axes[0].add_patch(Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, ec=C_RED, lw=2, ls="--"))
-    mbadge(axes[0], 3.5, 2.75, 2, clip_on=False)
-    mbadge(axes[1], 8, 2.75, 3, clip_on=False)
+    mbadge(axes[0], 3.5, 2.72, 2, clip_on=False)
+    mbadge(axes[1], 8, 2.72, 3, clip_on=False)
+    mbadge(axes[2], 5, 2.72, 4, clip_on=False)
     fig.savefig(OUT / "s_heat.png", dpi=130, facecolor="white", bbox_inches="tight")
     plt.close(fig)
     print("-> figures/slides/s_heat.png")
+
+
+def fig_3d_s():
+    """The grid as surfaces, slide-sized: one panel per metric, the 50 ms capacity line on (a)."""
+    from matplotlib import cm
+    R = summary_cops()
+    B, Q = np.meshgrid(BUD, QS, indexing="ij")
+    fig = plt.figure(figsize=(16, 5.6))
+    for k, (col, sc, title, cmap, log) in enumerate([
+            ("decode_queue_ms", 1e-3, "(a) mean queue wait (s)", cm.Blues, False),
+            ("tok_per_s", 1, "(b) output tokens / s", cm.Greens, False),
+            ("tpot_p50_ms", 1, "(c) TPOT p50 (ms, log)", cm.Oranges, True)]):
+        ax = fig.add_subplot(1, 3, k + 1, projection="3d")
+        Z = np.array([[float(R[(b, q)][col]) * sc for q in QS] for b in BUD])
+        Zp = np.log10(Z) if log else Z
+        ax.plot_surface(B, Q, Zp, cmap=cmap, edgecolor="#333", lw=0.5, alpha=0.9, rstride=1, cstride=1)
+        for i, b in enumerate(BUD):
+            ax.scatter([b] * len(QS), QS, Zp[i], color=CB[b], s=22, depthshade=False)
+        if k == 0:                                  # capacity: last rate under 50 ms per budget
+            cap = {24: 2, 26: 2.5, 28: 2.5}
+            ax.plot(BUD, [cap[b] for b in BUD], [0.6] * 3, color=C_RED, lw=3.5, zorder=10)
+            ax.text(23.4, 1.6, 1.0, "50 ms", color=C_RED, fontsize=13, fontweight="bold")
+        if log:
+            ax.set_zticks(np.log10([20, 50, 100, 200]))
+            ax.set_zticklabels(["20", "50", "100", "200"])
+        ax.set_xticks(BUD)
+        ax.set_yticks([1, 2, 3, 4, 5])
+        ax.tick_params(labelsize=12)
+        ax.set_xlabel("budget (GiB)", fontsize=13, labelpad=6)
+        ax.set_ylabel("rate (req/s)", fontsize=13, labelpad=6)
+        ax.view_init(elev=24, azim=-55)
+        ax.set_box_aspect(None, zoom=0.88)
+        ax.set_title(title, fontsize=15, pad=0)
+    fig.subplots_adjust(left=0.0, right=0.98, wspace=0.02, top=0.95, bottom=0.02)
+    fig.savefig(OUT / "s_3d.png", dpi=130, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    print("-> figures/slides/s_3d.png")
 
 
 def fig_mgc_s():
@@ -794,7 +832,7 @@ MARKED = {
 
 FIGS = {"system": fig_system, "testbed": fig_testbed, "workload": fig_workload, "path": fig_path,
         "method": fig_method, "kernels": fig_kernels,
-        "loadpath": fig_loadpath, "async_smoke": fig_async_smoke, "mp": fig_mp, "case1": fig_case1_s, "case2": fig_case2_s, "layerwise": fig_layerwise_s, "heat": fig_heat_s,
+        "loadpath": fig_loadpath, "async_smoke": fig_async_smoke, "mp": fig_mp, "case1": fig_case1_s, "case2": fig_case2_s, "layerwise": fig_layerwise_s, "heat": fig_heat_s, "3d": fig_3d_s,
         "mgc": fig_mgc_s, "waitfree": fig_waitfree_s, "split": fig_split_s, "async_grid": fig_async_grid, "mp_grid": fig_mp_grid}
 
 if __name__ == "__main__":
