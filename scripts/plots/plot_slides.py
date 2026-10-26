@@ -685,7 +685,7 @@ def fig_split_s():
 
 
 # ------------------------------------------------------------------ async / MP over the grid
-def fig_lever_grid(method, label, color, name, unstable=None):
+def fig_lever_grid(method, label, color, name, unstable=None, extra=()):
     rows = list(csv.DictReader(open(REPO / "output" / "kv_vram" / "async_summary.csv")))
     fig, axes = plt.subplots(2, 3, figsize=(12.5, 6.2), sharex=True,
                              gridspec_kw={"hspace": 0.25, "wspace": 0.18})
@@ -719,13 +719,15 @@ def fig_lever_grid(method, label, color, name, unstable=None):
     mbadge(axes[1, 1], 3.0, 2.6, 2)
     if unstable:
         mbadge(axes[0, 0], 4.5, 5.0, 3)
+    for (i, j, x, y, n) in extra:
+        mbadge(axes[i, j], x, y, n)
     fig.savefig(OUT / f"{name}.png", dpi=130, facecolor="white", bbox_inches="tight")
     plt.close(fig)
     print(f"-> figures/slides/{name}.png")
 
 
 def fig_mp_grid():
-    fig_lever_grid("mp18", "MP connector (vLLM 0.18.1)", C_LOAD, "s_mp_grid")
+    fig_lever_grid("mp18", "MP connector (vLLM 0.18.1)", C_LOAD, "s_mp_grid", extra=[(1, 2, 4.55, 5.0, 3)])
 
 
 def fig_async_grid():
