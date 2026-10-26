@@ -551,3 +551,11 @@ rates, so it will recur. Fix in `lmc_proxy.py`: on `ClientOSError` /
 fresh connection and log `DECODE-RETRY`. Only a request that hits the race is affected.
 Active from the cell after `kv_cops_b24_q1.5_tr` (that cell's router was already up);
 `kv_cops_b24_q1_tr` is rerun as `_r2` after the grid.
+
+**D8 (2026-10-26) — one grid, step 0.5 req/s; 0.25-step cells archived.** The grid for
+both the cops baseline and the fallback is 24 / 26 / 28 GiB × 1, 1.5, …, 5 req/s (24 GiB
+cops also gets 4.5 and 5). The 2.25 and 2.75 req/s cells at 24 GiB (fallback and cops)
+are moved to `output/raw/archive_step025/`, `output/kv_vram/timeline/archive_step025/`,
+`output/kv_vram/trace/archive_step025/`; they no longer enter the summary or figures
+(the frozen fallback report and its figures still quote them). Telemetry under
+`output/gpumon/` stays in place (not read by the summary).
