@@ -124,6 +124,9 @@ refuse_if_listening 8000 8100 8200 8300
 
 # method knobs -> flags (empty for the baseline)
 PF_X=(); DEC_X=(); LMC_PF=""; LMC_DEC=""
+# vLLM >= 0.18 dropped --disable-log-requests (request logging is off by default there)
+LOGREQ="--disable-log-requests"
+case "${VLLM_VENV:-}" in *vllm018*) LOGREQ="";; esac
 DEC_APC_FLAG="--no-enable-prefix-caching"
 [ "${DEC_APC:-0}" = 1 ] && DEC_APC_FLAG="--enable-prefix-caching"
 if [ -n "${KV_DTYPE:-}" ]; then PF_X+=(--kv-cache-dtype "$KV_DTYPE"); DEC_X+=(--kv-cache-dtype "$KV_DTYPE"); fi
@@ -162,7 +165,7 @@ lmc_yaml /tmp/kvv_lmc_decode.yaml "$L1" "$STORE_PORT" "$LMC_DEC"
 CUDA_VISIBLE_DEVICES=0 LMCACHE_CONFIG_FILE=/tmp/kvv_lmc_prefill.yaml env $PF_ENV \
 "$PY" -m vllm.entrypoints.cli.main serve "$MODEL" \
     --port 8100 --gpu-memory-utilization "$PREFILL_UTIL" \
-    --max-model-len 8192 --seed 0 --disable-log-requests --enable-prefix-caching \
+    --max-model-len 8192 --seed 0 $LOGREQ --enable-prefix-caching \
     --no-enable-chunked-prefill --max-num-batched-tokens "${PREFILL_BATCHED_TOKENS:-32768}" \
     "${PF_X[@]}" --kv-transfer-config "$KV_CONN" \
     > "$LOGS/kvv_prefill.log" 2>&1 &
@@ -171,7 +174,7 @@ echo $! > "$PID_DIR/prefill.pid"
 CUDA_VISIBLE_DEVICES=1 LMCACHE_CONFIG_FILE=/tmp/kvv_lmc_decode.yaml env $DEC_ENV \
 "$PY" -m vllm.entrypoints.cli.main serve "$MODEL" \
     --port 8200 --gpu-memory-utilization "$DECODE_UTIL" \
-    --max-model-len 8192 --seed 0 --disable-log-requests $DEC_APC_FLAG \
+    --max-model-len 8192 --seed 0 $LOGREQ $DEC_APC_FLAG \
     "${DEC_X[@]}" --kv-transfer-config "$KV_CONN" \
     > "$LOGS/kvv_decode.log" 2>&1 &
 echo $! > "$PID_DIR/decode.pid"
