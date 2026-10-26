@@ -497,3 +497,47 @@ engines' `Using backend:` lines must equal `lmcache.c_ops` for `KV_COPS` arms an
 `lmcache.non_cuda_equivalents` for all others, else the cell fails before measuring; the
 backend is recorded per cell in the summary. The first `cops` smoke was interrupted by a
 session restart before its stack came up (no data); it is rerun.
+
+**Compiled-kernel smokes (24 GiB, 2.5 req/s, 2026-10-26).** Both engines report
+`Using backend: lmcache.c_ops` (guard passed); grant unchanged (7.77 GiB, c_eff 10); ok.
+The first `cops` run's trace was invalid (prefill engine inherited `KV_TRACE=1` once
+`KV_COPS` put `site/` on its path — fixed, `KV_TRACE=0` for prefill); its client and vLLM
+numbers are valid and repeat in `_r2` within 1%.
+
+| | baseline | layerwise | cops (2 runs) | cops_lw |
+|---|---|---|---|---|
+| decode queue | 4,680 / 3,665 ms | 1,409 / 1,556 | 143 / 143 | 136 |
+| TPOT (end-user) p50 | 64 / 56 ms | 39 / 41 | 24.2 / 24.3 | 23.5 |
+| load p50 / p90 | 689 / 1,748 ms | 217 / 450 | 169 / 270 | 148 / 285 |
+| copy per request (`start_load_kv`) | 180–186 ms | (per layer) | 115 ms | (per layer) |
+| excess step time per residence | 0.88 s | 1.40 | 0.67 | 0.70 |
+| residence | 4.10 s | 3.71 | 2.83 | 2.76 |
+| preemptions | 35 / 34 | 12 / 12 | 7 / 8 | 4 |
+| TTFT p50 | 163 / 148 ms | 117 / 113 | 48 / 49 | 69 |
+
+Outcome vs predictions: `cops` beat the prediction (load 169 ms p50 — the kernel, not the
+L1 thrash, was the main cost: L1 failures are unchanged at ~3,400). Kernel 12× faster per
+layer in isolation, but the copy per request only 185 → 115 ms: the rest is L1/store fetch
+and Python. `cops_lw` did **not** overlap (excess 0.70 s ≈ cops' 0.67 s): with async
+copies, each layer still blocks on `task.result()` for its fetch. TTFT falls 3× because the
+prefill engine's KV save also uses the kernels.
+
+## D6 (2026-10-26) — new baseline: LMCache with its compiled kernels; grid rerun
+
+The fallback report is frozen as `reports/report_kv_slots_fallback.md` (figures under
+`figures/fallback/`). The study's baseline becomes method `cops`: identical flags, LMCache's
+own CUDA kernels built for this torch (`.venv-lmc`, loaded by `site/cops_shim.py`). The E2
+grid is rerun with it: 24 / 26 / 28 GiB × 1, 1.5, 2, 2.5, 3, 3.5, 4 req/s, + 2.25 / 2.75
+at 24 GiB (as before), + 4.5 / 5 at 26 and 28 GiB (new: the wait is expected to start
+later than 4 req/s at 28 GiB). One launch per cell, trace on. The 24 GiB / 2.5 cell reuses
+`kv_cops_b24_q2.5_tr_r2`.
+
+**Predictions (before the grid).**
+- Grant and slots unchanged (c_eff 10 / 12 / 15); preemptions at 24 GiB fall with the
+  shorter residence (7–8 at 2.5 req/s vs 35).
+- Residence at saturation ≈ 0.7× the fallback's → saturation throughput ≈ 3.3 / 3.7 /
+  4.2 req/s at 24 / 26 / 28 GiB (fallback 2.3 / 2.65 / 2.7).
+- Capacity (mean queue < 50 ms): 24 GiB between 2.25 and 2.5 req/s; 26 GiB 2.5–3;
+  28 GiB 3–3.5 — about one req/s higher than with the fallback at every budget.
+- At 1 req/s TPOT ≈ 16–17 ms at every budget, as before (nobody waits).
+- The re-simulation with c_eff reproduces the measured mean wait within 2% at every cell.
