@@ -113,7 +113,7 @@ DEC_ENV=""; PF_ENV=""
 [ "${KV_TRACE:-0}" = 1 ] && DEC_ENV="PYTHONPATH=$HERE/site KV_TRACE=1 KV_TRACE_PATH=${KV_TRACE_PATH:?KV_TRACE_PATH}"
 if [ "${KV_COPS:-0}" = 1 ]; then       # compiled kernels in BOTH engines (store side saves with them too)
     DEC_ENV="${DEC_ENV:-PYTHONPATH=$HERE/site} KV_COPS=1"
-    PF_ENV="PYTHONPATH=$HERE/site KV_COPS=1"
+    PF_ENV="PYTHONPATH=$HERE/site KV_COPS=1 KV_TRACE=0"   # the trace is the decode engine's only
 fi
 echo "methods: cops=${KV_COPS:-0} decode $DEC_APC_FLAG ${DEC_X[*]:-} | prefill ${PF_X[*]:-} | lmc_pf [${LMC_PF}] lmc_dec [${LMC_DEC}] | trace ${KV_TRACE:-0}"
 
