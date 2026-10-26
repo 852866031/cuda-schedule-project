@@ -236,13 +236,14 @@ steps + (stalls met while resident) × stall length; the stall count depends on 
 admission pattern, not only on load. *This reading is from the trace of the baseline
 runs; a controlled test of cohort vs spread-out admission is planned (DECISIONS, E6).*
 
-### 4.4 The mechanism seen on one request, not on averages
+### 4.4 Same request scheduling in VRAM 24 vs VRAM 28
 
-Everything above is a mean over 300 requests. This figure shows the same mechanism at
-the level of one request at one moment, which is what makes "waiting = all slots taken"
-checkable rather than inferred. Both panels use the *same* arrival sequence (the seed is
-fixed), so request #256 meets exactly the same neighbours in both; the only difference
-between the panels is the number of slots.
+**Why this section.** Everything above is a mean over 300 requests. Here the same 300
+requests — the same arrival sequence, because the seed is fixed — are run once at 24 GiB
+and once at 28 GiB, and one request (#256) is followed through both. It meets exactly the
+same neighbours in both runs; the only difference is the number of slots. So whatever
+happens differently to it is the effect of the slots alone, seen on one request at one
+moment rather than inferred from an average.
 
 ![slot timeline](../figures/kv_slots_timeline.png)
 
