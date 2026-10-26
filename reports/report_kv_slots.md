@@ -44,7 +44,7 @@ a single request; the clean rerun is reported).
 
 ## 2. Blocks (vLLM's unit) and slots (this study's unit)
 
-![blocks and slots](../figures/kv_blocks_slots.png)
+![blocks](../figures/kv_blocks.png)
 
 **Block — a vLLM concept.** vLLM's PagedAttention keeps every request's KV cache in
 fixed-size *blocks* of `block_size` = 16 tokens; one block holds the K and V of those 16
@@ -58,12 +58,18 @@ more block each time a new 16-token group starts — generating token 6,273 open
 such a step, vLLM preempts a request (§3, case 2). None of this is specific to our
 workload; it is how vLLM manages KV for any request.
 
+![grant](../figures/kv_grant.png)
+
 **Slot — this study's unit.** Every request of the reference workload has the same
 length (6,144 prefix + 128 new + 128 generated = 6,400 tokens = 400 blocks), so the pool
 can be read in units of "whole requests that fit": we call the 400 blocks one request
 holds from admission to its last token a *slot*, and c = ⌊blocks ÷ 400⌋ the number of
 whole slots. vLLM has no such notion — it only sees blocks — which is exactly why the
-fractional part matters (below). Probed grants:
+fractional part matters (below).
+
+![slots](../figures/kv_slots.png)
+
+Probed grants:
 
 | budget | 22 | 23 | 24 | 25 | 26 | 28 GiB |
 |---|---|---|---|---|---|---|
