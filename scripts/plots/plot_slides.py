@@ -315,6 +315,52 @@ def fig_loadpath():
     save(fig, "s_loadpath")
 
 
+# ------------------------------------------------------------------ async_loading, smoke (24 GiB, 2.5 req/s)
+def fig_async_smoke():
+    fig, axes = plt.subplots(1, 4, figsize=(12.5, 4.2), gridspec_kw={"wspace": 0.55})
+    data = [("copy inside the step\n(ms per load)", 121, 73, "{:.0f}"),
+            ("stalls from others'\nloads (s per request)", 0.75, 0.47, "{:.2f}"),
+            ("residence (s)", 2.83, 2.47, "{:.2f}"),
+            ("queue wait, p50 (ms)", 0, 109, "{:.0f}")]
+    for i, (ax, (t, a, b, fmt)) in enumerate(zip(axes, data)):
+        ax.bar([0, 1], [a, b], color=["#c9c6bd", C_DEC], width=0.6)
+        for x, v in ((0, a), (1, b)):
+            ax.text(x, v + max(a, b) * 0.03, fmt.format(v), ha="center", va="bottom", fontsize=13)
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(["sync", "async"], fontsize=13)
+        ax.set_title(t, fontsize=13.5)
+        ax.set_ylim(0, max(a, b) * 1.25)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.text(-0.12, 1.2, MARK[i], transform=ax.transAxes, fontsize=18, color=C_RED, ha="center",
+                va="center", fontweight="bold")
+    fig.savefig(OUT / "s_async_smoke.png", dpi=130, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    print("-> figures/slides/s_async_smoke.png")
+
+
+# ------------------------------------------------------------------ MP connector architecture
+def fig_mp():
+    fig, ax = canvas(16, 8)
+    ax.set_ylim(0, 80)
+    rbox(ax, 4, 46, 44, 28, "#e8f4ef", C_PF, lw=2)
+    txt(ax, 6, 70, "GPU0 — prefill engine", 14, C_PF, ha="left", bold=True)
+    txt(ax, 26, 56, "saves each prompt's KV\nthrough the server", 12.5)
+    rbox(ax, 4, 6, 44, 30, C_GPU, C_DEC, lw=2)
+    txt(ax, 6, 32, "GPU1 — decode engine", 14, C_DEC, ha="left", bold=True)
+    txt(ax, 26, 18, "a new request gets its blocks,\nthen waits for its KV while\nthe batch keeps decoding", 12.5)
+    rbox(ax, 84, 18, 72, 44, C_HOST, "#b9b3a1", lw=2)
+    txt(ax, 86, 58, "LMCache MP server — its own process", 14, "#4a4639", ha="left", bold=True)
+    rbox(ax, 88, 24, 30, 26, "#fde9dd", C_LOAD)
+    txt(ax, 103, 37, "pinned L1\n32 GiB\nall 32 prefixes", 12.5, "#7c2d12")
+    txt(ax, 137, 37, "compiled copy\nkernels; maps both\nengines' KV blocks\nthrough CUDA IPC", 12.5, "#4a4639")
+    arrow(ax, (48, 60), (84, 50), C_LOAD, lw=3, rad=-0.1)
+    badge(ax, 66, 61, 1)
+    arrow(ax, (84, 28), (48, 20), C_LOAD, lw=3, rad=-0.1)
+    badge(ax, 66, 18, 2)
+    txt(ax, 66, 40, "lookup / store / retrieve\nrequests over ZMQ", 12, "#6b6b66")
+    save(fig, "s_mp")
+
+
 # ------------------------------------------------------------------ markers on report figures
 def mark(src, name, marks, boxes=(), crop=None):
     """copy figures/<src> with red circled numbers at fractional (x, y) from the top-left,
@@ -374,7 +420,7 @@ MARKED = {
 
 FIGS = {"system": fig_system, "testbed": fig_testbed, "workload": fig_workload, "path": fig_path,
         "method": fig_method, "kernels": fig_kernels,
-        "loadpath": fig_loadpath}
+        "loadpath": fig_loadpath, "async_smoke": fig_async_smoke, "mp": fig_mp}
 
 if __name__ == "__main__":
     want = sys.argv[1:] or list(FIGS) + list(MARKED)
