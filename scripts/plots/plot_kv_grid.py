@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""KV-slot study, baseline grid figures (from output/summary_kv.csv, output/kv_vram/mgc.csv
+and the per-request timeline CSVs):
+
+  kv_grid_3d.png      3D surface: decode VRAM x request rate -> decode queue wait
+  kv_grid_heat.png    heatmaps with contours: queue wait, throughput, decode-only TPOT
+  kv_mgc.png          measured vs queueing-model wait per budget (FCFS replay with the
+                      effective slot count; Lee-Longton M/G/c approximation)
+  kv_wait_vs_free.png scatter: free whole-request slots when the request reached the decode
+                      scheduler vs its decode queue wait
+
+Cell choice: the traced cells (`_tr`); where a cell was rerun, the clean run (`ok`).
+
+    .venv/bin/python scripts/plots/plot_kv_grid.py
+"""
+import csv
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib import cm
+from matplotlib.colors import LogNorm
+
+REPO = Path(__file__).resolve().parent.parent.parent
+FIGS = REPO / "figures"
+TL = REPO / "output" / "kv_vram" / "timeline"
+plt.rcParams.update({"font.size": 11, "axes.titlesize": 12, "axes.labelsize": 11,
+                     "legend.fontsize": 10})
+BUDGETS = [24, 26, 28]
+C_B = {24: "#2a78d6", 26: "#eb6834", 28: "#1baf7a"}
+SLOTS = {24: "10 slots*", 26: "12 slots", 28: "15 slots"}
+
+
+def load_rows():
+    rows = [r for r in csv.DictReader(open(REPO / "output" / "summary_kv.csv"))
+            if r["method"] == "base" and r["trace"] == "True" and r["ok"] == "True"]
+    best = {}
+    for r in rows:
+        key = (float(r["budget_gib"]), float(r["qps"]))
+        if key not in best or (r["name"].endswith("_r2") and not best[key]["name"].endswith("_tr")):
+            best.setdefault(key, r)
+    # prefer the plain `_tr` run when both exist (E1 showed them within noise)
+    out = {}
+    for r in rows:
+        key = (float(r["budget_gib"]), float(r["qps"]))
+        if r["name"].endswith("_tr") or key not in out:
+            out[key] = r
+    return out
+
+
+ROWS = load_rows()
+QPS_ALL = sorted({k[1] for k in ROWS})
+QPS_COMMON = [q for q in QPS_ALL if all((b, q) in ROWS for b in BUDGETS)]
+
+
+def val(b, q, col):
+    r = ROWS.get((b, q))
+    return float(r[col]) if r and r.get(col) not in (None, "", "None") else np.nan
+
+
+# ------------------------------------------------------------------ 3D
+def fig_3d():
+    fig = plt.figure(figsize=(10, 7.5))
+    ax = fig.add_subplot(111, projection="3d")
+    B, Q = np.meshgrid(BUDGETS, QPS_COMMON, indexing="ij")
+    Z = np.array([[val(b, q, "decode_queue_ms") / 1000 for q in QPS_COMMON] for b in BUDGETS])
+    ax.plot_surface(B, Q, Z, cmap=cm.Blues, edgecolor="#333", lw=0.6, alpha=0.9, rstride=1, cstride=1)
+    for b in BUDGETS:
+        for q in QPS_ALL:
+            z = val(b, q, "decode_queue_ms") / 1000
+            if not np.isnan(z):
+                ax.scatter([b], [q], [z], color=C_B[b], s=28, depthshade=False)
+    ax.set_xlabel("decode VRAM budget (GiB)", labelpad=10)
+    ax.set_ylabel("request rate (req/s)", labelpad=10)
+    ax.set_zlabel("decode queue wait, mean (s)", labelpad=8)
+    ax.set_xticks(BUDGETS)
+    ax.view_init(elev=24, azim=-55)
+    ax.set_title("Decode queue wait vs VRAM budget and request rate\n"
+                 "(Llama-3-8B decode on GPU1, 6,400-token requests, mean per request)", pad=12)
+    fig.savefig(FIGS / "kv_grid_3d.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+# ------------------------------------------------------------------ heatmaps
+def fig_heat():
+    panels = [("decode_queue_ms", 1e-3, "decode queue wait, mean (s)", "(a) queue wait before decode",
+               True, [0.05, 0.5, 2, 5, 10]),
+              ("tok_per_s", 1, "output tokens / s", "(b) throughput", False, [200, 250, 300, 340]),
+              ("tpot2_p50_ms", 1, "ms per token (gaps 2..N)", "(c) decode-only TPOT p50", False,
+               [20, 25, 30, 35])]
+    fig, axes = plt.subplots(1, 3, figsize=(18, 4.8))
+    fig.subplots_adjust(wspace=0.5)
+    for ax, (col, sc, cb, title, logc, levels) in zip(axes, panels):
+        Z = np.array([[val(b, q, col) * sc for q in QPS_COMMON] for b in BUDGETS])
+        norm = LogNorm(vmin=max(0.005, np.nanmin(Z[Z > 0])), vmax=np.nanmax(Z)) if logc else None
+        im = ax.imshow(Z, origin="lower", aspect="auto", cmap="Blues", norm=norm,
+                       extent=[-0.5, len(QPS_COMMON) - 0.5, -0.5, len(BUDGETS) - 0.5])
+        for i, b in enumerate(BUDGETS):
+            for j, q in enumerate(QPS_COMMON):
+                z = Z[i, j]
+                ax.text(j, i, f"{z:.2f}" if col == "decode_queue_ms" and z < 1 else f"{z:.0f}" if z >= 10 else f"{z:.1f}",
+                        ha="center", va="center", fontsize=9.5,
+                        color="white" if (norm and z > 1) or (not norm and z > np.nanmean(Z)) else "#111")
+        Xc, Yc = np.meshgrid(range(len(QPS_COMMON)), range(len(BUDGETS)))
+        if col == "decode_queue_ms":
+            cs = ax.contour(Xc, Yc, Z, levels=levels, colors="#b3261e", linewidths=1)
+            ax.clabel(cs, fmt=lambda v: f"{v:g}", fontsize=8)
+        ax.set_xticks(range(len(QPS_COMMON)))
+        ax.set_xticklabels([f"{q:g}" for q in QPS_COMMON])
+        ax.set_yticks(range(len(BUDGETS)))
+        ax.set_yticklabels([f"{b} GiB\n{SLOTS[b]}" for b in BUDGETS], fontsize=9)
+        ax.set_xlabel("request rate (req/s)")
+        ax.set_title(title)
+        fig.colorbar(im, ax=ax, label=cb, fraction=0.046, pad=0.03)
+    fig.suptitle("Baseline grid: decode VRAM budget × request rate   "
+                 "(* 24 GiB holds 9.95 requests; a 10th is admitted on its 392 prompt blocks)", y=1.02)
+    fig.savefig(FIGS / "kv_grid_heat.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+# ------------------------------------------------------------------ M/G/c
+def fig_mgc():
+    rows = list(csv.DictReader(open(REPO / "output" / "kv_vram" / "mgc.csv")))
+    by = {}
+    for r in rows:
+        if r["method"] != "base" or r["name"].endswith("_r2") and (r["name"][:-3] in {x["name"] for x in rows}):
+            continue
+        by.setdefault(float(r["budget_gib"]), []).append(r)
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.6), sharey=True)
+    for ax, b in zip(axes, BUDGETS):
+        rs = sorted(by.get(b, []), key=lambda r: float(r["qps"]))
+        q = [float(r["qps"]) for r in rs]
+        c = int(rs[0]["c"])
+        meas = [float(r["wait_meas_ms"]) / 1000 for r in rs]
+        rep = [float(r["wait_replay_ms"]) / 1000 for r in rs]
+        rep1 = [float(r["wait_replay_c1_ms"]) / 1000 for r in rs]
+        ll = [float(r["wait_ll_ms"]) / 1000 if r["wait_ll_ms"] not in ("", "None") else np.nan for r in rs]
+        ceff = c + 1 if b == 24 else c
+        ax.plot(q, meas, "o-", color="#111", lw=3.2, ms=8, label="measured", zorder=4)
+        ax.plot(q, rep1 if b == 24 else rep, "s--", color=C_B[b], lw=1.4, ms=4.5, zorder=6,
+                label=f"FCFS replay, c = {ceff}" + (" (effective)" if b == 24 else "") + " — coincides")
+        ax.plot(q, rep if b == 24 else rep1, "^:", color="#9a9a95", lw=1.3, ms=5,
+                label=f"FCFS replay, c = {c if b == 24 else c + 1}")
+        ax.plot(q, ll, "d-.", color="#8a6d00", lw=1.2, ms=5, label="Lee–Longton M/G/c")
+        ax.set_yscale("symlog", linthresh=0.05)
+        ax.set_xlabel("request rate (req/s)")
+        ax.set_title(f"{b} GiB: grant {c if b != 24 else 9.95:g} slots → c = {ceff}")
+        ax.axhline(0.05, color="#b3261e", lw=0.8, ls=":")
+        ax.grid(color="#ececea", lw=0.6)
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[0].set_ylabel("decode queue wait, mean (s, symlog)")
+    axes[0].text(1.02, 0.055, "50 ms capacity line", color="#b3261e", fontsize=8.5, va="bottom")
+    h, l = axes[0].get_legend_handles_labels()
+    fig.legend(h, l, loc="upper center", ncol=4, frameon=False, bbox_to_anchor=(0.5, 1.06))
+    fig.suptitle("Measured decode queue wait vs queueing models (service time = each request's "
+                 "measured residence, Poisson-like arrivals)", y=1.13)
+    fig.savefig(FIGS / "kv_mgc.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+# ------------------------------------------------------------------ scatter
+def fig_scatter():
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.8), sharey=True)
+    rng = np.random.default_rng(0)
+    for ax, b in zip(axes, BUDGETS):
+        for q, mk, al in ((2.0, "o", 0.85), (2.5, "^", 0.55)):
+            p = TL / f"kv_base_b{b:g}_q{q:g}_tr_req.csv"
+            if not p.exists():
+                continue
+            rq = [r for r in csv.DictReader(open(p)) if r.get("wait")]
+            fs = np.array([int(r["free_at_arr"]) / 400 for r in rq])
+            w = np.array([float(r["wait"]) for r in rq])
+            ax.scatter(fs + rng.uniform(-0.12, 0.12, len(fs)), w * 1000 + 1, s=16, marker=mk,
+                       color=C_B[b], alpha=al, lw=0, label=f"{q:g} req/s")
+        ax.axvline(392 / 400, color="#b3261e", lw=1, ls="--")
+        ax.text(392 / 400 + 0.05, 2e4, "392 blocks\n= 1 admission", color="#b3261e", fontsize=8.5, va="top")
+        ax.set_yscale("log")
+        ax.set_xlabel("free KV space at arrival (requests of 400 blocks)")
+        ax.set_title(f"{b} GiB ({SLOTS[b]})")
+        ax.grid(color="#ececea", lw=0.6)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.legend(frameon=False, loc="upper right")
+    axes[0].set_ylabel("this request's decode queue wait (ms + 1, log)")
+    fig.suptitle("A request waits only when it arrives to a full pool: queue wait vs free KV space at arrival "
+                 "(each dot = one request)", y=1.02)
+    fig.savefig(FIGS / "kv_wait_vs_free.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+if __name__ == "__main__":
+    fig_3d()
+    fig_heat()
+    fig_mgc()
+    fig_scatter()
+    print("-> kv_grid_3d.png kv_grid_heat.png kv_mgc.png kv_wait_vs_free.png")

@@ -70,6 +70,7 @@ def cell(name):
             continue
         rq.append({"index": int(r["index"]), "a": f(r["t_arr"]) - base, "s": f(r["t_sched"]) - base,
                    "f": f(r["t_first"]) - base, "e": f(r["t_fin"]) - base,
+                   "sub": f(r.get("t_submit")) - base if r.get("t_submit") else np.nan,
                    "free_arr": int(r["free_at_arr"]), "pre": bool(r.get("preempted"))})
     st = [(f(s["t"]) - base, int(s["run"]), int(s["wait"]), int(s["free"])) for s in rd(name, "state")]
     steps = [(f(s["t"]) - base, f(s["dt"])) for s in rd(name, "steps")]
@@ -98,12 +99,16 @@ def main():
     t0 = args.t0 if args.t0 is not None else pick_window(data[0][1], args.span)
     t1 = t0 + args.span
     if args.follow is None:
-        cand = [r for r in data[0][1] if t0 + 0.2 * args.span < r["a"] < t0 + 0.6 * args.span]
-        args.follow = max(cand, key=lambda r: r["s"] - r["a"])["index"]
+        cand = [r for r in data[0][1] if t0 + 0.15 * args.span < r["a"] < t0 + 0.6 * args.span]
+        if len(data) > 1:       # the request whose wait differs most between the two cells
+            w1 = {r["index"]: r["s"] - r["a"] for r in data[1][1]}
+            args.follow = max(cand, key=lambda r: (r["s"] - r["a"]) - w1.get(r["index"], 0))["index"]
+        else:
+            args.follow = max(cand, key=lambda r: r["s"] - r["a"])["index"]
 
     ncol = len(data)
-    fig, axes = plt.subplots(3, ncol, figsize=(7.2 * ncol, 9.6), sharex=True,
-                             gridspec_kw={"height_ratios": [3.2, 1.6, 1.4], "hspace": 0.12,
+    fig, axes = plt.subplots(4, ncol, figsize=(7.2 * ncol, 12.4), sharex=True,
+                             gridspec_kw={"height_ratios": [2.3, 3.2, 1.6, 1.4], "hspace": 0.12,
                                           "wspace": 0.12}, squeeze=False)
     ymax_lane = max(max(lanes(d[1]).values()) + 1 for d in data)
     qmax = 0
@@ -113,8 +118,30 @@ def main():
     q0 = ymax_lane + 0.8                                  # queue band starts above lanes
     nq = 0
     for j, (rec, rq, st, steps, loads, slots, blocks) in enumerate(data):
-        a, b, c = axes[0, j], axes[1, j], axes[2, j]
+        r0, a, b, c = axes[0, j], axes[1, j], axes[2, j], axes[3, j]
         ln = lanes(rq)
+        # (0) the raw trace: one lifeline per request, in arrival order, no lane packing
+        win = sorted([r for r in rq if r["a"] >= t0 - 0.5 and r["a"] <= t1], key=lambda r: r["a"])
+        for k, r in enumerate(win):
+            fol = r["index"] == args.follow
+            lw = 3.2 if fol else 2.2
+            if not np.isnan(r["sub"]):
+                r0.plot([r["sub"], r["a"]], [k, k], color="#c9c9c4", lw=lw, solid_capstyle="butt")
+            r0.plot([r["a"], r["s"]], [k, k], color=C_WAIT, lw=lw, solid_capstyle="butt")
+            r0.plot([r["s"], r["f"]], [k, k], color=C_LOAD, lw=lw, solid_capstyle="butt")
+            r0.plot([r["f"], r["e"]], [k, k], color=C_DEC, lw=lw, solid_capstyle="butt")
+            r0.plot([r["a"]], [k], marker="|", color="black", ms=7, mew=1.2)
+            if fol:
+                r0.text(r["e"] + 0.2, k, f"#{r['index']}", fontsize=8.5, va="center", fontweight="bold")
+        r0.set_ylim(-1, len(win))
+        r0.set_yticks([0, len(win) - 1] if win else [])
+        r0.set_yticklabels(["1st", f"{len(win)}th"] if win else [], fontsize=9)
+        if j == 0:
+            r0.set_ylabel("request, in\narrival order")
+        r0.set_title(f"decode {rec['budget_gib']:g} GiB: KV grant {rec['launch']['decode']['kv_gib']:.2f} GiB"
+                     f" = {blocks:,} blocks, {rec['qps']:g} req/s")
+        r0.text(0.99, 0.04, f"(0) raw trace: {len(win)} arrivals (|), one lifeline each",
+                transform=r0.transAxes, fontsize=8.5, va="bottom", ha="right")
         # (a) slots
         waiting = sorted([r for r in rq if r["s"] - r["a"] > 0.02 and r["s"] > t0 and r["a"] < t1],
                          key=lambda r: r["a"])
@@ -142,16 +169,17 @@ def main():
             a.barh(y, r["s"] - r["a"], left=r["a"], height=0.42, color=C_WAIT,
                    edgecolor="black" if fol else "none", lw=1.6)
         a.axhline(slots - 0.5, color="black", ls="--", lw=1)
-        a.text(1.005, (slots - 0.5 + 0.7) / (q0 + max(1, nq) * 0.55 + 1.3), f"{slots} whole\nrequests\nfit",
-               transform=a.transAxes, ha="left", va="center", fontsize=9)
+        a.text(1.005, (slots - 0.5 + 0.7) / (q0 + max(1, nq) * 0.55 + 1.3),
+               f"{blocks / REQ_BLOCKS:.2f}\nrequests\nfit", transform=a.transAxes, ha="left",
+               va="center", fontsize=9)
         a.axhline(q0 - 0.45, color="#d0d0cc", lw=0.8)
         a.set_ylim(-0.7, q0 + max(1, nq) * 0.55 + 0.6)
         a.set_yticks(list(range(ymax_lane)) + [q0 + (max(1, nq) - 1) * 0.275])
         a.set_yticklabels([str(i + 1) for i in range(ymax_lane)] + ["queue"], fontsize=9)
         if j == 0:
             a.set_ylabel("KV slot (lane)")
-        a.set_title(f"decode {rec['budget_gib']:g} GiB: KV grant {rec['launch']['decode']['kv_gib']:.2f} GiB"
-                    f" = {slots} slots, {rec['qps']:g} req/s")
+        a.text(0.01, 0.985, "(a) the same requests packed into the KV slots", transform=a.transAxes,
+               fontsize=8.5, va="top")
         # follow annotation
         fr = next((r for r in rq if r["index"] == args.follow), None)
         if fr is not None:
@@ -190,7 +218,8 @@ def main():
     for ax in axes.flat:
         ax.spines[["top", "right"]].set_visible(False)
         ax.grid(axis="x", color="#ececea", lw=0.6)
-    handles = [Patch(color=C_LOAD, label="loading KV from host (blocks the whole batch)"),
+    handles = [Patch(color="#c9c9c4", label="prefill leg on GPU0 (client submit → decode)"),
+               Patch(color=C_LOAD, label="loading KV from host (blocks the whole batch)"),
                Patch(color=C_DEC, label="decoding (holds its 400 blocks)"),
                Patch(fc=C_DEC, hatch="///", ec="white", label="decoding, was preempted once"),
                Patch(color=C_WAIT, label="waiting for a slot"),
@@ -198,9 +227,9 @@ def main():
                Patch(color=C_WAIT, alpha=0.75, label="(b) requests waiting"),
                Line2D([], [], color=C_STEP, marker=".", ls="", label="(c) one decode step")]
     fig.legend(handles=handles, loc="upper center", ncol=4, frameon=False,
-               bbox_to_anchor=(0.5, 1.0))
+               bbox_to_anchor=(0.5, 0.995))
     fig.suptitle("Decode engine KV slots, free KV space and step time per request "
-                 "(Llama-3-8B decode on GPU1, 6400-token requests)", y=1.035, fontsize=13)
+                 "(Llama-3-8B decode on GPU1, 6400-token requests)", y=1.025, fontsize=13)
     fig.savefig(args.out, dpi=150, bbox_inches="tight")
     print("->", args.out, "window", round(t0, 1), "follow", args.follow)
 
