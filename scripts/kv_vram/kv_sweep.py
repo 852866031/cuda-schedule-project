@@ -62,6 +62,9 @@ METHODS = {
     # cohort-admission check (report §4.3): engines unchanged, the router releases decode
     # legs in groups of 5 (or after 2 s) so they are admitted and loaded together
     "cohort5": {"ROUTER_BATCH": "5", "ROUTER_BATCH_TIMEOUT": "2.0"},
+    # compiled LMCache kernels (built in .venv-lmc, loaded via site/cops_shim.py)
+    "cops": {"KV_COPS": "1"},
+    "cops_lw": {"KV_COPS": "1", "LMC_LAYERWISE": "1"},
 }
 PORTS = {"prefill": 8100, "decode": 8200}
 INVALID_MARKERS = ("RECV TIMEOUT", "kv_cache is None", "Insufficient memory",
@@ -165,6 +168,7 @@ def engine_startup(name):
         out["slots"] = out["kv_blocks"] // (REQ_TOKENS // BLOCK)
     if m := re.findall(r"Maximum concurrency for [\d,]+ tokens per request: ([\d.]+)x", text):
         out["max_concurrency_8192"] = float(m[-1])
+    out["cops_backend"] = "Using backend: lmcache.c_ops" in text
     out["trace_patched"] = ("[kv_trace] scheduler wrapped" in text
                             and "[kv_trace] connector start_load_kv wrapped" in text)
     if m := re.findall(r"Using (\S+) attention backend", text):

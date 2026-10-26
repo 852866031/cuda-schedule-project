@@ -15,6 +15,7 @@
 #   KV_DTYPE=fp8                     --kv-cache-dtype on BOTH engines (they must agree)
 #   LMC_LAYERWISE=1                  LMCache use_layerwise: true (both engines)
 #   LMC_ASYNC_LOAD=1                 LMCache enable_async_loading: true (decode engine)
+#   KV_COPS=1                        compiled lmcache.c_ops (from .venv-lmc) in both engines
 #   ROUTER_BATCH=N [ROUTER_BATCH_TIMEOUT=s]  router holds decode legs until N are ready
 #                                    (cohort-admission check; engines unchanged)
 # OMP_NUM_THREADS is inherited from the driver.
@@ -108,15 +109,19 @@ DEC_APC_FLAG="--no-enable-prefix-caching"
 if [ -n "${KV_DTYPE:-}" ]; then PF_X+=(--kv-cache-dtype "$KV_DTYPE"); DEC_X+=(--kv-cache-dtype "$KV_DTYPE"); fi
 if [ "${LMC_LAYERWISE:-0}" = 1 ]; then LMC_PF+="use_layerwise: true\n"; LMC_DEC+="use_layerwise: true\n"; fi
 [ "${LMC_ASYNC_LOAD:-0}" = 1 ] && LMC_DEC+="enable_async_loading: true\n"
-DEC_ENV=""
+DEC_ENV=""; PF_ENV=""
 [ "${KV_TRACE:-0}" = 1 ] && DEC_ENV="PYTHONPATH=$HERE/site KV_TRACE=1 KV_TRACE_PATH=${KV_TRACE_PATH:?KV_TRACE_PATH}"
-echo "methods: decode $DEC_APC_FLAG ${DEC_X[*]:-} | prefill ${PF_X[*]:-} | lmc_pf [${LMC_PF}] lmc_dec [${LMC_DEC}] | trace ${KV_TRACE:-0}"
+if [ "${KV_COPS:-0}" = 1 ]; then       # compiled kernels in BOTH engines (store side saves with them too)
+    DEC_ENV="${DEC_ENV:-PYTHONPATH=$HERE/site} KV_COPS=1"
+    PF_ENV="PYTHONPATH=$HERE/site KV_COPS=1"
+fi
+echo "methods: cops=${KV_COPS:-0} decode $DEC_APC_FLAG ${DEC_X[*]:-} | prefill ${PF_X[*]:-} | lmc_pf [${LMC_PF}] lmc_dec [${LMC_DEC}] | trace ${KV_TRACE:-0}"
 
 start_store 8300
 lmc_yaml /tmp/kvv_lmc_prefill.yaml "$L1" "$STORE_PORT" "$LMC_PF"
 lmc_yaml /tmp/kvv_lmc_decode.yaml "$L1" "$STORE_PORT" "$LMC_DEC"
 
-CUDA_VISIBLE_DEVICES=0 LMCACHE_CONFIG_FILE=/tmp/kvv_lmc_prefill.yaml \
+CUDA_VISIBLE_DEVICES=0 LMCACHE_CONFIG_FILE=/tmp/kvv_lmc_prefill.yaml env $PF_ENV \
 "$PY" -m vllm.entrypoints.cli.main serve "$MODEL" \
     --port 8100 --gpu-memory-utilization "$PREFILL_UTIL" \
     --max-model-len 8192 --seed 0 --disable-log-requests --enable-prefix-caching \

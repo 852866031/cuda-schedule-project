@@ -457,3 +457,31 @@ Consequences: grouping layers (k per yield) would save the per-yield overhead on
 real overlap needs the compiled `c_ops` so the side-stream copy is asynchronous — the
 same build the MP connector needs. After the build, re-run `use_layerwise` in the new
 environment before judging it.
+
+## E4 — compiled LMCache kernels (2026-10-25)
+
+Built lmcache 0.4.4 from the PyPI sdist into a separate `.venv-lmc` (torch 2.9.1+cu128,
+nvcc 12.8, `TORCH_CUDA_ARCH_LIST=12.0`, `MAX_JOBS=6`, ~4 min). `lmcache.c_ops` loads
+there ("Using backend: lmcache.c_ops") with every symbol the multi-process server needs.
+Kernel smoke on GPU1, one layer of one request (25 MiB, 400 blocks):
+
+| | Python fallback | compiled `single_layer_kv_transfer` |
+|---|---|---|
+| time | 24.1 ms | 1.95 ms (13.4 GB/s ≈ the PCIe link) |
+| result | — | bit-identical to the fallback |
+| on a side stream | blocks | returns in 0.06 ms, lands at 2.0 ms → asynchronous |
+
+Extrapolated: one request's 32 layers ≈ 62 ms instead of ~190 ms, and the copy can run
+beside compute. The new `.so` also **loads and runs under `.venv-matched`'s torch** when
+bound as `lmcache.c_ops` (same torch build; the old wheel's .so was built against a
+different ABI). Decision: test it first as a drop-in via the engine sitecustomize
+(`KV_COPS=1` → insert the new module into `sys.modules` before lmcache imports), which
+keeps vLLM, LMCache's Python and all flags identical; `.venv-lmc` stays for the MP server
+process. The earlier deadlock (CLAUDE.md) was with a different build; a hang here will
+trip the stall watchdog.
+
+**Prediction for the drop-in smoke** (`kv_cops_b24_q2.5_tr`, baseline flags + compiled
+ops): starts; per-request load ~190 → ~60–90 ms (the whole-request staging path still
+thrashes the L1, so maybe not); with `use_layerwise` as well (`kv_cops_lw_…`): load
+≈ 60 ms, and — if the side-stream copy now overlaps the forward — admitting-step excess
+falls below the baseline's. Both: grant and slot count unchanged, outputs identical.
