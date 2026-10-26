@@ -17,7 +17,9 @@ for ~120 ms each time. A request among more neighbours sits through more of thes
 saturation throughput: 2.97 → 3.58 req/s. Up to 2 req/s nobody waits at any budget, and
 the budget does not matter. The load path is the lever: LMCache's
 multi-process connector (on vLLM 0.18.1) takes the copy out of the step, residence stops
-growing with the slot count, and capacity rises by 1–1.5 req/s (§6).
+growing with the slot count, and capacity rises by 0.5–1 req/s counting its ~40 ms wait for
+the KV as queue time (1–1.5 req/s counting only the wait for a slot); this part ran on a
+newer vLLM, with a slightly larger KV grant (§6.4).
 
 **What changed from the first version.** The first version of this study
 ([report_kv_slots_fallback.md](report_kv_slots_fallback.md)) ran LMCache on its Python
@@ -305,13 +307,16 @@ hop, staging pool → GPU, stays inside the admitting step. Full grid, same 27 c
 
 ![async vs sync](../figures/kv_async.png)
 
-vLLM's queue time now contains the prefetch, so the capacity rule is applied to the
-**slot wait** (queue time minus prefetch; the trace marks when each lookup is asked and
-answered).
+vLLM's queue time now contains the prefetch, which the user still waits through before
+the first decode step but which holds no slot. The table gives capacity both ways: on
+vLLM's queue time (the study's rule) and on the **slot wait** alone (queue time minus
+prefetch; the trace marks when each lookup is asked and answered). One run per cell;
+capacity is resolved to the 0.5 req/s grid step.
 
 | | 24 GiB | 26 GiB | 28 GiB |
 |---|---|---|---|
-| capacity (slot wait < 50 ms), sync → async | 2 → 2 req/s (2.5 reads 50.3 ms) | 2.5 → 2.5 (3 reads 84 ms) | 2.5 → **3** |
+| capacity on vLLM queue time (< 50 ms), sync → async | 2 → **none** (≥ 121 ms everywhere: the prefetch) | 2.5 → none | 2.5 → none |
+| capacity on slot wait only, sync → async | 2 → 2 req/s (2.5 reads 50.3 ms) | 2.5 → 2.5 (3 reads 84 ms) | 2.5 → **3** |
 | slot wait at 3 req/s | 1,265 → 260 ms | 340 → 84 | 81 → 17 |
 | residence, async ÷ sync (1–3.5 req/s) | 0.88–0.95 | 0.85–0.95 | 0.84–0.95 |
 | saturation | 2.97 → 3.16 req/s (≤ 3.5; unstable above) | 3.35 → 3.57 | 3.58 → 3.85 |
@@ -346,7 +351,8 @@ mixes the connector with these version effects. Full grid, 27 cells, all ok (DEC
 | | 24 GiB | 26 GiB | 28 GiB |
 |---|---|---|---|
 | slots on 0.18.1 (by the 392-block rule) | 10, never evicts | 13, never evicts | 15 + a lent 16th → evicts |
-| capacity, sync 0.15.1 → MP 0.18.1 | 2 → **3** req/s | 2.5 → **3.5** | 2.5 → **4** |
+| capacity on vLLM queue time (incl. the ~42 ms KV wait), sync 0.15.1 → MP 0.18.1 | 2 → **2.5** req/s | 2.5 → **3** | 2.5 → **3.5** |
+| capacity on slot wait only | 2 → 3 | 2.5 → 3.5 | 2.5 → 4 |
 | best throughput, sync → MP | 380 → 528 tok/s (+39%) | 429 → 603 (+41%, still rising) | 458 → 503 at 4 req/s, then collapses |
 | residence at 3 req/s | 3.15 → 1.99 s | 3.25 → 1.99 | 3.35 → 1.99 |
 
@@ -368,8 +374,8 @@ mixes the connector with these version effects. Full grid, 27 cells, all ok (DEC
 |---|---|---|
 | compiled LMCache kernels | copy 190 → 114 ms; saturation +25–30% | adopted as the baseline (§5) |
 | `use_layerwise` | none (no overlap) | not useful on this stack |
-| `enable_async_loading` | residence −5 to −16%; +7% saturation; unstable at 24 GiB ≥ 4 req/s | usable with care |
-| MP connector (vLLM 0.18.1) | stall removed; capacity +1 to +1.5 req/s; +40% throughput; collapses when evictions recompute | best lever; avoid budgets whose admission rule lends a slot |
+| `enable_async_loading` | residence −5 to −16%; +7% saturation; no capacity by queue time (prefetch ~100 ms); unstable at 24 GiB ≥ 4 req/s | marginal |
+| MP connector (vLLM 0.18.1) | stall removed; capacity +0.5–1 req/s (queue time); +40% throughput; collapses when evictions recompute | best lever; not version-matched; avoid budgets whose admission rule lends a slot |
 | fp8 KV | would halve bytes per block (≈ 20 slots at 24 GiB) | not run; needs a bf16 control on the same attention backend |
 | decode-side prefix caching | would free the duplicated third of resident KV (§4.5) | not tested: it changes the workload |
 

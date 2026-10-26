@@ -687,8 +687,8 @@ def fig_split_s():
 # ------------------------------------------------------------------ async / MP over the grid
 def fig_lever_grid(method, label, color, name, unstable=None, extra=()):
     rows = list(csv.DictReader(open(REPO / "output" / "kv_vram" / "async_summary.csv")))
-    fig, axes = plt.subplots(2, 3, figsize=(12.5, 6.2), sharex=True,
-                             gridspec_kw={"hspace": 0.25, "wspace": 0.18})
+    fig, axes = plt.subplots(2, 3, figsize=(10, 5.4), sharex=True,
+                             gridspec_kw={"hspace": 0.25, "wspace": 0.28})
     for j, b in enumerate(BUD):
         for m, lab, c, mk in (("cops", "synchronous", "#9a9a95", "o"), (method, label, color, "s")):
             rs = sorted([r for r in rows if r["method"] == m and int(r["budget"]) == b],
@@ -787,6 +787,7 @@ MARKED = {
     "m_timeline": ("kv_slots_timeline.png", [(0.08, 0.23, 1), (0.535, 0.23, 2), (0.1, 0.66, 3),
                                              (0.55, 0.85, 4)], [], None),
     "m_stream": ("kv_stream_idea.png", [(0.47, 0.56, 1), (0.92, 0.69, 2)], [], None),
+    "m_stream_c": ("kv_stream_idea.png", [(0.92, 0.69, 1)], [], (0.62, 0.08, 1, 1)),
     "m_layerwise": ("kv_layerwise_measured.png", [(0.28, 0.24, 1), (0.785, 0.2, 2)], [], None),
     "m_timeline_s": ("kv_slots_timeline.png", [(0.08, 0.23, 1), (0.535, 0.23, 2)], [], (0, 0.172, 1, 0.545)),
 }

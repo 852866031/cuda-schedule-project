@@ -106,12 +106,16 @@ for b, blocks, c, spare, note in rows:
         if i == 0:
             t(ax, x + 200 * k, BY + 4, "400", 9.5, "white", "center")
         x += 400 * k
-    if spare:
+    if spare and b == 24:            # the 10th slot: admitted on 392 blocks, evicted once all grow
+        ax.add_patch(Rectangle((x, BY + 0.8), spare * k - 0.3, 6.4, fc="white", ec=C_RUN, lw=1.2, ls="--",
+                               hatch="///"))
+        t(ax, x + spare * k / 2, BY + 4, "lent", 9.5, C_RUN, "center")
+    elif spare:
         ax.add_patch(Rectangle((x, BY + 0.8), spare * k - 0.3, 6.4, fc=C_FREE, ec="#444", lw=0.6, ls="--"))
         if spare > 100:
             t(ax, x + spare * k / 2, BY + 4, str(spare), 9.5, "#444", "center")
     BY -= 24
-t(ax, 2, 6, "blue = one slot (400 blocks, 0.78 GiB);  grey = what is left once every slot is full", 11, "#444")
+t(ax, 2, 6, "blue = one slot (400 blocks, 0.78 GiB);  hatched = the lent 10th slot;  grey = left once every slot is full", 11, "#444")
 fig.savefig(FIGS / "kv_slots.png", dpi=150, bbox_inches="tight")
 plt.close(fig)
 print("-> kv_blocks.png kv_grant.png kv_slots.png")

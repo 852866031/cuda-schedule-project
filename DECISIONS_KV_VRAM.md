@@ -834,3 +834,11 @@ Saturation +20–30% — **exceeded** (+39–41% at 24 / 26 GiB). KV wait 100–
 (41–44). Evictions recompute — confirmed, and at 28 GiB they dominate at high rates.
 Caveat for all MP numbers: vLLM 0.18.1 / torch 2.10 with no same-version synchronous
 control (by request); its grant is larger and its decode step ~2 ms shorter at low batch.
+
+**Capacity definition for the load-path arms (2026-10-26, after the slide review).** The
+study's rule is vLLM's mean queue time < 50 ms. Async loading puts its ~100 ms prefetch
+inside that queue time (no slot held, but the user waits through it), the MP connector
+its ~42 ms KV wait (blocks held). On the study's rule: async loading has **no** capacity
+at any budget (queue ≥ 121 ms in every cell); MP is 2.5 / 3 / 3.5 req/s. On the slot wait
+alone: async 2 / 2.5 / 3, MP 3 / 3.5 / 4. Report and slides give both, headline on queue
+time. One run per cell; capacity resolved to 0.5 req/s.
