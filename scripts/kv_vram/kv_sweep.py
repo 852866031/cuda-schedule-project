@@ -68,6 +68,9 @@ METHODS = {
            "cops_async": {"KV_COPS": "1", "LMC_ASYNC_LOAD": "1"},
            "cops_async_t30": {"KV_COPS": "1", "LMC_ASYNC_LOAD": "1", "LMC_LOOKUP_TIMEOUT_MS": "30000"},
            "mp": {"KV_MP": "1"},
+           # D11: vLLM 0.18.1 engines, its built-in MP connector, MP server in the same venv
+           "mp18": {"KV_MP": "1", "KV_MP_BUILTIN": "1", "VLLM_VENV": ".venv-vllm018",
+                    "MP_SERVER_VENV": ".venv-vllm018"},
 }
 PORTS = {"prefill": 8100, "decode": 8200}
 INVALID_MARKERS = ("RECV TIMEOUT", "kv_cache is None", "Insufficient memory",

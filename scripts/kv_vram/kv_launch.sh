@@ -17,7 +17,8 @@
 #   LMC_ASYNC_LOAD=1                 LMCache enable_async_loading: true (decode engine)
 #   LMC_LOOKUP_TIMEOUT_MS=<ms>       LMCache lookup_timeout_ms (decode engine; default 3000)
 #   KV_COPS=1                        compiled lmcache.c_ops (from .venv-lmc) in both engines
-#   KV_MP=1 [MP_L1_GB=32 MP_PORT=5655] LMCacheMPConnector (asynchronous load, D9): an LMCache
+#   VLLM_VENV=<venv dir>             engines' venv (default .venv-matched = vLLM 0.15.1)
+#   KV_MP=1 [MP_L1_GB=32 MP_PORT=5655 MP_SERVER_VENV=.venv-lmc KV_MP_BUILTIN=0] LMCacheMPConnector (asynchronous load, D9): an LMCache
 #                                    MP server (.venv-lmc, compiled ops, pinned L1 of MP_L1_GB,
 #                                    LRU) replaces the TCP store and both engines' L1; :5555 is
 #                                    DCGM's, hence 5655
@@ -28,7 +29,7 @@ set -u
 cd "$(dirname "$0")"
 HERE="$(pwd)"
 REPO="$(cd ../.. && pwd)"
-PY="$REPO/.venv-matched/bin/python"
+PY="$REPO/${VLLM_VENV:-.venv-matched}/bin/python"     # D11: VLLM_VENV=.venv-vllm018 for the MP grid
 LOGS="$REPO/output/logs"
 HB_DIR=/tmp/kvv_hb
 PID_DIR=/tmp/kvv_pids
@@ -87,7 +88,7 @@ YAML
     return 0
 }
 start_mp_server() {   # -> pid in store.pid; waits for the bind line
-    CUDA_VISIBLE_DEVICES=0,1 "$REPO/.venv-lmc/bin/python" -m lmcache.v1.multiprocess.server \
+    CUDA_VISIBLE_DEVICES=0,1 "$REPO/${MP_SERVER_VENV:-.venv-lmc}/bin/python" -m lmcache.v1.multiprocess.server \
         --host 127.0.0.1 --port "$MP_PORT" --chunk-size "$CHUNK_SIZE" \
         --l1-size-gb "${MP_L1_GB:-32}" --eviction-policy LRU \
         > "$LOGS/kvv_mpserver.log" 2>&1 &
@@ -142,9 +143,11 @@ if [ "${KV_MP:-0}" = 1 ]; then
     # pidfd_getfd (ptrace rights; ptrace_scope=1 here) -> REGISTER_KV_CACHE fails. Without
     # expandable segments it uses cudaIpcGetMemHandle. Engines only; recorded in D9.
     unset PYTORCH_CUDA_ALLOC_CONF
-    # LMCache's own connector (token-id keys), not vLLM 0.15.1's (block-hash keys): site/lmc_mp_conn.py
+    # LMCache's own connector (token-id keys), not vLLM 0.15.1's (block-hash keys): site/lmc_mp_conn.py;
+    # with KV_MP_BUILTIN=1 (vLLM 0.18, whose built-in connector already keys by token ids) vLLM's own
     KV_CONN="{\"kv_connector\":\"LMCacheMP044Connector\",\"kv_connector_module_path\":\"lmc_mp_conn\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"lmcache.mp.host\":\"tcp://127.0.0.1\",\"lmcache.mp.port\":$MP_PORT}}"
     DEC_ENV="${DEC_ENV:-PYTHONPATH=$HERE/site}"; PF_ENV="PYTHONPATH=$HERE/site KV_TRACE=0"
+    [ "${KV_MP_BUILTIN:-0}" = 1 ] && KV_CONN="{\"kv_connector\":\"LMCacheMPConnector\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"lmcache.mp.host\":\"tcp://127.0.0.1\",\"lmcache.mp.port\":$MP_PORT}}"
 fi
 echo "methods: mp=${KV_MP:-0} cops=${KV_COPS:-0} decode $DEC_APC_FLAG ${DEC_X[*]:-} | prefill ${PF_X[*]:-} | lmc_pf [${LMC_PF}] lmc_dec [${LMC_DEC}] | trace ${KV_TRACE:-0}"
 

@@ -90,6 +90,9 @@ if os.environ.get("KV_TRACE") == "1":
     _W = _Writer()
     atexit.register(_W.flush)
 
+    def _nwait(sched):        # vLLM >= 0.18 parks skipped / remote-KV requests in skipped_waiting
+        return len(sched.waiting) + len(getattr(sched, "skipped_waiting", ()) or ())
+
     def _key(req):
         p = req.prompt_token_ids or []
         return p[_KEY_AT:_KEY_AT + 4] if len(p) >= _KEY_AT + 4 else p[:4]
@@ -113,7 +116,7 @@ if os.environ.get("KV_TRACE") == "1":
             try:
                 _W.put({"ev": "arr", "t": t, "id": request.request_id, "key": _key(request),
                         "n_prompt": len(request.prompt_token_ids or []), "free": fb,
-                        "run": len(self.running), "wait": len(self.waiting)})
+                        "run": len(self.running), "wait": _nwait(self)})
             except Exception:
                 pass
             return r
@@ -137,7 +140,7 @@ if os.environ.get("KV_TRACE") == "1":
                     len(nr.block_ids[0]) if nr.block_ids else 0)
                    for nr in out.scheduled_new_reqs]
             rec = {"ev": "sch", "t": t0, "dt": _now() - t0, "run": len(self.running),
-                   "wait": len(self.waiting), "free": free_blocks(self),
+                   "wait": _nwait(self), "free": free_blocks(self),
                    "ntok": out.total_num_scheduled_tokens}
             if new:
                 rec["new"] = new                       # [id, external tokens, blocks]
