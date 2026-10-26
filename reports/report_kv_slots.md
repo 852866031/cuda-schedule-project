@@ -265,22 +265,14 @@ what must stay resident.
 ### 6.2 LMCache's load-path options
 
 **`use_layerwise`** splits the one-time load at admission into per-layer pieces, hoping to
-overlap copy with compute. Measured at 24 GiB / 2.5 req/s, on both copy paths:
+overlap copy with compute. Measured at 24 GiB / 2.5 req/s:
 
 ![layerwise measured](../figures/kv_layerwise_measured.png)
 
-- **Fallback: a large gain.** Queue 4,680 → 1,483 ms, own load 0.87 → 0.30 s, residence
-  4.10 → 3.74 s. The per-layer retriever never hits the whole-request L1 staging failures
-  (3,360 → 0 per run), so a load takes the bare copy time.
-- **Compiled kernels: no gain.** Queue 143 → 136 ms, own load 0.18 → 0.19 s, residence
-  2.83 → 2.76 s. All of these are within run-to-run noise (one layerwise run).
-
-| compiled kernels | baseline (2 runs) | + layerwise (1 run) |
-|---|---|---|
-| decode queue wait | 143 / 143 ms | 136 ms |
-| TPOT (end-user) p50 | 24.2 / 24.3 ms | 23.5 ms |
-| excess step time per residence | 0.67 s | 0.70 s |
-| preemptions | 7 / 8 | 4 |
+No gain: queue 143 → 136 ms, own load 0.18 → 0.19 s, residence 2.83 → 2.76 s, all within
+run-to-run noise. The direct check of overlap is the time that load-carrying steps add to
+a request's residence: 0.67 s without, 0.70 s with layerwise. If the copies overlapped the
+forward, this would shrink.
 
 Why there is no overlap: the admitting step, drawn to scale from the measured copy
 (115 ms) and forward (14 ms):
