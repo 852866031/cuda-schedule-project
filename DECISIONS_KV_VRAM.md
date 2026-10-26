@@ -541,3 +541,13 @@ later than 4 req/s at 28 GiB). One launch per cell, trace on. The 24 GiB / 2.5 c
   28 GiB 3–3.5 — about one req/s higher than with the fallback at every budget.
 - At 1 req/s TPOT ≈ 16–17 ms at every budget, as before (nobody waits).
 - The re-simulation with c_eff reproduces the measured mean wait within 2% at every cell.
+
+**D7 (2026-10-26) — router retry for the keep-alive race.** `kv_cops_b24_q1_tr` lost one
+request exactly as `kv_base_b28_q1.5_tr` did: the router's decode-leg POST reused a pooled
+connection the decode server had closed during an idle gap, and failed with a broken pipe
+before any response (the engine never saw the request). Second occurrence, both at low
+rates, so it will recur. Fix in `lmc_proxy.py`: on `ClientOSError` /
+`ServerDisconnectedError` raised by the POST itself (no response yet), retry once on a
+fresh connection and log `DECODE-RETRY`. Only a request that hits the race is affected.
+Active from the cell after `kv_cops_b24_q1.5_tr` (that cell's router was already up);
+`kv_cops_b24_q1_tr` is rerun as `_r2` after the grid.

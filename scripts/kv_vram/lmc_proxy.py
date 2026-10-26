@@ -106,7 +106,18 @@ async def handle(request: web.Request) -> web.StreamResponse:
 
         first_chunk_at = None
         dropped_dup = not forward   # with forwarding, drop leg 2's duplicate token #1
-        async with session.post(f"http://{cfg['decode']}{path}", json=body) as r:
+        # A pooled keep-alive connection the decode server has already closed (idle gaps
+        # at low request rates) fails on send with a broken pipe before any response.
+        # Retry such a request once on a fresh connection; nothing reached the engine.
+        for attempt in (1, 2):
+            try:
+                r = await session.post(f"http://{cfg['decode']}{path}", json=body)
+                break
+            except (aiohttp.ClientOSError, aiohttp.ServerDisconnectedError) as e:
+                if attempt == 2:
+                    raise
+                print(f"DECODE-RETRY {type(e).__name__}: {e}", flush=True)
+        async with r:
             if resp is None:
                 resp = web.StreamResponse(
                     status=r.status,
