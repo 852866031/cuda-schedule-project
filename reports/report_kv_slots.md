@@ -122,60 +122,50 @@ scale), (b) output tokens per second, (c) decode-only per-token time. The same n
   31.2 / 39.0 ms at 24 / 26 / 28 GiB — bigger batches and more stalls (§4.3).
 - **Preemptions:** 1–35 per cell at 24 GiB, none at 26 / 28 GiB.
 
-The rate at which waiting starts is easier to read with iso-wait lines. The figure below
-repeats panel (a) with contours at 0.05 s (the capacity line), 0.5, 2, 5 and 10 s,
-interpolated linearly between the measured cells; each line marks the (budget, rate)
-combinations that give the same mean wait, so its slope says how much rate one GiB buys
-— about 0.25 req/s per 2 GiB along the 0.05 s line, less along the 10 s line.
-
-![heatmaps with contours](../figures/kv_grid_heat_contours.png)
-
 The same three quantities as surfaces. In (a) height is the mean wait for a slot: the
-flat floor is "nobody waits", the cliff is where waiting begins, and it moves to a higher
-rate by about one grid step per 2 GiB. (b) rises with rate until it flattens at each
-budget's saturation throughput; (c) is flat while nobody waits and then rises with
-budget, not with rate.
+flat floor is "nobody waits", the cliff is where waiting begins. The red lines on the
+surface join the (budget, rate) points with the same mean wait — 0.05 s (the capacity
+line), 0.5, 2, 5 and 10 s, interpolated between the measured cells; their slope says
+how much rate one GiB buys: about 0.25 req/s per 2 GiB along the 0.05 s line, less along
+the 10 s line. (b) rises with rate until it flattens at each budget's saturation
+throughput; (c) is flat while nobody waits and then rises with budget, not with rate
+(§4.3 explains why).
 
 ![3D view](../figures/kv_grid_3d.png)
 
-### 4.2 Waiting is integer slots, FCFS, and nothing else
+### 4.2 Is the waiting explained by integer slots alone? A simulation of our explanation
 
-**What we want to predict.** The mean time a request waits for a slot (the measured
-decode queue time in §4.1), at each budget and rate.
+**Our explanation of §4.1.** A request waits for one reason only: every slot is taken,
+and the scheduler hands out slots first come, first served. If that is the whole story,
+the waiting is fixed by two things — how many slots there are, and how long each request
+keeps its slot — and nothing else (scheduler overhead, the router, the KV transfer) adds
+to it.
 
-**From what.** Only two things: how many slots there are (c, from the probe), and how
-long each request keeps its slot (its measured residence, admitted → last token). If
-these two reproduce the waiting, nothing else — scheduler overhead, the router, the KV
-transfer — is needed to explain it.
-
-**How.** Picture c parking spaces. Cars (requests) arrive at known times; a car that
-finds a free space takes it at once, otherwise it joins a first-come-first-served line
-and takes the next space that frees; each car stays for its own measured time. We
-compute the waiting this produces in three ways:
-
-1. **Replay** — a simulation that uses the cell's own 300 arrival times and each
-   request's own residence, with c spaces. It assumes nothing except "c spaces, FCFS".
-2. **M/M/c (Erlang C)** — the textbook formula for c servers with Poisson arrivals and
-   exponentially distributed service; needs only the arrival rate, the mean residence
-   and c.
-3. **Lee–Longton** — the same formula corrected for the real spread of residences:
-   Wq ≈ ½(1 + CV²) × Wq(M/M/c), where CV² is the squared coefficient of variation of the
-   residence. This is the standard closed-form approximation for M/G/c, "M/G/c" being
-   queueing shorthand for Poisson arrivals (M), any service distribution (G), c servers.
-
-The replay is the strict test: it sees exactly the arrivals the engine saw, so any gap
-between it and the measurement is behaviour the two inputs do not contain. The two
-formulas test something weaker — whether the curve has the generic multi-server shape.
+**The check.** We simulate exactly that mechanism with the measured inputs and compare
+it to the measured waiting. Picture c parking spaces: cars arrive at the recorded times,
+a car that finds a free space takes it at once, otherwise it joins a first-come-first-
+served line and takes the next space that frees; each car stays for the time its request
+actually stayed (admitted → last token, as traced). The simulation uses the cell's own
+300 arrival times and each request's own residence; c comes from the probe. It is a
+**re-simulation of a measured result, not a predictive model**: both inputs are
+measured, so it cannot forecast an unmeasured budget or rate. What it answers is a yes/no
+question — does "c slots, FCFS" account for the waiting we saw?
 
 ![queueing models](../figures/kv_mgc.png)
 
-**Result.** The replay with the *effective* slot count reproduces the measured mean wait
-at every rate: within 2% at 24 GiB with c = 10, within 0.1% at 26 / 28 GiB with c = 12 /
-15 (the dashed line lies on the measured one). With c ± 1 it is off by 1.5–3×. Because
-the replay takes the measured residences as given it is partly circular; what it
-establishes is narrower and more useful than "a model fits": *nothing besides the slot
-count and the residence is needed to explain the queue* — no scheduler overhead, no
-router effect, no KV-transfer delay beyond what is already inside the residence.
+**Answer: yes.** With the slot count the engine actually ran with — 10 at 24 GiB (9 whole
+slots plus the admitted 10th, §2), 12 and 15 — the simulated mean wait lies on the
+measured one at every rate: within 2% at 24 GiB, within 0.1% at 26 / 28 GiB (the dashed
+line is hidden under the measured line). With one slot more or fewer it is off by
+1.5–3×, so the match is not loose. The two thin lines are textbook curves for reference —
+the M/M/c (Erlang C) formula and its Lee–Longton correction for the spread of residences
+— computed from only the arrival rate, mean residence and c; they have the right shape
+near saturation but underestimate small waits, because 300 arrivals of one Poisson sample
+are far from the steady state those formulas assume.
+
+What follows from the match: the queue needs no explanation beyond slots and residence.
+Everything the engine does to a request shows up in its *residence* (§4.3), not in an
+extra waiting term.
 
 Why c = 10 at 24 GiB with a 9.95-request grant: the admission rule needs 392 free blocks,
 3,980 − 9 × 392 = 452, so a 10th request is admitted while the nine are young; when all
@@ -219,11 +209,28 @@ chunk by chunk.
 
 Two consequences visible in the grid: (i) more slots → more admissions during a
 residence → longer residence, which is why 26 → 28 GiB barely moves saturation
-throughput; (ii) at ≥ 3.5 req/s per-token time *drops* at 24 GiB (25.7 → 18.6 ms) because
-under a deep queue requests finish and are admitted in cohorts — one load call brings in
-up to 10 requests (104 calls vs 191 at 3 req/s) — so each request sits through fewer
-separate stalls. Decode time = 128 steps + (stalls met while resident) × stall length;
-the stall count depends on the admission pattern, not only on load.
+throughput; (ii) at 4 req/s the 28 GiB engine is *slower per token* than the 24 GiB one
+(31 vs 19 ms), although both are saturated:
+
+| 4 req/s | 24 GiB | 28 GiB |
+|---|---|---|
+| running (mean) | 9.6 | 14.9 |
+| one decode step (no load) | 16.2 ms | 18.5 ms |
+| decode per request | 2.72 s | 4.04 s |
+| = own steps | 2.12 s | 2.35 s |
+| + stalled by others' loads | 0.26 s (1.2 × 214 ms) | 0.88 s (3.5 × 249 ms) |
+| requests per load call (mean, max) | 3.4, 10 | 2.4, 7 |
+
+The bigger batch costs 0.23 s; the rest is stalls. At 24 GiB a saturated run admits in
+*cohorts*: ten requests finish together, the ten at the head of the queue are admitted
+together, one load call copies all of them (up to 10 per call), and the cohort then
+decodes undisturbed — 1.2 stalls per residence. At 28 GiB completions are spread out, so
+admissions are spread out (2.4 per call), and a request sits through 3.5 of them. The
+synchronised rhythm at 24 GiB is a by-product of eviction: the 10th request is thrown
+back to the head of the queue and re-enters with the next cohort. Decode time = 128
+steps + (stalls met while resident) × stall length; the stall count depends on the
+admission pattern, not only on load. *This reading is from the trace of the baseline
+runs; a controlled test of cohort vs spread-out admission is planned (DECISIONS, E6).*
 
 ### 4.4 A request followed across two budgets
 

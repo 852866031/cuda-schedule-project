@@ -70,7 +70,35 @@ def fig_3d():
     for k, (col, sc, zl, title, cmap) in enumerate(panels):
         ax = fig.add_subplot(1, 3, k + 1, projection="3d")
         Z = np.array([[val(b, q, col) * sc for q in QPS_COMMON] for b in BUDGETS])
-        ax.plot_surface(B, Q, Z, cmap=cmap, edgecolor="#333", lw=0.6, alpha=0.9, rstride=1, cstride=1)
+        ax.plot_surface(B, Q, Z, cmap=cmap, edgecolor="#333", lw=0.6, alpha=0.45 if k == 0 else 0.9,
+                        rstride=1, cstride=1)
+        if k == 0:
+            # iso-wait lines drawn ON the surface: contour paths from a 2D contour of the
+            # same grid, lifted 0.4 s above the (bilinearly interpolated) surface so the
+            # renderer does not hide them under the facets
+            def f2(pts):   # bilinear on the (BUDGETS x QPS_COMMON) grid
+                out = []
+                for x, y in pts:
+                    i = min(max(np.searchsorted(BUDGETS, x) - 1, 0), len(BUDGETS) - 2)
+                    j = min(max(np.searchsorted(QPS_COMMON, y) - 1, 0), len(QPS_COMMON) - 2)
+                    u = (x - BUDGETS[i]) / (BUDGETS[i + 1] - BUDGETS[i])
+                    v = (y - QPS_COMMON[j]) / (QPS_COMMON[j + 1] - QPS_COMMON[j])
+                    out.append((1 - u) * (1 - v) * Z[i, j] + u * (1 - v) * Z[i + 1, j]
+                               + (1 - u) * v * Z[i, j + 1] + u * v * Z[i + 1, j + 1])
+                return np.array(out)
+            tmp = plt.figure()
+            cs2 = tmp.gca().contour(B, Q, Z, levels=[0.05, 0.5, 2, 5, 10])
+            for lev, segs in zip(cs2.levels, cs2.allsegs):
+                for seg in segs:
+                    if len(seg) < 2:
+                        continue
+                    zz = f2(seg) + 0.8
+                    ax.plot(seg[:, 0], seg[:, 1], zz, color="#b3261e", lw=3.2, zorder=10)
+                    ax.text(seg[-1, 0], seg[-1, 1], zz[-1] + 0.3, f"{lev:g} s", color="#b3261e",
+                            fontsize=8.5, fontweight="bold", ha="center")
+            plt.close(tmp)
+            ax.text2D(0.02, 0.9, "red: iso-wait lines on the surface at 0.05 (capacity), 0.5, 2, 5, 10 s",
+                      transform=ax.transAxes, fontsize=9.5, color="#b3261e")
         for b in BUDGETS:
             for q in QPS_ALL:
                 z = val(b, q, col) * sc
@@ -204,7 +232,6 @@ def fig_scatter():
 if __name__ == "__main__":
     fig_3d()
     fig_heat()
-    fig_heat(contours=True)
     fig_mgc()
     fig_scatter()
     print("-> kv_grid_3d.png kv_grid_heat.png kv_mgc.png kv_wait_vs_free.png")

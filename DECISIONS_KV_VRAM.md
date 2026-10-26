@@ -306,3 +306,15 @@ Decode queue wait, mean per request (ms); throughput in tok/s in brackets:
   session-per-running-set count); deferred to the E4 APC comparison where it matters.
 - 28 GiB / 1.5 req/s: the first run lost one request to a router keep-alive race
   (recorded, `ok = False`); the `_r2` rerun is clean and is the reported cell.
+
+## E6 (planned, 2026-10-25) — does cohort admission explain the per-token time at saturation?
+
+Observation (E2 traces): at 4 req/s the 24 GiB engine decodes faster per token than the
+28 GiB one (19 vs 31 ms) because its requests are admitted in cohorts (3.4 per load call,
+1.2 stalls per residence) while at 28 GiB admissions are spread out (2.4 per call, 3.5
+stalls per residence). Hypothesis: per-token time at saturation is set by the number of
+separate load stalls a request sits through, i.e. by the admission pattern, not by the
+budget. Test to design: same budget, same rate, admission forced into cohorts vs spread
+(e.g. router-side batching of releases, or a scheduler-side admission gate), with the
+prediction written before the run: tpot2 follows the stall count (≈ 16 ms + stalls ×
+~220 ms ÷ 127), independent of which budget it is. Not run yet.
