@@ -14,7 +14,10 @@ from matplotlib.patches import Rectangle
 
 REPO = Path(__file__).resolve().parent.parent.parent
 C_T, C_C = "#eb6834", "#2a78d6"
-COPY_MS, FWD_MS = 190.0, 16.0            # one request's copy; one forward
+import os
+METHOD = os.environ.get("KV_METHOD", "base")
+# one request's copy and one forward, measured at 24 GiB / 2.5 req/s
+COPY_MS, FWD_MS = {"base": (190.0, 16.0), "cops": (115.0, 14.4)}[METHOD]
 sc = 88 / (COPY_MS + FWD_MS)
 
 fig, axes = plt.subplots(2, 1, figsize=(13, 5.6), gridspec_kw={"hspace": 0.6})
@@ -50,7 +53,10 @@ for i in range(32):
     cp.append((t, t + FWD_MS / 32)); t += FWD_MS / 32
 arm(axes[1], "use_layerwise: copy layer i, run layer i, … — alternating, still never at the same time",
     tr, cp,
-    "same total: the copy is split, not hidden   (what it does fix: the L1 staging pool no longer thrashes → preemptions 35 → 12)")
-fig.suptitle("One admitting step on the decode engine, to scale (24 GiB, 2.5 req/s)", fontsize=13, y=1.0)
+    ("same total: the copy is split, not hidden   (what it does fix: the L1 staging pool no longer thrashes → preemptions 35 → 12)"
+     if METHOD == "base" else
+     "same total: split, not hidden — each layer still waits for its L1/store fetch   (queue 143 → 136 ms, preemptions 8 → 4)"))
+fig.suptitle("One admitting step on the decode engine, to scale (24 GiB, 2.5 req/s"
+             + (", compiled LMCache kernels)" if METHOD == "cops" else ")"), fontsize=13, y=1.0)
 fig.savefig(REPO / "figures" / "kv_layerwise.png", dpi=150, bbox_inches="tight")
 print("-> figures/kv_layerwise.png")

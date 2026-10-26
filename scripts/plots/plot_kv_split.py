@@ -25,7 +25,7 @@ TL = REPO / "output" / "kv_vram" / "timeline"
 plt.rcParams.update({"font.size": 11, "axes.titlesize": 12, "axes.labelsize": 11})
 BUDGETS = [24, 26, 28]
 METHOD = os.environ.get("KV_METHOD", "base")
-QPS = [1, 1.5, 2, 2.5, 3, 3.5, 4]
+QPS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
 C = {"queue": "#9a9a95", "load": "#eb6834", "steps": "#2a78d6", "stall": "#f4b48f"}
 
 
@@ -61,9 +61,9 @@ def main():
     for ax, b in zip(axes, BUDGETS):
         xs, vals = [], []
         for q in QPS:
-            p = TL / f"kv_{METHOD}_b{b}_q{q:g}_tr_req.csv"
+            p = TL / f"kv_{METHOD}_b{b}_q{q:g}_tr_r2_req.csv"      # a rerun replaces a failed run
             if not p.exists():
-                p = TL / f"kv_{METHOD}_b{b}_q{q:g}_tr_r2_req.csv"
+                p = TL / f"kv_{METHOD}_b{b}_q{q:g}_tr_req.csv"
                 if not p.exists():
                     continue
             xs.append(q)

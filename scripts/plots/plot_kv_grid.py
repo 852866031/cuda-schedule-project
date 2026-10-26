@@ -31,6 +31,7 @@ plt.rcParams.update({"font.size": 11, "axes.titlesize": 12, "axes.labelsize": 11
                      "legend.fontsize": 10})
 BUDGETS = [24, 26, 28]
 METHOD = os.environ.get("KV_METHOD", "base")      # base = Python-fallback LMCache, cops = compiled
+WHO = {"base": "LMCache Python fallback", "cops": "LMCache compiled kernels"}.get(METHOD, METHOD)
 C_B = {24: "#2a78d6", 26: "#eb6834", 28: "#1baf7a"}
 SLOTS = {24: "10 slots*", 26: "12 slots", 28: "15 slots"}
 
@@ -120,7 +121,7 @@ def fig_3d():
         ax.view_init(elev=24, azim=-55)
         ax.set_box_aspect(None, zoom=0.82)
         ax.set_title(title, pad=4)
-    fig.suptitle("The baseline grid as surfaces: x = decode VRAM budget, y = request rate, "
+    fig.suptitle(f"The grid as surfaces ({WHO}): x = decode VRAM budget, y = request rate, "
                  "z = the measured quantity (dots = measured cells)", y=0.98)
     fig.savefig(FIGS / "kv_grid_3d.png", dpi=150, bbox_inches="tight", pad_inches=0.3)
     plt.close(fig)
@@ -164,7 +165,7 @@ def fig_heat(contours=False):
         ax.set_xlabel("request rate (req/s)")
         ax.set_title(title)
         fig.colorbar(im, ax=ax, label=cb, fraction=0.046, pad=0.03)
-    fig.suptitle("Baseline grid: decode VRAM budget × request rate   "
+    fig.suptitle(f"Grid ({WHO}): decode VRAM budget × request rate   "
                  "(* 24 GiB holds 9.95 requests; a 10th is admitted on its 392 prompt blocks)"
                  + ("   — red: iso-wait contours (s), interpolated between cells" if contours else ""), y=1.02)
     fig.savefig(FIGS / ("kv_grid_heat_contours.png" if contours else "kv_grid_heat.png"), dpi=150,
@@ -217,8 +218,11 @@ def fig_scatter():
     fig, axes = plt.subplots(1, 3, figsize=(16, 4.8), sharey=True)
     rng = np.random.default_rng(0)
     for ax, b in zip(axes, BUDGETS):
-        for q, mk, al in ((2.0, "o", 0.85), (2.5, "^", 0.55)):
-            p = TL / f"kv_{METHOD}_b{b:g}_q{q:g}_tr_req.csv"
+        rates = (2.0, 2.5) if METHOD == "base" else (2.5, 3.0)   # where waiting starts
+        for q, mk, al in ((rates[0], "o", 0.85), (rates[1], "^", 0.55)):
+            p = TL / f"kv_{METHOD}_b{b:g}_q{q:g}_tr_r2_req.csv"
+            if not p.exists():
+                p = TL / f"kv_{METHOD}_b{b:g}_q{q:g}_tr_req.csv"
             if not p.exists():
                 continue
             rq = [r for r in csv.DictReader(open(p)) if r.get("wait")]
@@ -227,7 +231,7 @@ def fig_scatter():
             ax.scatter(fs + rng.uniform(-0.12, 0.12, len(fs)), w * 1000 + 1, s=16, marker=mk,
                        color=C_B[b], alpha=al, lw=0, label=f"{q:g} req/s")
         ax.axvline(392 / 400, color="#b3261e", lw=1, ls="--")
-        ax.text(392 / 400 + 0.05, 2e4, "392 blocks\n= 1 admission", color="#b3261e", fontsize=8.5, va="top")
+        ax.text(392 / 400 + 0.08, 3, "392 blocks\n= 1 admission", color="#b3261e", fontsize=8.5, va="bottom")
         ax.set_yscale("log")
         ax.set_xlabel("free KV space at arrival (requests of 400 blocks)")
         ax.set_title(f"{b} GiB ({SLOTS[b]})")

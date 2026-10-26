@@ -22,6 +22,11 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch, Rectangle
 
 REPO = Path(__file__).resolve().parent.parent.parent
+import os as _os
+_M = _os.environ.get("KV_METHOD", "base")
+# measured numbers per LMCache copy path (24 GiB): fallback (base) vs compiled kernels (cops)
+N = {"base": dict(bw="~4 GB/s", load=200, share="34%", load_rate="2 req/s", reload_from="0.3 s", reload_to="0.9–1.4 s"),
+     "cops": dict(bw="~7 GB/s", load=115, share="20%", load_rate="2 req/s", reload_from="0.18 s", reload_to="0.45–0.8 s")}[_M]
 C_RUN, C_NEW, C_WAIT, C_PRE = "#2a78d6", "#eb6834", "#9a9a95", "#b3261e"
 C_GPU, C_HOST, C_PCIE = "#eef3f9", "#f3f1ea", "#6b6b66"
 PX0, PX1, PY, PH = 21, 95, 74, 13
@@ -86,12 +91,12 @@ def base(ax, held, queue_head="head", queue_head_color="#6b6b66"):
     txt(ax, wall + 0.8, PY + PH + 1.5, "wall", 9, C_PRE, ha="left", bold=True)
     txt(ax, PX0 + 0.5, PY - 4.3, "+1 block per 16 generated tokens: 392 → 400", 8.5, C_RUN, ha="left")
     # PCIe
-    txt(ax, 44, 42.3, "PCIe Gen4 ×8: 14.5 GB/s link, ~4 GB/s LMCache copy", 9, C_PCIE, bold=True)
+    txt(ax, 50, 44.5, f"PCIe Gen4 ×8: 14.5 GB/s link\n{N['bw']} LMCache copy", 9, C_PCIE, bold=True)
     # host
     rbox(ax, 2, 1, 96, 40, C_HOST, "#b9b3a1", lw=1.6)
     txt(ax, 4, 39, "host RAM", 11.5, "#4a4639", ha="left", bold=True)
     rbox(ax, 4, 14, 44, 22, "white", "#b9b3a1")
-    txt(ax, 26, 34, "scheduler queue (FCFS)", 9.5, "#222", bold=True)
+    txt(ax, 32, 34, "scheduler queue (FCFS)", 9.5, "#222", bold=True)
     qx = 7
     for i in range(5):
         c = C_WAIT if i else queue_head_color
@@ -145,28 +150,27 @@ def case1(ax, async_mode):
     dash = "--" if async_mode else "-"
     x10, w10 = pos["#10"]
     free_before = POOL - sum(b for _, b, k in held if k == "run")
-    txt(ax, PX1 - 1, PY - 7.6, f"free before: {free_before} ≥ 392 → admit;  after: {free_before - 392}",
-        8.5, "#444", ha="right", bg=C_GPU)
     txt(ax, PX0, 60.5,
         "head of queue needs 392 free blocks\n"
-        "free → admitted, KV copied in from host RAM\n"
-        "not free → it and everyone behind it wait (= decode queue time)",
-        9, "#222", ha="left", bg=C_GPU)
+        "free → admitted, KV copied in\n"
+        "not free → it and all behind it wait\n"
+        f"here: {free_before} free → #10 admitted ({free_before - 392} left)",
+        8.5, "#222", ha="left", bg=C_GPU)
     # admit arrow + load arrow
     arrow(ax, (10.3, 29.5), (x10 + 1.5, PY - 0.3), "#333", lw=1.8, ls=dash, rad=-0.12)
     txt(ax, 14, 48, "ADMIT", 9, "#333", ha="left", bold=True)
     arrow(ax, (61, 36.5), (x10 + w10 / 2, PY - 0.3), C_NEW, lw=3.2, ls=dash, ms=22)
-    txt(ax, 97.5, 46.8,
-        ("SYNC: 0.75 GiB copied inside the step\n~200 ms, the 9 running get no token" if not async_mode else
-         "ASYNC: 0.75 GiB copied in the background\nthe 9 keep decoding; #10 joins when loaded"),
+    txt(ax, 97.5, 45.5,
+        (f"SYNC: 0.75 GiB copied\ninside the step, ~{N['load']} ms;\nthe 9 running get no token" if not async_mode else
+         "ASYNC: copied in the\nbackground; the 9 keep\ndecoding, #10 joins\nwhen loaded"),
         8.5, C_NEW, ha="right", bold=True)
     if not async_mode:
-        seq = [("step", 16, C_RUN)] * 3 + [("LOAD #10 — all 9 wait", 200, C_NEW)] + \
+        seq = [("step", 16, C_RUN)] * 3 + [("LOAD #10 — all 9 wait", N["load"], C_NEW)] + \
               [("step +#10", 34, C_RUN)] + [("step", 16, C_RUN)] * 2
-        timeline(ax, seq, "load stalls = 34% of decode wall time (24 GiB, 2 req/s)")
+        timeline(ax, seq, f"load stalls = {N['share']} of decode wall time (24 GiB, {N['load_rate']})")
     else:
         seq = [("step", 16, C_RUN)] * 13 + [("step +#10", 34, C_RUN)] + [("step", 16, C_RUN)] * 2
-        timeline(ax, seq, "", side=(200, "copy on a side stream"))
+        timeline(ax, seq, "", side=(N["load"], "copy on a side stream"))
 
 
 fig, axes = plt.subplots(1, 2, figsize=(19, 10.5))
@@ -175,7 +179,7 @@ case1(axes[0], False)
 case1(axes[1], True)
 axes[0].set_title("today: synchronous load (LMCache 0.4.4, measured)",
                   fontsize=12.5, fontweight="bold", color="#222", pad=8)
-axes[1].set_title("possible: asynchronous load (vLLM hook exists; E4 tests it)",
+axes[1].set_title("hypothetical: asynchronous load (not usable in LMCache 0.4.4, §6)",
                   fontsize=12.5, fontweight="bold", color="#7c2d12", pad=8)
 fig.suptitle("CASE 1 — admitting a request: no slot → queue; slot → the batch stalls while its KV loads",
              fontsize=13.5, y=0.975)
@@ -189,16 +193,14 @@ def case2(ax, after):
         held = [(f"#{i + 1}", b, "run") for i, b in
                 enumerate([400, 400, 400, 399, 399, 398, 398, 397, 396, 393])]
         pos = base(ax, held)
-        txt(ax, PX1 - 1, PY - 7.6, "free: 0 — #5 needs a block", 8.5, C_PRE,
-            ha="right", bold=True, bg=C_GPU)
         x10, w10 = pos["#10"]
-        txt(ax, PX0, 60.5,
-            "10 × 392 = 3,920 fit at admission, 10 × 400 = 4,000 do not\n"
-            "no free block → the last-admitted request (#10) is evicted:\n"
-            "blocks freed, progress reset, back to the HEAD of the queue",
-            9, "#222", ha="left", bg=C_GPU)
-        arrow(ax, (x10 + w10 / 2, PY + 0.5), (10.3, 29.5), C_PRE, lw=2.2, ls="--", rad=0.18)
-        txt(ax, 36, 46, "EVICT #10 → head of queue", 9, C_PRE, ha="left", bold=True)
+        txt(ax, PX0, 61,
+            "10 × 392 fit at admission,\n10 × 400 = 4,000 do not\n"
+            "free: 0, and #5 needs a block\n"
+            "→ last-admitted #10 is evicted,\nback to the HEAD of the queue",
+            8.5, "#222", ha="left", bg=C_GPU)
+        arrow(ax, (x10 + w10 / 2, PY + 0.5), (12.5, 29.6), C_PRE, lw=2.2, ls="--", rad=0.0)
+        txt(ax, 58, 51.5, "EVICT #10 → head of queue", 9, C_PRE, ha="left", bold=True)
         seq = [("step", 16, C_RUN)] * 6 + [("evict #10", 4, C_PRE)] + [("step", 16, C_RUN)] * 6
         timeline(ax, seq, "no stall at eviction; the cost comes later (right)", C_PRE)
     else:
@@ -206,22 +208,20 @@ def case2(ax, after):
         held.append(("#10", 393, "gone"))
         pos = base(ax, held, queue_head="#10", queue_head_color=C_PRE)
         x10, w10 = pos["#10"]
-        txt(ax, PX1 - 1, PY - 7.6, "free: 393 — #10 now needs 394+", 8.5, C_PRE, ha="right",
-            bold=True, bg=C_GPU)
-        txt(ax, PX0, 60.5,
-            "#10 needs more blocks than before (its generated tokens count)\n"
-            "it waits until one of the nine finishes (1–3 s), then is admitted again:\n"
-            "prefix KV loaded a second time (another stall), suffix + generated tokens recomputed",
-            9, "#222", ha="left", bg=C_GPU)
+        txt(ax, PX0, 61,
+            "free: 393, #10 now needs 394+\n(its generated tokens count)\n"
+            "waits until one of the nine\nfinishes (1–3 s), then the prefix\n"
+            "KV is loaded a second time",
+            8.5, "#222", ha="left", bg=C_GPU)
         arrow(ax, (10.3, 29.5), (x10 + 1.5, PY - 0.3), "#333", lw=1.8, ls="--", rad=-0.12)
         txt(ax, 14, 48, "RE-ADMIT later", 9, "#333", ha="left", bold=True)
         arrow(ax, (61, 36.5), (x10 + w10 / 2, PY - 0.3), C_NEW, lw=3.2, ls="--", ms=22)
-        txt(ax, 97.5, 46.8, "LOAD AGAIN: same 0.75 GiB,\nanother ~200 ms stall", 8.5, C_NEW,
+        txt(ax, 97.5, 46.8, f"LOAD AGAIN: same 0.75 GiB,\nanother ~{N['load']} ms stall", 8.5, C_NEW,
             ha="right", bold=True)
         seq = [("step", 16, C_RUN)] * 5 + [("#3 done", 4, C_PRE)] + \
-              [("LOAD #10 again — all wait", 200, C_NEW)] + [("+#10", 40, C_RUN)] + \
+              [("LOAD #10 again — all wait", N["load"], C_NEW)] + [("+#10", 40, C_RUN)] + \
               [("step", 16, C_RUN)] * 2
-        timeline(ax, seq, "reloads raise the mean load per request from 0.3 s to 0.9–1.4 s at saturation")
+        timeline(ax, seq, f"reloads raise the mean load per request from {N['reload_from']} to {N['reload_to']} at saturation")
 
 
 fig, axes = plt.subplots(1, 2, figsize=(19, 10.5))
