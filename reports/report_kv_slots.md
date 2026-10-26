@@ -264,23 +264,33 @@ what must stay resident.
 
 ### 6.2 LMCache's load-path options
 
-![layerwise](../figures/kv_layerwise.png)
+**`use_layerwise`** splits the one-time load at admission into per-layer pieces, hoping to
+overlap copy with compute. Measured at 24 GiB / 2.5 req/s, on both copy paths:
 
-**`use_layerwise`** splits the one-time load into per-layer pieces, hoping to overlap
-copy with compute. At 24 GiB / 2.5 req/s:
+![layerwise measured](../figures/kv_layerwise_measured.png)
 
-| | compiled (2 runs) | compiled + layerwise |
+- **Fallback: a large gain.** Queue 4,680 → 1,483 ms, own load 0.87 → 0.30 s, residence
+  4.10 → 3.74 s. The per-layer retriever never hits the whole-request L1 staging failures
+  (3,360 → 0 per run), so a load takes the bare copy time.
+- **Compiled kernels: no gain.** Queue 143 → 136 ms, own load 0.18 → 0.19 s, residence
+  2.83 → 2.76 s. All of these are within run-to-run noise (one layerwise run).
+
+| compiled kernels | baseline (2 runs) | + layerwise (1 run) |
 |---|---|---|
 | decode queue wait | 143 / 143 ms | 136 ms |
 | TPOT (end-user) p50 | 24.2 / 24.3 ms | 23.5 ms |
-| load p50 | 169 ms | 148 ms |
 | excess step time per residence | 0.67 s | 0.70 s |
 | preemptions | 7 / 8 | 4 |
 
-There is no overlap. The excess step time is the same, because each layer still blocks
-on its L1/store fetch before its copy can start. (Under the fallback, layerwise gave a
-real 3× queue gain, but that came from avoiding the L1 allocation failures, not from
-overlap.)
+Why there is no overlap: the admitting step, drawn to scale from the measured copy
+(115 ms) and forward (14 ms):
+
+![layerwise schematic](../figures/kv_layerwise.png)
+
+Each layer's copy waits for that layer's L1/store fetch, and the forward for layer i
+waits for copy i. The 32 pieces alternate but never run at the same time, so the step
+takes the same total either way. The schematic shows *why*; the measured figure above
+shows that this is what happened.
 
 **The other two options are not usable on this stack.**
 - `enable_async_loading` crashes the 0.4.4 engine (a `KeyError` on its lookup timeout
