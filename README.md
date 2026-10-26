@@ -11,7 +11,7 @@ GPU1**. Prefill is only the source of KV; everything measured here is decode.
 
 | document | role |
 |---|---|
-| [reports/report_kv_slots.md](reports/report_kv_slots.md) | **main report**: slots, scheduler, grid, load stalls — LMCache with its compiled CUDA kernels |
+| [reports/report_kv_slots.md](reports/report_kv_slots.md) | **main report**: slots, scheduler, grid, load stalls (LMCache compiled kernels), and the load-path options: layerwise, async loading, MP connector on vLLM 0.18.1 |
 | [reports/report_kv_slots_fallback.md](reports/report_kv_slots_fallback.md) | the same study with LMCache on its Python fallback copy path (the state of all earlier studies) |
 | [NOTES_KV_SLOTS.md](NOTES_KV_SLOTS.md) | starting facts, all re-derivable from the prior study's data |
 | [PLAN_KV_VRAM.md](PLAN_KV_VRAM.md) | pre-registration: experiments and predictions (never rewritten, only annotated) |
