@@ -721,3 +721,25 @@ a longer timeout changes nothing there. The grid continues unchanged; afterwards
 `cops_async` cell that failed is rerun as `cops_async_t30` (`lookup_timeout_ms: 30000`,
 otherwise identical) under the same `_g` suffix (`run_async_t30.sh`). Analysis uses
 the `_g` cell of either method, noting which.
+
+## D11 (2026-10-26) — MP connector on vLLM 0.18.1
+
+`.venv-vllm018`: vLLM 0.18.1, torch 2.10.0+cu128, LMCache 0.4.4, transformers 4.57.6
+(installed with the user pip config's unreachable extra index bypassed for this install
+only). LMCache 0.4.4's **stock** `c_ops` load natively on torch 2.10 (both MP ops present):
+the wheel was built for torch 2.10, which is why it failed on 0.15.1's torch 2.9.1. Method
+`mp18`: engines on 0.18.1 with its built-in `LMCacheMPConnector` (token-id keys, matches the
+0.4.4 server), MP server in the same venv, 32 GiB pinned L1, LRU, engines without
+expandable segments. Per the user, no 0.15.1-vs-0.18.1 control is run; the source review
+(D9 note) found the same grant formula, attention backend, graph mode, FCFS admission and
+eviction. Smoke `kv_mp18_b24_q2.5_tr`, then the 27-cell grid (`_g`), queued after the
+async reruns (`run_mp18.sh`).
+
+**Predictions.** Grant 7.77 / 9.77 / 11.77 GiB as on 0.15.1 (±1 block). The admitting step
+no longer contains a copy: extra time of load-carrying steps per request (24 GiB, 2.5)
+0.67 s → < 0.15 s; residence 2.83 → ~2.2 s; slot wait < 50 ms at 2.5 req/s; saturation
++20–30% over the compiled sync baseline. Each request waits ~100–200 ms for its KV while
+holding its blocks (`alloc` → `new` in the trace). Evicted requests are recomputed, not
+reloaded (connector TODO), so 24 GiB's evictions cost a 6,144-token prefill each.
+Risks: protocol or IPC failure at startup (smoke catches it); server-side copy contention
+at high rates.
