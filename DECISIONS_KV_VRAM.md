@@ -441,3 +441,19 @@ inside the forward: no overlap was gained. Report: the mechanism is "sidesteps t
 pool thrash of 0.4.4's whole-request path", not "overlaps transfer with compute".
 Corollary for the earlier studies: part of the ~400 ms "KV load" was L1 allocation
 thrash, not PCIe. Layerwise passes E4 (ok, grant unchanged, outputs to be compared).
+
+**Why layerwise does not overlap here (source, 2026-10-25).**
+`VLLMPagedMemLayerwiseGPUConnector.batched_to_gpu` is written to overlap: a dedicated
+`load_stream`, `current_stream.wait_stream(load_stream)` per layer, the copy of layer i
+issued on the side stream before yielding so vLLM computes layer i−1 meanwhile. Two
+things defeat it on this box. (1) The copy kernel is the Python fallback
+(`non_cuda_equivalents.single_layer_kv_transfer`: `.to(device)` + fancy-index assignment)
+because `lmcache.c_ops` does not load; that path synchronises the CPU thread on each
+copy, so the generator cannot yield until the layer has landed. (2) In
+`cache_engine.retrieve_layer` each layer blocks on `task.result()` for the L1/store
+fetch before handing the chunks to the GPU consumer. Both wait on the engine thread, so
+the forward is paused 32 times for (fetch + copy) and the total equals the baseline's.
+Consequences: grouping layers (k per yield) would save the per-yield overhead only;
+real overlap needs the compiled `c_ops` so the side-stream copy is asynchronous — the
+same build the MP connector needs. After the build, re-run `use_layerwise` in the new
+environment before judging it.

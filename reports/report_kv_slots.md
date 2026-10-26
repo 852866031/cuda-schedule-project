@@ -322,7 +322,12 @@ resident requests hit the wall less often (preemptions 35 → 12, each one a sec
 avoided), residence falls 4.1 → 3.7 s and the queue 3×. What did **not** happen is
 overlap: the copy is still synchronous inside the forward, split into 32 pieces but
 never concurrent with compute (figure). The gain is a fixed LMCache staging bug, not
-hidden transfer.
+hidden transfer. LMCache's code *is* written to overlap — the per-layer copy goes on a
+side CUDA stream and the forward is meant to run meanwhile — but on this box the copy
+runs through the Python fallback (the compiled kernels do not load against this torch),
+which synchronises the engine thread on every copy, and each layer first blocks on its
+L1 fetch. Grouping layers would only trim per-layer overhead; real overlap needs the
+compiled kernels.
 
 The other two load-path options could not be tested: LMCache's `enable_async_loading`
 crashes the 0.4.4 engine (a bookkeeping `KeyError` on its lookup timeout path), and the
