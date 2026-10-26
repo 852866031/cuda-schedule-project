@@ -144,7 +144,8 @@ def fig_heat(contours=False):
                 z = Z[i, j]
                 ax.text(j, i, f"{z:.2f}" if col == "decode_queue_ms" and z < 1 else f"{z:.0f}" if z >= 10 else f"{z:.1f}",
                         ha="center", va="center", fontsize=9.5,
-                        color="white" if (norm and z > 1) or (not norm and z > np.nanmean(Z)) else "#111")
+                        color="white" if (norm and z > np.sqrt(norm.vmin * norm.vmax))
+                        or (not norm and z > np.nanmean(Z)) else "#111")
         Xc, Yc = np.meshgrid(range(len(QPS_COMMON)), range(len(BUDGETS)))
         if contours and col == "decode_queue_ms":
             cs = ax.contour(Xc, Yc, Z, levels=levels, colors="#b3261e", linewidths=2.2)
