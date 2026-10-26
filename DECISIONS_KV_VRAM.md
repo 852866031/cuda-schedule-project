@@ -355,3 +355,38 @@ decode. §4.3 of the report corrected accordingly. The control rerun
 (`kv_base_b28_q4_tr_r2`) gave tpot2 30.7 ms, decode 4.06 s, 360 tok/s — the as-is cell
 repeats within 1%, so the batched cell's 32.7 ms is not an improvement.
 
+
+## E4 — feasibility smokes (2026-10-25)
+
+Setting for every smoke: 24 GiB, 2.5 req/s, trace on, one launch; `ok` = zero failed,
+prefix hit ≥ 0.95, all 38,400 decode tokens, no watchdog trip. Baseline cell to beat:
+`kv_base_b24_q2.5_tr` — queue 4,680 ms, TPOT 64 ms, 289 tok/s, decode-only load stall
+≈ 0.9 s per residence.
+
+### Smoke 1 — `LMCacheMPConnector` (vLLM's asynchronous load path): infeasible here
+
+Checked before launching: lmcache 0.4.4 ships `vllm_multi_process_adapter.py` and vLLM
+0.15.1 registers `LMCacheMPConnector`, but the LMCache multi-process server
+(`lmcache/v1/multiprocess/server.py:66`, `gpu_context.py`) requires the compiled ops
+`PageBufferShapeDesc` and `multi_layer_block_kv_transfer`. On this box `lmcache.c_ops`
+does not load against torch 2.9.1 (CLAUDE.md: a source build deadlocks at engine init)
+and the Python fallback `non_cuda_equivalents` does not implement either op. Not run.
+The asynchronous path therefore cannot be tested without a working c_ops build.
+
+### Smoke 2 — LMCache `use_layerwise: true` on both engines (`kv_lw_b24_q2.5_tr`)
+
+- **Prediction:** starts and completes (risk: the decode engine runs FULL_AND_PIECEWISE
+  CUDA graphs; newer vLLM forces PIECEWISE for layerwise, 0.15.1 has no such check — a
+  hang would trip the stall watchdog). Loading becomes per-layer and overlaps the
+  forward pass of the admitting step, but the copy path is unchanged (~190 ms per
+  request), so the admit-step stall shrinks by < 30%; slot count unchanged (c_eff = 10);
+  queue wait within ±20% of baseline; outputs identical.
+
+### Smoke 3 — LMCache `enable_async_loading: true` on the decode engine (`kv_async_b24_q2.5_tr`)
+
+- **Prediction:** starts. The option makes the store → L1 fetch asynchronous (the
+  request waits in `WAITING_FOR_REMOTE_KVS` until its chunks are in the pinned L1); the
+  L1 → GPU copy stays inside the admitting step. The stall shrinks by the TCP-fetch share
+  of the ~190 ms per request, which this smoke measures (unknown; guess 30–50%). If the
+  engine log shows no async lookups at all, the option is inert in 0.4.4's v1 adapter
+  (the review found the enabling check commented out) and the result equals baseline.

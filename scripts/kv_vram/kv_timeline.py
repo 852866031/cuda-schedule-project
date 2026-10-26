@@ -66,6 +66,11 @@ def build(rec, ev):
             for rid in e.get("pre", []):
                 if rid in reqs:
                     reqs[rid]["preempted"] = reqs[rid].get("preempted", 0) + 1
+            for rid, ext in e.get("res", []):
+                r = reqs.get(rid)
+                if r is not None:
+                    r["t_resumed"] = e["t"]
+                    r["resumed_ext"] = ext
         elif k == "upd":
             dt = None
             if last_upd is not None and e["t"] - last_upd < 0.5:

@@ -7,7 +7,8 @@ imports the module, which is the EngineCore (scheduler + the in-process worker):
   vllm.v1.core.sched.scheduler.Scheduler
       add_request        -> "arr": request reaches the scheduler; free blocks then
       schedule           -> "sch": one line per call (running, waiting, free blocks,
-                            newly admitted request ids + their LMCache-hit tokens)
+                            newly admitted request ids + their LMCache-hit tokens;
+                            "res" = requests re-admitted after a preemption)
       update_from_output -> "upd": one line per executed batch (wall time; ids whose
                             first output token appeared in it)
       _free_request      -> "fin": request finished; free blocks AFTER its release
@@ -132,6 +133,11 @@ if os.environ.get("KV_TRACE") == "1":
                 rec["new"] = new                       # [id, external tokens, blocks]
             if out.preempted_req_ids:
                 rec["pre"] = list(out.preempted_req_ids)
+            cached = getattr(out, "scheduled_cached_reqs", None)
+            resumed = getattr(cached, "resumed_req_ids", None)
+            if resumed:                       # re-admitted after a preemption: a 2nd KV load
+                rec["res"] = [(rid, self.requests[rid].num_external_computed_tokens
+                               if rid in self.requests else None) for rid in resumed]
             _W.put(rec)
 
         def update_from_output(self, scheduler_output, model_runner_output):
