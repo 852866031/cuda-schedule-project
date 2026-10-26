@@ -1,0 +1,3 @@
+
+=== kv_cops_b24_q2.5_tr  (method cops, decode 24 GiB, 2.5 QPS, trace on) ===
+  RAM gate [big]: 57756 MB available, needs ~45864 MB, swap allowance 3000 MB, floor 4000 MB

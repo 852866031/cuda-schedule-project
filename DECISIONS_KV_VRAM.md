@@ -559,3 +559,48 @@ are moved to `output/raw/archive_step025/`, `output/kv_vram/timeline/archive_ste
 `output/kv_vram/trace/archive_step025/`; they no longer enter the summary or figures
 (the frozen fallback report and its figures still quote them). Telemetry under
 `output/gpumon/` stays in place (not read by the summary).
+
+## D6 outcome — cops grid (2026-10-26, 27 cells, all ok)
+
+Every cell passed the audit: an ok traced run, both engines on `lmcache.c_ops`, decode-only
+trace, swap-in < 0.5 GB, prefix hit 0.98. 24 GiB / 1 req/s was rerun (`_r2`) after the
+router race (D7); 24 GiB / 2.5 uses `_tr_r2` (the first run's trace was invalid). The
+driver was killed once by a session restart during 26 GiB / 2 req/s (no data); the rest
+ran detached (`setsid nohup output/kv_vram/drivers/run_cops_rest.sh`).
+
+| | 24 GiB | 26 GiB | 28 GiB |
+|---|---|---|---|
+| capacity (mean queue < 50 ms), fallback | 1.5–2 req/s | 1.5–2 | 2–2.5 |
+| capacity, cops | **2–2.5** | **2.5–3** | **2.5–3** |
+| saturation throughput, fallback (rates ≤ 4) | 2.38 req/s | 2.66 | 2.75 |
+| saturation throughput, cops (rates ≤ 5) | **2.97** | **3.35** | **3.58** |
+| preemptions over the row | 146 → 158 | 0 → 0 | 0 → 0 |
+
+Per request at 3 req/s (trace): the copy in `start_load_kv` falls from 179–201 ms to
+112–114 ms; the load (admitted → first token) p50 from 327–584 ms to 168–182 ms; the stall
+count per residence is about the same at equal load but each stall is ~120 ms instead of
+~210 ms, so stall time per residence roughly halves (28 GiB: 2.58 → 1.07 s); residence
+falls 4.05 / 4.36 / 5.18 s → 3.15 / 3.25 / 3.35 s at 24 / 26 / 28 GiB. At 24 GiB / 2 req/s
+load stalls take 12% of decode wall time (fallback 34%).
+
+Re-simulation with c_eff = 10 / 12 / 15: within 0.1% of the measured mean wait at every
+26 / 28 GiB cell with a wait, within 0.1–2% at 24 GiB from 2.5 req/s up (−7% at 2 req/s,
+where the wait is 11 ms); c ± 1 is off by 1.5–3×.
+
+**Against the predictions:**
+- Grant / slots unchanged — confirmed.
+- Capacity: 24 GiB "2.25–2.5" — confirmed (2.5 reads 143 ms; the archived 2.25 cell read
+  42 ms); 26 GiB "2.5–3" — confirmed; 28 GiB "3–3.5" — **wrong, 2.5–3** (3 req/s reads
+  81 ms).
+- Saturation 3.3 / 3.7 / 4.2 req/s — **10–15% too high** (2.97 / 3.35 / 3.58). The gain
+  over fallback is +25% / +26% / +30%, not the +40–55% predicted from residence alone:
+  residence fell less at saturation than the 2.5 req/s smoke suggested (reloads after
+  preemption still cost at 24 GiB; more slots still mean more stalls at 26/28).
+- Preemptions "fewer at 24 GiB": true at moderate load (8 vs 35 at 2.5 req/s), not over
+  the saturated row (~34 per cell either way once the queue is deep).
+- TPOT at 1 req/s "16–17 ms" — **wrong, 14.5 ms** at every budget (fallback 17): the
+  per-request load stall is shorter even when nobody waits.
+- Re-simulation within 2% — confirmed (tighter than with the fallback).
+
+Diminishing returns with more slots persist but weaken: 26 → 28 GiB (+25% slots) buys +7%
+saturation throughput (fallback +3%); 24 → 28 GiB buys +21% (fallback +16%).
