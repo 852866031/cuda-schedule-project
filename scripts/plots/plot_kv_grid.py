@@ -62,28 +62,29 @@ def val(b, q, col):
 
 # ------------------------------------------------------------------ 3D
 def fig_3d():
-    fig = plt.figure(figsize=(10, 7.5))
-    ax = fig.add_subplot(111, projection="3d")
+    panels = [("decode_queue_ms", 1e-3, "mean wait for a slot (s)", "(a) decode queue wait", cm.Blues),
+              ("tok_per_s", 1, "output tokens / s", "(b) throughput", cm.Greens),
+              ("tpot2_p50_ms", 1, "ms per token (gaps 2..N)", "(c) decode-only TPOT p50", cm.Oranges)]
+    fig = plt.figure(figsize=(19, 6.4))
     B, Q = np.meshgrid(BUDGETS, QPS_COMMON, indexing="ij")
-    Z = np.array([[val(b, q, "decode_queue_ms") / 1000 for q in QPS_COMMON] for b in BUDGETS])
-    ax.plot_surface(B, Q, Z, cmap=cm.Blues, edgecolor="#333", lw=0.6, alpha=0.9, rstride=1, cstride=1)
-    for b in BUDGETS:
-        for q in QPS_ALL:
-            z = val(b, q, "decode_queue_ms") / 1000
-            if not np.isnan(z):
-                ax.scatter([b], [q], [z], color=C_B[b], s=28, depthshade=False)
-    ax.set_xlabel("decode VRAM budget (GiB)", labelpad=10)
-    ax.set_ylabel("request rate (req/s)", labelpad=10)
-    ax.set_zlabel("height = mean decode queue wait (s)", labelpad=12)
-    ax.set_xticks(BUDGETS)
-    ax.view_init(elev=24, azim=-55)
-    ax.set_title("Height: how long a request waits for a KV slot (mean, seconds)\n"
-                 "x: decode VRAM budget, y: request rate — Llama-3-8B decode on GPU1", pad=12)
-    ax.text2D(0.02, 0.92, "flat floor = no waiting;  the cliff = the rate at which waiting starts",
-              transform=ax.transAxes, fontsize=10, color="#444")
-    ax.text2D(1.0, 0.55, "z: mean wait for a slot (s)", transform=ax.transAxes, fontsize=11,
-              rotation=90, ha="left", va="center")
-    fig.subplots_adjust(right=0.9)
+    for k, (col, sc, zl, title, cmap) in enumerate(panels):
+        ax = fig.add_subplot(1, 3, k + 1, projection="3d")
+        Z = np.array([[val(b, q, col) * sc for q in QPS_COMMON] for b in BUDGETS])
+        ax.plot_surface(B, Q, Z, cmap=cmap, edgecolor="#333", lw=0.6, alpha=0.9, rstride=1, cstride=1)
+        for b in BUDGETS:
+            for q in QPS_ALL:
+                z = val(b, q, col) * sc
+                if not np.isnan(z):
+                    ax.scatter([b], [q], [z], color=C_B[b], s=22, depthshade=False)
+        ax.set_xlabel("VRAM budget (GiB)", labelpad=8)
+        ax.set_ylabel("request rate (req/s)", labelpad=8)
+        ax.set_zlabel(zl, labelpad=10)
+        ax.set_xticks(BUDGETS)
+        ax.view_init(elev=24, azim=-55)
+        ax.set_box_aspect(None, zoom=0.82)
+        ax.set_title(title, pad=4)
+    fig.suptitle("The baseline grid as surfaces: x = decode VRAM budget, y = request rate, "
+                 "z = the measured quantity (dots = measured cells)", y=0.98)
     fig.savefig(FIGS / "kv_grid_3d.png", dpi=150, bbox_inches="tight", pad_inches=0.3)
     plt.close(fig)
 

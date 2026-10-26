@@ -130,9 +130,11 @@ combinations that give the same mean wait, so its slope says how much rate one G
 
 ![heatmaps with contours](../figures/kv_grid_heat_contours.png)
 
-The same surface in 3D: height is the mean wait for a slot. The flat floor is "nobody
-waits"; the cliff is where waiting begins, and it moves to a higher rate by about one grid
-step per 2 GiB of budget:
+The same three quantities as surfaces. In (a) height is the mean wait for a slot: the
+flat floor is "nobody waits", the cliff is where waiting begins, and it moves to a higher
+rate by about one grid step per 2 GiB. (b) rises with rate until it flattens at each
+budget's saturation throughput; (c) is flat while nobody waits and then rises with
+budget, not with rate.
 
 ![3D view](../figures/kv_grid_3d.png)
 
