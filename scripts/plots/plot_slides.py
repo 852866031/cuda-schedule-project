@@ -608,33 +608,33 @@ def fig_mgc_s():
 def fig_waitfree_s():
     tl = REPO / "output" / "kv_vram" / "timeline"
     rng = np.random.default_rng(0)
-    fig, axes = plt.subplots(1, 3, figsize=(12.5, 4.3), sharey=True, gridspec_kw={"wspace": 0.08})
+    C = {24: 10, 26: 12, 28: 15}
+    fig, axes = plt.subplots(1, 3, figsize=(12.5, 4.4), sharey=True, gridspec_kw={"wspace": 0.08})
     for ax, b in zip(axes, BUD):
-        for q, mk, al in ((2.5, "o", 0.85), (3.0, "^", 0.55)):
+        for q, mk, al, ls in ((2.5, "o", 0.85, "--"), (3.0, "^", 0.55, ":")):
             p = tl / f"kv_cops_b{b}_q{q:g}_tr_r2_req.csv"
             if not p.exists():
                 p = tl / f"kv_cops_b{b}_q{q:g}_tr_req.csv"
-            rq = [r for r in csv.DictReader(open(p)) if r.get("wait")]
-            x = np.array([int(r["free_at_arr"]) // 392 - int(float(r["wait_at_arr"])) for r in rq])
-            x = np.minimum(x, 1)                          # 0 or fewer = none left; 1 = at least one
-            w = np.array([float(r["wait"]) for r in rq]) * 1e3 + 1
-            ax.scatter(np.where(x >= 1, 1, 0) + rng.uniform(-0.25, 0.25, len(x)), w, s=14, marker=mk,
-                       color=CB[b], alpha=al, lw=0, label=f"{q:g} req/s")
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels(["none left\nfor it", "≥ 1 left\nfor it"], fontsize=13)
-        ax.set_xlim(-0.6, 1.6)
-        ax.set_yscale("log")
+            rq = [r for r in csv.DictReader(open(p)) if r.get("wait") and r.get("resident")]
+            k = np.array([max(0, int(float(r["wait_at_arr"])) - int(r["free_at_arr"]) // 392) for r in rq])
+            w = np.array([float(r["wait"]) for r in rq])
+            gap = np.mean([float(r["resident"]) for r in rq]) / C[b]
+            ax.scatter(k + rng.uniform(-0.18, 0.18, len(k)), w, s=14, marker=mk, color=CB[b], alpha=al, lw=0,
+                       label=f"{q:g} req/s")
+            kk = np.arange(0, max(k.max(), 1) + 1)
+            ax.plot(kk, kk * gap, ls, color="#444", lw=1.4)
         ax.set_title(f"{b} GiB", fontsize=14)
-        ax.legend(frameon=False, fontsize=12, loc="upper right")
-        ax.grid(axis="y", color="#ececea", lw=0.6)
+        ax.set_xlim(-0.6, 14)
+        ax.set_xticks(range(0, 15, 2))
+        ax.legend(frameon=False, fontsize=12, loc="upper left")
+        ax.grid(color="#ececea", lw=0.6)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.tick_params(axis="y", labelsize=12)
-    axes[0].set_ylabel("queue wait (ms + 1, log)", fontsize=13)
-    mbadge(axes[0], -0.45, 3000, 1)
-    mbadge(axes[0], 1.0, 2.6, 2)
-    mbadge(axes[0], -0.45, 1.6, 3)
-    fig.text(0.5, -0.06, "admissions left for this request at arrival = free blocks ÷ 392 − requests already queued ahead",
-             ha="center", fontsize=13)
+        ax.tick_params(labelsize=12)
+    axes[0].set_ylabel("queue wait (s)", fontsize=13)
+    axes[1].set_xlabel("k = running requests that must finish before it is admitted", fontsize=13)
+    mbadge(axes[0], 0.0, 0.55, 1)
+    mbadge(axes[0], 11.5, 4.3, 2)
+    fig.text(0.5, -0.1, "dashed / dotted: k × residence ÷ c for the 2.5 / 3 req/s cell", ha="center", fontsize=12)
     fig.savefig(OUT / "s_waitfree.png", dpi=130, facecolor="white", bbox_inches="tight")
     plt.close(fig)
     print("-> figures/slides/s_waitfree.png")

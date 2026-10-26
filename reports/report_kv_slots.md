@@ -156,20 +156,21 @@ request shows up in its *residence* (§4.3).
 
 ![wait vs free space](../figures/kv_wait_vs_free.png)
 
-Per request the rule is exact once the queue is counted. The x axis is the admissions
-left *for this request* at arrival: free blocks ÷ 392, minus the requests already
-waiting ahead of it (first come, first served gives the free blocks to them first).
-- **At least one admission left: no wait.** All 1,133 such requests in the six cells
-  shown waited ≤ 0.2 ms.
-- **None left: it waits** 0.02–5 s, depending on load.
-- A few with none left still waited ~0 ms; for them a slot freed within the same engine
-  step.
+Per request, the rule is exact once the queue is counted. The x axis is **k, the number of
+running requests that must finish before this request is admitted**: the requests already
+waiting ahead of it, minus the admissions the free blocks allow (free ÷ 392), floored at 0.
+First come, first served gives the free blocks to the requests ahead first.
+- **k = 0: no wait.** All 1,258 such requests in the six cells shown waited ≤ 0.2 ms.
+- **k ≥ 1: it waits**, all 542 of them, 17 ms – 4.8 s.
+- **The wait is about k × (residence ÷ c)**, the mean time between two slots freeing,
+  drawn as the dashed / dotted line per cell. At 24 GiB / 3 req/s it holds out to k = 13
+  (4.08 s measured, 4.10 s predicted).
 
-(Correction, 2026-10-26: an earlier version plotted free space alone and attributed the
-waits to the right of the 392-block line to the scheduler being blocked by a load call.
-Every one of those requests had at least as many requests queued ahead of it as there
-were free admissions: 23/23, 20/20, 11/11 and 7/7 at 24 GiB / 3, 26 GiB / 3, 28 GiB / 3
-and 26 GiB / 2.5 req/s.)
+(Corrections, 2026-10-26: an earlier version plotted free space alone and blamed the waits
+next to free blocks on the scheduler being blocked by a load call; every one of them had
+requests queued ahead. A later version plotted "free admissions − requests ahead" and
+explained 125 apparent exceptions as same-step frees; those were an off-by-one: the
+trace's waiting count, taken right after `add_request`, includes the request itself.)
 
 ### 4.3 What the slots cost: the synchronous load stalls the batch
 

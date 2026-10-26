@@ -20,6 +20,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker
 import numpy as np
 from matplotlib import cm
 from matplotlib.colors import LogNorm
@@ -218,35 +219,39 @@ def fig_mgc():
 
 # ------------------------------------------------------------------ scatter
 def fig_scatter():
+    """x = k = running requests that must finish before this one is admitted: requests
+    queued ahead of it (the trace's waiting count includes the request itself) minus the
+    free admissions (free blocks // 392), floored at 0. Prediction: k x (residence / c)."""
     fig, axes = plt.subplots(1, 3, figsize=(16, 4.8), sharey=True)
     rng = np.random.default_rng(0)
+    C = {24: 10, 26: 12, 28: 15}
     for ax, b in zip(axes, BUDGETS):
         rates = (2.0, 2.5) if METHOD == "base" else (2.5, 3.0)   # where waiting starts
-        for q, mk, al in ((rates[0], "o", 0.85), (rates[1], "^", 0.55)):
+        for q, mk, al, ls in ((rates[0], "o", 0.85, "--"), (rates[1], "^", 0.55, ":")):
             p = TL / f"kv_{METHOD}_b{b:g}_q{q:g}_tr_r2_req.csv"
             if not p.exists():
                 p = TL / f"kv_{METHOD}_b{b:g}_q{q:g}_tr_req.csv"
             if not p.exists():
                 continue
-            rq = [r for r in csv.DictReader(open(p)) if r.get("wait")]
-            # admissions left for THIS request: free admissions at arrival minus requests
-            # already waiting ahead of it (FCFS: they take the free blocks first)
-            fs = np.array([int(r["free_at_arr"]) // 392 - int(float(r["wait_at_arr"])) for r in rq])
+            rq = [r for r in csv.DictReader(open(p)) if r.get("wait") and r.get("resident")]
+            k = np.array([max(0, int(float(r["wait_at_arr"])) - int(r["free_at_arr"]) // 392) for r in rq])
             w = np.array([float(r["wait"]) for r in rq])
-            print(f"  {p.name}: waited > 20 ms with >= 1 admission left: {int(((fs >= 1) & (w > 0.02)).sum())}; "
-                  f"waited 0 with none left: {int(((fs < 1) & (w < 0.002)).sum())}")
-            ax.scatter(fs + rng.uniform(-0.15, 0.15, len(fs)), w * 1000 + 1, s=16, marker=mk,
-                       color=C_B[b], alpha=al, lw=0, label=f"{q:g} req/s")
-        ax.axvline(0.5, color="#b3261e", lw=1, ls="--")
-        ax.text(0.62, 3, "one admission\nleft for it", color="#b3261e", fontsize=8.5, va="bottom")
-        ax.set_yscale("log")
-        ax.set_xlabel("admissions left for it at arrival\n(free ÷ 392 blocks − requests queued ahead)")
+            gap = np.mean([float(r["resident"]) for r in rq]) / C[b]
+            print(f"  {p.name}: k=0 {int((k == 0).sum())} (max wait {w[k == 0].max() * 1e3:.1f} ms), "
+                  f"k>=1 {int((k >= 1).sum())} (min wait {w[k >= 1].min() * 1e3 if (k >= 1).any() else 0:.0f} ms)")
+            ax.scatter(k + rng.uniform(-0.18, 0.18, len(k)), w, s=16, marker=mk, color=C_B[b], alpha=al, lw=0,
+                       label=f"{q:g} req/s")
+            kk = np.arange(0, max(k.max(), 1) + 1)
+            ax.plot(kk, kk * gap, ls, color="#444", lw=1.2,
+                    label=f"k × residence ÷ c ({gap:.2f} s)")
+        ax.set_xlabel("k = requests that must finish first")
+        ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
         ax.set_title(f"{b} GiB ({SLOTS[b]})")
         ax.grid(color="#ececea", lw=0.6)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.legend(frameon=False, loc="upper right")
-    axes[0].set_ylabel("this request's decode queue wait (ms + 1, log)")
-    fig.suptitle("A request waits exactly when the requests ahead of it use up the free admissions "
+        ax.legend(frameon=False, loc="upper left", fontsize=9)
+    axes[0].set_ylabel("this request's decode queue wait (s)")
+    fig.suptitle("A request's wait = the slots that must free before its turn × the time between frees "
                  "(each dot = one request)", y=1.02)
     fig.savefig(FIGS / "kv_wait_vs_free.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
