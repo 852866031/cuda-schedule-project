@@ -53,12 +53,12 @@ def base(ax, held, queue_head="head", queue_head_color="#6b6b66"):
     ax.set_ylim(0, 100)
     ax.axis("off")
     rbox(ax, 2, 50, 96, 46, C_GPU, "#8aa4c4", lw=1.6)
-    txt(ax, 4, 94, "GPU1 — 32 GB VRAM, decode engine at 24 GiB", 11.5, "#0d366b", ha="left", bold=True)
+    txt(ax, 4, 94, "GPU1 — decode engine, 24 GiB", 11.5, "#0d366b", ha="left", bold=True)
     rbox(ax, 4, 58, 14, 32, "#d9e3f0", "#8aa4c4")
-    txt(ax, 11, 74, "model\nweights\n16 GiB\n(read once\nper step)", 9.5, "#0d366b")
+    txt(ax, 11, 74, "weights\n16 GiB", 10, "#0d366b")
     rbox(ax, PX0, PY, (PX1 - PX0) * POOL / 4000, PH, "white", "#444", lw=1.4, r=0.6)
-    txt(ax, (PX0 + PX1) / 2, 90.5, f"KV block pool: {POOL:,} blocks of 16 tokens (7.77 GiB) = "
-        f"{POOL / 400:.2f} whole requests", 10, "#222", bold=True)
+    txt(ax, (PX0 + PX1) / 2, 90.5, f"KV pool: {POOL:,} blocks = {POOL / 400:.2f} requests of 400",
+        10, "#222", bold=True)
     pos = {}
     x = PX0 + 0.4
     for lab, b, kind in held:
@@ -84,17 +84,14 @@ def base(ax, held, queue_head="head", queue_head_color="#6b6b66"):
     wall = PX0 + POOL * SCALE
     ax.plot([wall, wall], [PY - 2.5, PY + PH + 2.5], color=C_PRE, lw=2.5)
     txt(ax, wall + 0.8, PY + PH + 1.5, "wall", 9, C_PRE, ha="left", bold=True)
-    txt(ax, PX0 + 0.5, PY - 4.3, "each running request takes 1 more block per 16 generated tokens "
-        "(392 at admission → 400 at the end)", 8.5, C_RUN, ha="left")
-    txt(ax, PX1 - 1, PY - 4.3, "", 8.5)
+    txt(ax, PX0 + 0.5, PY - 4.3, "+1 block per 16 generated tokens: 392 → 400", 8.5, C_RUN, ha="left")
     # PCIe
-    txt(ax, 44, 42.3, "PCIe Gen4 ×8 — 14.5 GB/s measured; the LMCache copy path reaches ~4 GB/s",
-        9, C_PCIE, bold=True)
+    txt(ax, 44, 42.3, "PCIe Gen4 ×8: 14.5 GB/s link, ~4 GB/s LMCache copy", 9, C_PCIE, bold=True)
     # host
     rbox(ax, 2, 1, 96, 40, C_HOST, "#b9b3a1", lw=1.6)
-    txt(ax, 4, 39, "host — 32 cores, 60 GiB RAM", 11.5, "#4a4639", ha="left", bold=True)
+    txt(ax, 4, 39, "host RAM", 11.5, "#4a4639", ha="left", bold=True)
     rbox(ax, 4, 14, 44, 22, "white", "#b9b3a1")
-    txt(ax, 26, 34, "EngineCore: scheduler's waiting queue (FCFS)", 9.5, "#222", bold=True)
+    txt(ax, 26, 34, "scheduler queue (FCFS)", 9.5, "#222", bold=True)
     qx = 7
     for i in range(5):
         c = C_WAIT if i else queue_head_color
@@ -102,17 +99,17 @@ def base(ax, held, queue_head="head", queue_head_color="#6b6b66"):
         txt(ax, qx + 3.25, 26.75, queue_head if i == 0 else "…", 8, "white", bold=(i == 0))
         qx += 7.2
     arrow(ax, (47, 26.75), (qx + 0.5, 26.75), "#333", lw=1.4)
-    txt(ax, 47, 31.5, "arrivals ← prefill GPU0 (token #1 already sent)", 7.8, "#333", ha="right")
+    txt(ax, 47, 31.5, "arrivals from prefill (GPU0)", 7.8, "#333", ha="right")
     rbox(ax, 51, 14, 45, 22, "white", "#b9b3a1")
-    txt(ax, 73.5, 34, "LMCache: the KV of all 32 session prefixes (24 GiB)", 9.5, "#222", bold=True)
+    txt(ax, 73.5, 34, "LMCache: KV of all 32 prefixes", 9.5, "#222", bold=True)
     rbox(ax, 53, 16, 17, 15, "#fde9dd", C_NEW, lw=1.2)
-    txt(ax, 61.5, 23.5, "L1 pool\n6 GiB pinned\n(per engine)", 9, "#7c2d12")
+    txt(ax, 61.5, 23.5, "L1 pool\n6 GiB pinned", 9, "#7c2d12")
     rbox(ax, 74, 16, 20, 15, "#fff3eb", C_NEW, lw=1.2, ls="--")
-    txt(ax, 84, 23.5, "store process\n24 GiB in\n256-token chunks\n(TCP, Python copy)", 8.6, "#7c2d12")
+    txt(ax, 84, 23.5, "store\n24 GiB\n(TCP)", 9, "#7c2d12")
     arrow(ax, (74, 23.5), (70.2, 23.5), C_NEW, lw=1.6)
     txt(ax, 72.1, 26.2, "miss", 7.5, C_NEW)
-    txt(ax, 4, 12.8, "host CPU — the EngineCore thread (one step = one forward pass over the whole batch; "
-        "≈ 15 ms each):", 9, "#222", ha="left", bold=True)
+    txt(ax, 4, 12.8, "engine thread (host CPU): one step = one forward pass of the whole batch, ≈ 15 ms",
+        9, "#222", ha="left", bold=True)
     return pos
 
 
@@ -150,42 +147,38 @@ def case1(ax, async_mode):
     free_before = POOL - sum(b for _, b, k in held if k == "run")
     txt(ax, PX1 - 1, PY - 7.6, f"free before: {free_before} ≥ 392 → admit;  after: {free_before - 392}",
         8.5, "#444", ha="right", bg=C_GPU)
-    txt(ax, PX0, 59.5,
-        "CASE 1 — a request at the head of the queue needs ⌈tokens / 16⌉ = 392 blocks.\n"
-        "Free → it is admitted into the pool and its prefix KV must be brought in from host RAM.\n"
-        "Not free → it waits, and FCFS means everyone behind it waits too: that wait is the measured\n"
-        "decode queue time (24 GiB: 0 ms at 1 req/s, 153 ms at 2, 4.7 s at 2.5, 21 s at 4 req/s).",
-        8.6, "#222", ha="left", bg=C_GPU)
+    txt(ax, PX0, 60.5,
+        "head of queue needs 392 free blocks\n"
+        "free → admitted, KV copied in from host RAM\n"
+        "not free → it and everyone behind it wait (= decode queue time)",
+        9, "#222", ha="left", bg=C_GPU)
     # admit arrow + load arrow
     arrow(ax, (10.3, 29.5), (x10 + 1.5, PY - 0.3), "#333", lw=1.8, ls=dash, rad=-0.12)
-    txt(ax, 14, 48, "ADMIT\n(392 blocks free)", 8.5, "#333", ha="left")
+    txt(ax, 14, 48, "ADMIT", 9, "#333", ha="left", bold=True)
     arrow(ax, (61, 36.5), (x10 + w10 / 2, PY - 0.3), C_NEW, lw=3.2, ls=dash, ms=22)
     txt(ax, 97.5, 46.8,
-        ("SYNC: its 0.75 GiB is copied inside\nthe admitting step (~200 ms, p95 300);\n"
-         "the 9 running requests get no token" if not async_mode else
-         "ASYNC: its 0.75 GiB is copied in the\nbackground; #10 joins the batch only\nonce loaded, "
-         "the 9 keep decoding"),
+        ("SYNC: 0.75 GiB copied inside the step\n~200 ms, the 9 running get no token" if not async_mode else
+         "ASYNC: 0.75 GiB copied in the background\nthe 9 keep decoding; #10 joins when loaded"),
         8.5, C_NEW, ha="right", bold=True)
     if not async_mode:
-        seq = [("step", 16, C_RUN)] * 3 + [("LOAD #10 — all 9 running wait", 200, C_NEW)] + \
+        seq = [("step", 16, C_RUN)] * 3 + [("LOAD #10 — all 9 wait", 200, C_NEW)] + \
               [("step +#10", 34, C_RUN)] + [("step", 16, C_RUN)] * 2
-        timeline(ax, seq, "the load call blocks this thread for ~200 ms per admission: 34% of all "
-                 "decode wall time at 24 GiB, 2 req/s")
+        timeline(ax, seq, "load stalls = 34% of decode wall time (24 GiB, 2 req/s)")
     else:
         seq = [("step", 16, C_RUN)] * 13 + [("step +#10", 34, C_RUN)] + [("step", 16, C_RUN)] * 2
-        timeline(ax, seq, "", side=(200, "#10's KV copied on a side stream;\nthe steps continue"))
+        timeline(ax, seq, "", side=(200, "copy on a side stream"))
 
 
 fig, axes = plt.subplots(1, 2, figsize=(19, 10.5))
 fig.subplots_adjust(wspace=0.04, left=0.01, right=0.99, top=0.9, bottom=0.02)
 case1(axes[0], False)
 case1(axes[1], True)
-axes[0].set_title("TODAY — LMCache 0.4.4 connector: the KV load is synchronous (measured, E1/E2)",
+axes[0].set_title("today: synchronous load (LMCache 0.4.4, measured)",
                   fontsize=12.5, fontweight="bold", color="#222", pad=8)
-axes[1].set_title("POSSIBLE — asynchronous load (vLLM has the hook: WAITING_FOR_REMOTE_KVS; E4 tests it)",
+axes[1].set_title("possible: asynchronous load (vLLM hook exists; E4 tests it)",
                   fontsize=12.5, fontweight="bold", color="#7c2d12", pad=8)
-fig.suptitle("CASE 1 — admitting a request into a KV slot: queue if no slot, stall the batch while its KV "
-             "loads — Llama-3-8B decode on GPU1, 6,400-token requests", fontsize=13.5, y=0.975)
+fig.suptitle("CASE 1 — admitting a request: no slot → queue; slot → the batch stalls while its KV loads",
+             fontsize=13.5, y=0.975)
 fig.savefig(REPO / "figures" / "kv_case1_admission.png", dpi=150, bbox_inches="tight")
 print("-> figures/kv_case1_admission.png")
 
@@ -196,57 +189,50 @@ def case2(ax, after):
         held = [(f"#{i + 1}", b, "run") for i, b in
                 enumerate([400, 400, 400, 399, 399, 398, 398, 397, 396, 393])]
         pos = base(ax, held)
-        txt(ax, PX1 - 1, PY - 7.6, "free: 0 blocks — #5 needs its next block this step", 8.5, C_PRE,
+        txt(ax, PX1 - 1, PY - 7.6, "free: 0 — #5 needs a block", 8.5, C_PRE,
             ha="right", bold=True, bg=C_GPU)
         x10, w10 = pos["#10"]
-        txt(ax, PX0, 59.5,
-            "CASE 2 — all ten were admitted (10 × 392 = 3,920 ≤ 3,980), but they grow: 10 × 400 = 4,000 "
-            "> 3,980.\nWhen a running request needs a block and none is free, the scheduler EVICTS the "
-            "most recently\nadmitted running request (#10): all its blocks are freed, its computed "
-            "tokens are reset to 0,\nand it is put at the HEAD of the waiting queue. No GPU work is "
-            "lost for the other nine.",
-            8.6, "#222", ha="left", bg=C_GPU)
+        txt(ax, PX0, 60.5,
+            "10 × 392 = 3,920 fit at admission, 10 × 400 = 4,000 do not\n"
+            "no free block → the last-admitted request (#10) is evicted:\n"
+            "blocks freed, progress reset, back to the HEAD of the queue",
+            9, "#222", ha="left", bg=C_GPU)
         arrow(ax, (x10 + w10 / 2, PY + 0.5), (10.3, 29.5), C_PRE, lw=2.2, ls="--", rad=0.18)
-        txt(ax, 36, 46, "EVICT #10 → head of the queue\n(its 393 blocks return to the pool)", 8.8,
-            C_PRE, ha="left", bold=True)
-        seq = [("step", 16, C_RUN)] * 6 + [("evict #10", 4, C_PRE)] + [("step (9 running)", 16, C_RUN)] * 6
-        timeline(ax, seq, "eviction itself costs no stall — the nine others keep stepping; the cost "
-                 "lands on #10 later (right panel)", C_PRE)
+        txt(ax, 36, 46, "EVICT #10 → head of queue", 9, C_PRE, ha="left", bold=True)
+        seq = [("step", 16, C_RUN)] * 6 + [("evict #10", 4, C_PRE)] + [("step", 16, C_RUN)] * 6
+        timeline(ax, seq, "no stall at eviction; the cost comes later (right)", C_PRE)
     else:
         held = [(f"#{i + 1}", b, "run") for i, b in enumerate([400, 400, 400, 399, 399, 398, 398, 397, 396])]
         held.append(("#10", 393, "gone"))
         pos = base(ax, held, queue_head="#10", queue_head_color=C_PRE)
         x10, w10 = pos["#10"]
-        txt(ax, PX1 - 1, PY - 7.6, "free: 393 — but #10 now needs 394+ (6,272 + its generated tokens)",
-            8.5, C_PRE, ha="right", bold=True, bg=C_GPU)
-        txt(ax, PX0, 59.5,
-            "#10 sits at the head of the queue needing MORE blocks than before (its generated tokens "
-            "count too),\nwhile the nine keep growing — so it waits until one of them finishes (~1–3 s). "
-            "Then it is admitted\nagain: its 6,144-token prefix is LOADED A SECOND TIME (another ~200 ms "
-            "stall for everyone) and its\nsuffix + generated tokens are recomputed. 24 GiB: 9–35 evictions "
-            "per 300 requests; 26 / 28 GiB: none.",
-            8.6, "#222", ha="left", bg=C_GPU)
+        txt(ax, PX1 - 1, PY - 7.6, "free: 393 — #10 now needs 394+", 8.5, C_PRE, ha="right",
+            bold=True, bg=C_GPU)
+        txt(ax, PX0, 60.5,
+            "#10 needs more blocks than before (its generated tokens count)\n"
+            "it waits until one of the nine finishes (1–3 s), then is admitted again:\n"
+            "prefix KV loaded a second time (another stall), suffix + generated tokens recomputed",
+            9, "#222", ha="left", bg=C_GPU)
         arrow(ax, (10.3, 29.5), (x10 + 1.5, PY - 0.3), "#333", lw=1.8, ls="--", rad=-0.12)
-        txt(ax, 14, 48, "RE-ADMIT later\n(when 394+ free)", 8.5, "#333", ha="left")
+        txt(ax, 14, 48, "RE-ADMIT later", 9, "#333", ha="left", bold=True)
         arrow(ax, (61, 36.5), (x10 + w10 / 2, PY - 0.3), C_NEW, lw=3.2, ls="--", ms=22)
-        txt(ax, 97.5, 46.8, "LOAD AGAIN: the same 0.75 GiB,\nanother ~200 ms with the batch\nstopped",
-            8.5, C_NEW, ha="right", bold=True)
-        seq = [("step (9 running)", 16, C_RUN)] * 5 + [("#3 finishes", 4, C_PRE)] + \
-              [("LOAD #10 again — all wait", 200, C_NEW)] + [("+#10 again", 40, C_RUN)] + \
+        txt(ax, 97.5, 46.8, "LOAD AGAIN: same 0.75 GiB,\nanother ~200 ms stall", 8.5, C_NEW,
+            ha="right", bold=True)
+        seq = [("step", 16, C_RUN)] * 5 + [("#3 done", 4, C_PRE)] + \
+              [("LOAD #10 again — all wait", 200, C_NEW)] + [("+#10", 40, C_RUN)] + \
               [("step", 16, C_RUN)] * 2
-        timeline(ax, seq, "at saturation the mean 'KV load' per request rises from 300 ms to "
-                 "865–1,367 ms at 24 GiB: these reloads")
+        timeline(ax, seq, "reloads raise the mean load per request from 0.3 s to 0.9–1.4 s at saturation")
 
 
 fig, axes = plt.subplots(1, 2, figsize=(19, 10.5))
 fig.subplots_adjust(wspace=0.04, left=0.01, right=0.99, top=0.9, bottom=0.02)
 case2(axes[0], False)
 case2(axes[1], True)
-axes[0].set_title("the pool is exhausted while requests grow → EVICT", fontsize=12.5,
+axes[0].set_title("growing requests exhaust the pool → evict", fontsize=12.5,
                   fontweight="bold", color=C_PRE, pad=8)
-axes[1].set_title("a few seconds later: the evicted request comes back and its KV is loaded again",
+axes[1].set_title("seconds later: the evicted request returns, its KV is loaded again",
                   fontsize=12.5, fontweight="bold", color="#7c2d12", pad=8)
-fig.suptitle("CASE 2 — running requests hit the wall: eviction to the head of the queue, then a second "
-             "KV load — the 24 GiB budget (9.95 slots) only", fontsize=13.5, y=0.975)
+fig.suptitle("CASE 2 — running requests hit the wall (24 GiB only: 9.95 slots; none at 26 / 28 GiB)",
+             fontsize=13.5, y=0.975)
 fig.savefig(REPO / "figures" / "kv_case2_eviction.png", dpi=150, bbox_inches="tight")
 print("-> figures/kv_case2_eviction.png")
