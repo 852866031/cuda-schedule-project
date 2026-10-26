@@ -14,7 +14,7 @@ the residence itself is not fixed: every admission copies 0.75 GiB of KV from ho
 *synchronously inside the engine thread*, and the whole batch stops for ~200 ms each time.
 A request resident among more slots sits through more of these stalls (1.8 at 3 running →
 12 at 14), so adding slots lengthens residence: +50% slots (24 → 28 GiB) buys +17%
-saturation throughput. Below the knee (≤ 1.5 req/s) the budget does not matter at all.
+saturation throughput. Up to 1.5 req/s no one waits at any budget, so the budget does not matter at all.
 
 Plan: [PLAN_KV_VRAM.md](../PLAN_KV_VRAM.md) (predictions, annotated); run log:
 [DECISIONS_KV_VRAM.md](../DECISIONS_KV_VRAM.md); starting facts:
@@ -116,45 +116,54 @@ scale), (b) output tokens per second, (c) decode-only per-token time. The same n
   28 GiB between 2 and 2.5. The plan predicted 2.0–2.5 / 2.5–3.0 / 3.0–3.5 — each one grid
   step too high.
 - **Saturation throughput** ≈ 2.3 / 2.65 / 2.7 req/s: +50% slots buys +17%.
-- **Below the knee the budget is irrelevant:** at 1 req/s all three budgets give 128
-  tok/s, 0 ms queue and the same 14.5–14.7 ms per token.
-- **Above it, per-token speed rises with budget**, not falls: tpot2 at 3 req/s is 25.7 /
+- **While nobody waits, the budget is irrelevant:** at 1 req/s all three budgets give
+  128 tok/s, 0 ms queue and the same 14.5–14.7 ms per token.
+- **Once requests queue, per-token time rises with budget**, not falls: tpot2 at 3 req/s is 25.7 /
   31.2 / 39.0 ms at 24 / 26 / 28 GiB — bigger batches and more stalls (§4.3).
 - **Preemptions:** 1–35 per cell at 24 GiB, none at 26 / 28 GiB.
 
-Where the knee lies is easier to read with iso-wait lines. The figure below repeats panel
-(a) with contours at 0.05 s (the capacity line), 0.5, 2, 5 and 10 s, interpolated
-linearly between the measured cells; each line marks the (budget, rate) combinations
-that give the same mean wait, so its slope says how much rate one GiB buys — about
-0.25 req/s per 2 GiB along the 0.05 s line, less along the 10 s line.
+The rate at which waiting starts is easier to read with iso-wait lines. The figure below
+repeats panel (a) with contours at 0.05 s (the capacity line), 0.5, 2, 5 and 10 s,
+interpolated linearly between the measured cells; each line marks the (budget, rate)
+combinations that give the same mean wait, so its slope says how much rate one GiB buys
+— about 0.25 req/s per 2 GiB along the 0.05 s line, less along the 10 s line.
 
 ![heatmaps with contours](../figures/kv_grid_heat_contours.png)
 
-The same surface in 3D — the knee is the cliff, and it moves right by about one grid
-step per 2 GiB:
+The same surface in 3D: height is the mean wait for a slot. The flat floor is "nobody
+waits"; the cliff is where waiting begins, and it moves to a higher rate by about one grid
+step per 2 GiB of budget:
 
 ![3D view](../figures/kv_grid_3d.png)
 
 ### 4.2 Waiting is integer slots, FCFS, and nothing else
 
-**The model, defined.** Treat the decode engine as a queue with c identical servers (the
-slots): a request arrives at the decode scheduler at time *aᵢ*, waits until a server is
-free (FCFS), then occupies it for its *service time* Sᵢ — the measured residence, admitted
-→ last token, which already includes its own KV load and every stall it sat through. In
-Kendall's notation this is **M/G/c**: Poisson arrivals (M), a general service-time
-distribution (G), c servers. Three predictions of the mean wait Wq are compared with the
-measurement, all using only the slot count and the measured residences:
+**What we want to predict.** The mean time a request waits for a slot (the measured
+decode queue time in §4.1), at each budget and rate.
 
-| prediction | inputs | what it assumes |
-|---|---|---|
-| **FCFS replay** (discrete-event simulation) | the cell's own arrival times aᵢ and each request's own Sᵢ; c | nothing beyond "c servers, FCFS": each request starts at max(aᵢ, earliest server free) |
-| **M/M/c** (Erlang C) | λ = arrivals ÷ window, mean S, c | exponential service, steady state |
-| **Lee–Longton M/G/c** | λ, mean S, CV² of S, c | Wq(M/G/c) ≈ ½(1 + CV²) · Wq(M/M/c): the standard closed-form correction for non-exponential service |
+**From what.** Only two things: how many slots there are (c, from the probe), and how
+long each request keeps its slot (its measured residence, admitted → last token). If
+these two reproduce the waiting, nothing else — scheduler overhead, the router, the KV
+transfer — is needed to explain it.
 
-The replay is the strict test: it uses the same 300 arrivals the engine saw, so any gap
-between it and the measurement is behaviour that "c slots, FCFS, measured residence"
-does not contain. The two formulas test whether the *shape* of the curve is the generic
-multi-server shape.
+**How.** Picture c parking spaces. Cars (requests) arrive at known times; a car that
+finds a free space takes it at once, otherwise it joins a first-come-first-served line
+and takes the next space that frees; each car stays for its own measured time. We
+compute the waiting this produces in three ways:
+
+1. **Replay** — a simulation that uses the cell's own 300 arrival times and each
+   request's own residence, with c spaces. It assumes nothing except "c spaces, FCFS".
+2. **M/M/c (Erlang C)** — the textbook formula for c servers with Poisson arrivals and
+   exponentially distributed service; needs only the arrival rate, the mean residence
+   and c.
+3. **Lee–Longton** — the same formula corrected for the real spread of residences:
+   Wq ≈ ½(1 + CV²) × Wq(M/M/c), where CV² is the squared coefficient of variation of the
+   residence. This is the standard closed-form approximation for M/G/c, "M/G/c" being
+   queueing shorthand for Poisson arrivals (M), any service distribution (G), c servers.
+
+The replay is the strict test: it sees exactly the arrivals the engine saw, so any gap
+between it and the measurement is behaviour the two inputs do not contain. The two
+formulas test something weaker — whether the curve has the generic multi-server shape.
 
 ![queueing models](../figures/kv_mgc.png)
 

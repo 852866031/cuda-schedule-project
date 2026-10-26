@@ -74,12 +74,17 @@ def fig_3d():
                 ax.scatter([b], [q], [z], color=C_B[b], s=28, depthshade=False)
     ax.set_xlabel("decode VRAM budget (GiB)", labelpad=10)
     ax.set_ylabel("request rate (req/s)", labelpad=10)
-    ax.set_zlabel("decode queue wait, mean (s)", labelpad=8)
+    ax.set_zlabel("height = mean decode queue wait (s)", labelpad=12)
     ax.set_xticks(BUDGETS)
     ax.view_init(elev=24, azim=-55)
-    ax.set_title("Decode queue wait vs VRAM budget and request rate\n"
-                 "(Llama-3-8B decode on GPU1, 6,400-token requests, mean per request)", pad=12)
-    fig.savefig(FIGS / "kv_grid_3d.png", dpi=150, bbox_inches="tight")
+    ax.set_title("Height: how long a request waits for a KV slot (mean, seconds)\n"
+                 "x: decode VRAM budget, y: request rate — Llama-3-8B decode on GPU1", pad=12)
+    ax.text2D(0.02, 0.92, "flat floor = no waiting;  the cliff = the rate at which waiting starts",
+              transform=ax.transAxes, fontsize=10, color="#444")
+    ax.text2D(1.0, 0.55, "z: mean wait for a slot (s)", transform=ax.transAxes, fontsize=11,
+              rotation=90, ha="left", va="center")
+    fig.subplots_adjust(right=0.9)
+    fig.savefig(FIGS / "kv_grid_3d.png", dpi=150, bbox_inches="tight", pad_inches=0.3)
     plt.close(fig)
 
 
