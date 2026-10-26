@@ -346,6 +346,7 @@ token at saturation not because its loads are grouped but because its loads happ
 turnover, so a whole batch finishes and the next whole batch is loaded while almost
 nobody is decoding (0.36 s of stall per residence vs 1.23 s). With 15 slots and spread-out
 completions, five requests admitted together still land in the middle of ten others'
-decode. §4.3 of the report corrected accordingly. A control rerun (`kv_base_b28_q4_tr_r2`)
-was run alongside for run-to-run variance.
+decode. §4.3 of the report corrected accordingly. The control rerun
+(`kv_base_b28_q4_tr_r2`) gave tpot2 30.7 ms, decode 4.06 s, 360 tok/s — the as-is cell
+repeats within 1%, so the batched cell's 32.7 ms is not an improvement.
 
