@@ -152,11 +152,20 @@ request shows up in its *residence* (§4.3).
 
 ![wait vs free space](../figures/kv_wait_vs_free.png)
 
-Per request the rule is binary. A request that reaches the decode scheduler with ≥ 392
-free blocks waits 0 ms. One that finds the pool full waits 0.02–5 s, depending on load.
-The few requests that waited with 1–4 requests' worth of blocks free arrived during a
-load call: the scheduler runs on the same thread as the synchronous copy, so it was
-blocked (§4.3).
+Per request the rule is exact once the queue is counted. The x axis is the admissions
+left *for this request* at arrival: free blocks ÷ 392, minus the requests already
+waiting ahead of it (first come, first served gives the free blocks to them first).
+- **At least one admission left: no wait.** All 1,133 such requests in the six cells
+  shown waited ≤ 0.2 ms.
+- **None left: it waits** 0.02–5 s, depending on load.
+- A few with none left still waited ~0 ms; for them a slot freed within the same engine
+  step.
+
+(Correction, 2026-10-26: an earlier version plotted free space alone and attributed the
+waits to the right of the 392-block line to the scheduler being blocked by a load call.
+Every one of those requests had at least as many requests queued ahead of it as there
+were free admissions: 23/23, 20/20, 11/11 and 7/7 at 24 GiB / 3, 26 GiB / 3, 28 GiB / 3
+and 26 GiB / 2.5 req/s.)
 
 ### 4.3 What the slots cost: the synchronous load stalls the batch
 

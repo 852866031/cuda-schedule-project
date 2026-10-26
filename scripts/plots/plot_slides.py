@@ -227,7 +227,7 @@ def fig_method():
              ("check", "KV grant, slots,\nLMCache backend =\ncompiled kernels"),
              ("warm-up", "every session's\nprefix saved to\nLMCache once"),
              ("measure", "300 requests at\nthe cell's rate;\ntrace on decode"),
-             ("audit", "0 failed, prefix hit\n≥ 0.95, all tokens,\nno stall; else rerun")]
+             ("audit", "0 failed, prefix hit\n≥ 0.95, all tokens,\nno hang; else rerun")]
     for i, (h, b) in enumerate(steps):
         x = 4 + i * 31
         rbox(ax, x, 16, 26, 34, "#f6f8fb", C_DEC, lw=1.6)
@@ -560,7 +560,7 @@ MARKED = {
                [(0.0485, 0.153, 0.118, 0.884)], None),
     "m_3d": ("kv_grid_3d.png", [(0.07, 0.63, 1), (0.105, 0.47, 2)], [], (0, 0.15, 0.34, 0.92)),
     "m_mgc": ("kv_mgc.png", [(0.285, 0.37, 1), (0.17, 0.37, 2), (0.72, 0.65, 3)], [], None),
-    "m_wait_free": ("kv_wait_vs_free.png", [(0.1, 0.18, 1), (0.25, 0.82, 2), (0.73, 0.75, 3)], [], None),
+    "m_wait_free": ("kv_wait_vs_free.png", [(0.1, 0.18, 1), (0.25, 0.82, 2), (0.778, 0.69, 3)], [], None),
     "m_time_split": ("kv_time_split.png", [(0.854, 0.855, 1), (0.854, 0.78, 2), (0.185, 0.6, 3)], [], None),
     "m_timeline": ("kv_slots_timeline.png", [(0.08, 0.23, 1), (0.535, 0.23, 2), (0.1, 0.66, 3),
                                              (0.55, 0.85, 4)], [], None),
