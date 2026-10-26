@@ -13,6 +13,7 @@ pkill -9 -f "kv_heartbeat.sh" 2>/dev/null
 pkill -9 -f "lmc_proxy.py" 2>/dev/null
 pkill -9 -f "lmc_server_main" 2>/dev/null
 pkill -9 -f "lmcache.v1.server" 2>/dev/null
+pkill -9 -f "lmcache.v1.multiprocess.server" 2>/dev/null
 sleep 5
 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader
 true

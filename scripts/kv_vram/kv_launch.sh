@@ -17,6 +17,10 @@
 #   LMC_ASYNC_LOAD=1                 LMCache enable_async_loading: true (decode engine)
 #   LMC_LOOKUP_TIMEOUT_MS=<ms>       LMCache lookup_timeout_ms (decode engine; default 3000)
 #   KV_COPS=1                        compiled lmcache.c_ops (from .venv-lmc) in both engines
+#   KV_MP=1 [MP_L1_GB=32 MP_PORT=5655] LMCacheMPConnector (asynchronous load, D9): an LMCache
+#                                    MP server (.venv-lmc, compiled ops, pinned L1 of MP_L1_GB,
+#                                    LRU) replaces the TCP store and both engines' L1; :5555 is
+#                                    DCGM's, hence 5655
 #   ROUTER_BATCH=N [ROUTER_BATCH_TIMEOUT=s]  router holds decode legs until N are ready
 #                                    (cohort-admission check; engines unchanged)
 # OMP_NUM_THREADS is inherited from the driver.
@@ -82,6 +86,20 @@ YAML
     [ -n "$4" ] && printf "%b" "$4" >> "$1"
     return 0
 }
+start_mp_server() {   # -> pid in store.pid; waits for the bind line
+    CUDA_VISIBLE_DEVICES=0,1 "$REPO/.venv-lmc/bin/python" -m lmcache.v1.multiprocess.server \
+        --host 127.0.0.1 --port "$MP_PORT" --chunk-size "$CHUNK_SIZE" \
+        --l1-size-gb "${MP_L1_GB:-32}" --eviction-policy LRU \
+        > "$LOGS/kvv_mpserver.log" 2>&1 &
+    echo $! > "$PID_DIR/store.pid"
+    for i in $(seq 1 90); do
+        grep -q "cache server is running" "$LOGS/kvv_mpserver.log" && return 0
+        kill -0 "$(cat "$PID_DIR/store.pid")" 2>/dev/null \
+            || { echo "MP server died -- see $LOGS/kvv_mpserver.log" >&2; exit 1; }
+        sleep 2
+    done
+    echo "MP server not up after 180 s -- see $LOGS/kvv_mpserver.log" >&2; exit 1
+}
 register() {   # name port
     echo "$2 $(cat "$PID_DIR/$1.pid") $LOGS/kvv_$1.log" > "$HB_DIR/$1"
 }
@@ -117,9 +135,18 @@ if [ "${KV_COPS:-0}" = 1 ]; then       # compiled kernels in BOTH engines (store
     DEC_ENV="${DEC_ENV:-PYTHONPATH=$HERE/site} KV_COPS=1"
     PF_ENV="PYTHONPATH=$HERE/site KV_COPS=1 KV_TRACE=0"   # the trace is the decode engine's only
 fi
-echo "methods: cops=${KV_COPS:-0} decode $DEC_APC_FLAG ${DEC_X[*]:-} | prefill ${PF_X[*]:-} | lmc_pf [${LMC_PF}] lmc_dec [${LMC_DEC}] | trace ${KV_TRACE:-0}"
+MP_PORT="${MP_PORT:-5655}"
+if [ "${KV_MP:-0}" = 1 ]; then
+    refuse_if_listening "$MP_PORT"
+    KV_CONN="{\"kv_connector\":\"LMCacheMPConnector\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"lmcache.mp.host\":\"tcp://127.0.0.1\",\"lmcache.mp.port\":$MP_PORT}}"
+fi
+echo "methods: mp=${KV_MP:-0} cops=${KV_COPS:-0} decode $DEC_APC_FLAG ${DEC_X[*]:-} | prefill ${PF_X[*]:-} | lmc_pf [${LMC_PF}] lmc_dec [${LMC_DEC}] | trace ${KV_TRACE:-0}"
 
-start_store 8300
+if [ "${KV_MP:-0}" = 1 ]; then
+    start_mp_server; STORE_PORT=0
+else
+    start_store 8300
+fi
 lmc_yaml /tmp/kvv_lmc_prefill.yaml "$L1" "$STORE_PORT" "$LMC_PF"
 lmc_yaml /tmp/kvv_lmc_decode.yaml "$L1" "$STORE_PORT" "$LMC_DEC"
 

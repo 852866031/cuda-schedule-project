@@ -67,6 +67,7 @@ METHODS = {
     "cops_lw": {"KV_COPS": "1", "LMC_LAYERWISE": "1"},
            "cops_async": {"KV_COPS": "1", "LMC_ASYNC_LOAD": "1"},
            "cops_async_t30": {"KV_COPS": "1", "LMC_ASYNC_LOAD": "1", "LMC_LOOKUP_TIMEOUT_MS": "30000"},
+           "mp": {"KV_MP": "1"},
 }
 PORTS = {"prefill": 8100, "decode": 8200}
 INVALID_MARKERS = ("RECV TIMEOUT", "kv_cache is None", "Insufficient memory",
@@ -173,7 +174,8 @@ def engine_startup(name):
     if m := re.findall(r"Using backend: (lmcache\.[a-z_]+)", text):
         out["lmcache_backend"] = sorted(set(m))
     out["trace_patched"] = ("[kv_trace] scheduler wrapped" in text
-                            and "[kv_trace] connector start_load_kv wrapped" in text)
+                            and ("[kv_trace] connector start_load_kv wrapped" in text
+                                 or "[kv_trace] mp connector wrapped" in text))
     if m := re.findall(r"Using (\S+) attention backend", text):
         out["attn_backend"] = m[-1]
     if m := re.findall(r"Using (\S+) backend", text):
@@ -370,8 +372,12 @@ def run_cell(args, budget, qps, wl):
         clear_logs()
         sh(["guard"], env, 60, "guard up")
         t0 = time.time()
-        # 24 GiB store working set + 2 pinned L1 pools + two engines' own RSS
-        ram_gate("big", int((24 + 2 * rec["l1_gb"]) * 1024 + 9000), args, info)
+        # 24 GiB store working set + 2 pinned L1 pools + two engines' own RSS; MP: the
+        # server's pinned L1 (all of it, pinned in the background) + the two engines
+        if METHODS[args.method].get("KV_MP") == "1":
+            ram_gate("big", int(float(os.environ.get("MP_L1_GB", "32")) * 1024 + 12000), args, info)
+        else:
+            ram_gate("big", int((24 + 2 * rec["l1_gb"]) * 1024 + 9000), args, info)
         info["launch_stdout"] = sh(["big", f"{dec_util:.4f}", f"{args.prefill_util:.4f}"],
                                    env, 900, "big up").strip().splitlines()[0]
         info["up_s"] = round(time.time() - t0, 1)
@@ -384,7 +390,14 @@ def run_cell(args, budget, qps, wl):
         # that ask for them, in both engines; every other arm must run the fallback that
         # all baseline data used
         want = "lmcache.c_ops" if METHODS[args.method].get("KV_COPS") == "1" else "lmcache.non_cuda_equivalents"
-        for n in ("prefill", "decode"):
+        if METHODS[args.method].get("KV_MP") == "1":
+            want = None              # engines run no LMCache engine; the MP server (.venv-lmc) copies
+            for n in ("prefill", "decode"):
+                info[n]["lmcache_backend"] = ["mp_server"]
+            srv = (LOGS / "kvv_mpserver.log").read_text(errors="replace")
+            if "non_cuda_equivalents" in srv or "cache server is running" not in srv:
+                raise RuntimeError("LMCache MP server not running on its compiled ops")
+        for n in ("prefill", "decode") if want else ():
             got = info[n].get("lmcache_backend")
             if got != [want]:
                 raise RuntimeError(f"{n} engine LMCache backend {got}, expected [{want}]")

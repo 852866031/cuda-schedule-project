@@ -637,3 +637,24 @@ before starting (the server's lazy default would start at 20 GB).
   admitted request waits ~100–150 ms in `WAITING_FOR_REMOTE_KVS` before joining (not a
   batch stall). Preempted requests are *recomputed*, not reloaded (connector TODO), so
   each preemption costs a 6,144-token prefill on the decode GPU (~0.4 s batch stall).
+
+**Smoke A outcome (`kv_cops_async_b24_q2.5_tr`, one run): runs, and helps.** No crash —
+the 3-s timeout branch was never taken with the compiled path (the `t30` rerun was not
+needed). ok: 0 failed, hit 0.98, 38,400 tokens, decode L1 allocation failures **86**
+(baseline ~3,400: the async prefetch path does not thrash the L1).
+
+| 24 GiB, 2.5 req/s | cops (`_r2`) | cops + async_loading |
+|---|---|---|
+| copy inside the admitting step (`start_load_kv`) | 121 ms mean | **73 ms** |
+| load stalls per request (steps overlapping a load) | 0.75 s (6.4 × 118 ms) | **0.47 s** (5.7 × 83 ms) |
+| decode (token 1 → last) | 2.65 s | 2.34 s |
+| residence | 2.83 s | **2.47 s** |
+| decode queue wait, mean / p50 | 143 / 0 ms | 179 / **109** ms |
+| TPOT (end-user) p50 | 24.2 ms | 21.0 ms |
+| preemptions | 7 / 8 | 6 |
+
+Against the prediction: crash (60%) — wrong. Copy 115 → 60–70 ms — about right (73 ms).
+Queue < 100 ms — wrong: vLLM's queue time now also holds the asynchronous store → L1
+prefetch (p50 109 ms; every request pays it, but without holding blocks and without
+stalling the batch). The batch stall that remains is the L1 → GPU copy, still inside the
+step. One run; residence −13% is well outside the ±1% seen between the two cops runs.

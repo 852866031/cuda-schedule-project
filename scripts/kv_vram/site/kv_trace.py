@@ -17,6 +17,12 @@ imports the module, which is the EngineCore (scheduler + the in-process worker):
       start_load_kv      -> "load": CPU wall time of the connector's load call and the
                             number of requests / tokens it loaded (no CUDA sync added --
                             LMCache's retrieve already blocks the host)
+  vllm.distributed.kv_transfer.kv_connector.v1.lmcache_mp_connector.LMCacheMPConnector
+      (D9, asynchronous load) update_state_after_alloc -> "alloc": blocks granted, the
+                            request now waits in WAITING_FOR_REMOTE_KVS for its KV (so
+                            slot wait = arr -> alloc, KV wait = alloc -> sch "new");
+      start_load_kv      -> "load": host time to submit the retrieves (the copy itself
+                            runs in the LMCache server process)
 
 Nothing here changes scheduling or adds device synchronization: every wrapper calls the
 original and only reads state; every recording step is wrapped in try/except so tracing
@@ -213,7 +219,38 @@ if os.environ.get("KV_TRACE") == "1":
         C.start_load_kv = start_load_kv
         print("[kv_trace] connector start_load_kv wrapped", file=sys.stderr, flush=True)
 
-    _HOOKS = {_SCHED: _patch_scheduler, _CONN: _patch_connector}
+    def _patch_mp_connector(mod):
+        C = mod.LMCacheMPConnector
+        o_alloc, o_load = C.update_state_after_alloc, C.start_load_kv
+
+        def update_state_after_alloc(self, request, blocks, num_external_tokens):
+            t = _now()
+            r = o_alloc(self, request, blocks, num_external_tokens)
+            try:
+                if num_external_tokens:
+                    _W.put({"ev": "alloc", "t": t, "id": request.request_id,
+                            "ext": num_external_tokens})
+            except Exception:
+                pass
+            return r
+
+        def start_load_kv(self, forward_context, **kw):
+            t0 = _now()
+            o_load(self, forward_context, **kw)
+            t1 = _now()
+            try:
+                n = sum(1 for m in self._get_connector_metadata().requests
+                        if m.direction == "RETRIEVE")
+                if n:
+                    _W.put({"ev": "load", "t": t0, "dt": t1 - t0, "n": n, "ntok": None})
+            except Exception:
+                pass
+
+        C.update_state_after_alloc, C.start_load_kv = update_state_after_alloc, start_load_kv
+        print("[kv_trace] mp connector wrapped", file=sys.stderr, flush=True)
+
+    _HOOKS = {_SCHED: _patch_scheduler, _CONN: _patch_connector,
+              _CONN.replace("lmcache_connector", "lmcache_mp_connector"): _patch_mp_connector}
 
     class _PatchOnImport:
         def find_spec(self, fullname, path=None, target=None):
