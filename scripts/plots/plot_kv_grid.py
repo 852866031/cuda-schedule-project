@@ -14,6 +14,7 @@ Cell choice: the traced cells (`_tr`); where a cell was rerun, the clean run (`o
     .venv/bin/python scripts/plots/plot_kv_grid.py
 """
 import csv
+import os
 from pathlib import Path
 
 import matplotlib
@@ -29,13 +30,15 @@ TL = REPO / "output" / "kv_vram" / "timeline"
 plt.rcParams.update({"font.size": 11, "axes.titlesize": 12, "axes.labelsize": 11,
                      "legend.fontsize": 10})
 BUDGETS = [24, 26, 28]
+METHOD = os.environ.get("KV_METHOD", "base")      # base = Python-fallback LMCache, cops = compiled
 C_B = {24: "#2a78d6", 26: "#eb6834", 28: "#1baf7a"}
 SLOTS = {24: "10 slots*", 26: "12 slots", 28: "15 slots"}
 
 
 def load_rows():
     rows = [r for r in csv.DictReader(open(REPO / "output" / "summary_kv.csv"))
-            if r["method"] == "base" and r["trace"] == "True" and r["ok"] == "True"]
+            if r["method"] == METHOD and r["trace"] == "True" and r["ok"] == "True"
+            and not r.get("trace_invalid")]
     best = {}
     for r in rows:
         key = (float(r["budget_gib"]), float(r["qps"]))
@@ -174,7 +177,7 @@ def fig_mgc():
     rows = list(csv.DictReader(open(REPO / "output" / "kv_vram" / "mgc.csv")))
     by = {}
     for r in rows:
-        if r["method"] != "base" or r["name"].endswith("_r2") and (r["name"][:-3] in {x["name"] for x in rows}):
+        if r["method"] != METHOD or r["name"].endswith("_r2") and (r["name"][:-3] in {x["name"] for x in rows}):
             continue
         by.setdefault(float(r["budget_gib"]), []).append(r)
     fig, axes = plt.subplots(1, 3, figsize=(16, 4.6), sharey=True)
@@ -215,7 +218,7 @@ def fig_scatter():
     rng = np.random.default_rng(0)
     for ax, b in zip(axes, BUDGETS):
         for q, mk, al in ((2.0, "o", 0.85), (2.5, "^", 0.55)):
-            p = TL / f"kv_base_b{b:g}_q{q:g}_tr_req.csv"
+            p = TL / f"kv_{METHOD}_b{b:g}_q{q:g}_tr_req.csv"
             if not p.exists():
                 continue
             rq = [r for r in csv.DictReader(open(p)) if r.get("wait")]

@@ -566,6 +566,7 @@ def rebuild_summary():
             "decode_kv_tokens": (L.get("decode") or {}).get("kv_tokens"),
             "slots": (L.get("decode") or {}).get("slots"),
             "lmcache_backend": ",".join((L.get("decode") or {}).get("lmcache_backend") or []),
+            "trace_invalid": "yes" if rec.get("trace_invalid") else "",
             "attn_backend": (L.get("decode") or {}).get("attn_backend"),
             "decode_hit_frac": rec.get("decode_hit_frac"),
             "tok_per_s": s.get("output_tok_per_s"), "req_per_s": s.get("request_tok_per_s"),

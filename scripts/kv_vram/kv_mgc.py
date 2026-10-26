@@ -63,6 +63,8 @@ def main():
         if not raw.exists():
             continue
         rec = json.loads(raw.read_text())
+        if rec.get("trace_invalid"):
+            continue
         c = rec["launch"]["decode"]["slots"]
         rq = [r for r in csv.DictReader(open(p)) if r.get("t_sched") and r.get("t_fin")]
         rq.sort(key=lambda r: float(r["t_arr"]))
