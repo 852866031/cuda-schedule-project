@@ -308,11 +308,6 @@ hop, staging pool → GPU, stays inside the admitting step. Full grid, same 27 c
 
 ![async vs sync](../figures/kv_async.png)
 
-![async vs sync, 3D](../figures/kv_async_3d.png)
-
-The same data as surfaces over budget × rate, as in §4.1: async loading coloured, the
-synchronous baseline as a grey wireframe; the hole at 24 GiB, 4–5 req/s is the crashed cells.
-
 Same metrics as §4.1, plus residence. In (a) the solid line is vLLM's queue time, the
 dotted line only the part spent waiting for a slot (the difference is the prefetch).
 
@@ -357,11 +352,6 @@ small batches. No same-version synchronous control was run, so every comparison 
 mixes the connector with these version effects. Full grid, 27 cells, all ok (DECISIONS D11):
 
 ![MP vs sync](../figures/kv_mp.png)
-
-![MP vs sync, 3D](../figures/kv_mp_3d.png)
-
-As surfaces: the MP connector coloured, synchronous (vLLM 0.15.1) as a grey wireframe. The
-MP surface stays flat where the wireframe climbs, except the 28 GiB edge at 4.5–5 req/s.
 
 Same metrics as §4.1, plus residence; in (a) the dotted line is the wait for a slot alone
 (the difference to the solid line is the ~42 ms KV wait after the block grant).
