@@ -8,7 +8,7 @@ baseline, per budget and rate. Per cell from the joined timelines:
   throughput = output tokens / s (summary)
 
     .venv/bin/python scripts/plots/plot_kv_async.py [method ...]
-        -> figures/kv_async.png, output/kv_vram/async_summary.csv
+        -> figures/kv_async.png (§6.3), figures/kv_mp.png (§6.4), output/kv_vram/async_summary.csv
 """
 import csv
 import sys
@@ -17,6 +17,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker
 import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent.parent
@@ -79,7 +80,16 @@ def main(methods):
         w.writerows(rows)
     print(f"-> {out.relative_to(REPO)} ({len(rows)} cells)")
 
-    fig, axes = plt.subplots(3, 3, figsize=(15, 11), sharex=True, gridspec_kw={"hspace": 0.28, "wspace": 0.25})
+    # one figure per load-path arm against the synchronous baseline, with the metrics of
+    # report §4.1 (queue wait, throughput, end-user TPOT) plus residence
+    for arm, fname, title in (("cops_async", "kv_async.png", "enable_async_loading"),
+                              ("mp18", "kv_mp.png", "MP connector (vLLM 0.18.1)")):
+        if arm in methods:
+            plot_arm(rows, ["cops", arm], fname, title)
+
+
+def plot_arm(rows, methods, fname, title):
+    fig, axes = plt.subplots(4, 3, figsize=(15, 14), sharex=True, gridspec_kw={"hspace": 0.3, "wspace": 0.25})
     for j, b in enumerate(BUDGETS):
         for m in methods:
             rs = [r for r in rows if r["method"] == m and r["budget"] == b]
@@ -87,27 +97,36 @@ def main(methods):
                 continue
             lab, c, mk, ls = ARMS[m]
             x = [r["qps"] for r in rs]
-            axes[0, j].plot(x, [max(r["slot_wait_ms"], 0) / 1e3 for r in rs], color=c, marker=mk, ls=ls, label=lab)
-            axes[1, j].plot(x, [r["tok_s"] for r in rs], color=c, marker=mk, ls=ls, label=lab)
-            axes[2, j].plot(x, [r["resid_s"] for r in rs], color=c, marker=mk, ls=ls, label=lab)
+            axes[0, j].plot(x, [r["wait_ms"] / 1e3 for r in rs], color=c, marker=mk, ls="-", label=lab)
+            if m != "cops":     # the part of that queue time spent waiting for a slot
+                axes[0, j].plot(x, [max(r["slot_wait_ms"], 0) / 1e3 for r in rs], color=c, marker=mk, ls=":",
+                                mfc="white", label=f"{lab}: wait for a slot only")
+            axes[1, j].plot(x, [r["tok_s"] for r in rs], color=c, marker=mk, ls="-", label=lab)
+            axes[2, j].plot(x, [r["tpot_ms"] for r in rs], color=c, marker=mk, ls="-", label=lab)
+            axes[3, j].plot(x, [r["resid_s"] for r in rs], color=c, marker=mk, ls="-", label=lab)
         axes[0, j].set_yscale("symlog", linthresh=0.01)
         axes[0, j].axhline(0.05, color="#b3261e", lw=0.9, ls=":")
+        axes[2, j].set_yscale("log")
+        axes[2, j].set_yticks([15, 20, 30, 50, 100, 200])
+        axes[2, j].yaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        axes[2, j].yaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
         axes[0, j].set_title(f"{b} GiB", fontsize=13)
-        axes[2, j].set_xlabel("request rate (req/s)")
-        for i in range(3):
+        axes[3, j].set_xlabel("request rate (req/s)")
+        for i in range(4):
             axes[i, j].grid(color="#ececea", lw=0.6)
             axes[i, j].spines[["top", "right"]].set_visible(False)
-    axes[0, 0].set_ylabel("mean wait for a slot (s)")
-    axes[1, 0].set_ylabel("output tokens / s")
-    axes[2, 0].set_ylabel("residence (s)")
+    axes[0, 0].set_ylabel("(a) mean decode queue wait (s)")
+    axes[1, 0].set_ylabel("(b) output tokens / s")
+    axes[2, 0].set_ylabel("(c) TPOT p50, end-user (ms, log)")
+    axes[3, 0].set_ylabel("(d) residence (s)")
     axes[0, 0].text(1.0, 0.06, "50 ms capacity line", color="#b3261e", fontsize=9)
-    h, l = axes[1, 0].get_legend_handles_labels()
-    fig.legend(h, l, loc="upper center", ncol=len(h), frameon=False, bbox_to_anchor=(0.5, 0.97))
-    fig.suptitle("Asynchronous load options vs the synchronous baseline (slot wait excludes the async prefetch)",
-                 y=1.0, fontsize=14)
-    fig.savefig(REPO / "figures" / "kv_async.png", dpi=150, bbox_inches="tight")
-    print("-> figures/kv_async.png")
+    h, l = axes[0, 0].get_legend_handles_labels()
+    fig.legend(h, l, loc="upper center", ncol=len(h), frameon=False, bbox_to_anchor=(0.5, 0.95))
+    fig.suptitle(f"{title} vs the synchronous baseline: the metrics of §4.1 plus residence", y=0.98, fontsize=14)
+    fig.savefig(REPO / "figures" / fname, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"-> figures/{fname}")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:] or ["cops", "cops_async"])
+    main(sys.argv[1:] or ["cops", "cops_async", "mp18"])

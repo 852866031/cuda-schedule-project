@@ -694,8 +694,10 @@ def fig_lever_grid(method, label, color, name, unstable=None, extra=()):
             rs = sorted([r for r in rows if r["method"] == m and int(r["budget"]) == b],
                         key=lambda r: float(r["qps"]))
             q = [float(r["qps"]) for r in rs]
-            axes[0, j].plot(q, [max(float(r["slot_wait_ms"]), 0) / 1e3 for r in rs], marker=mk, color=c,
-                            lw=2, label=lab)
+            axes[0, j].plot(q, [float(r["wait_ms"]) / 1e3 for r in rs], marker=mk, color=c, lw=2, label=lab)
+            if m != "cops":
+                axes[0, j].plot(q, [max(float(r["slot_wait_ms"]), 0) / 1e3 for r in rs], marker=mk, color=c,
+                                lw=1.5, ls=":", mfc="white", label="… wait for a slot only")
             axes[1, j].plot(q, [float(r["resid_s"]) for r in rs], marker=mk, color=c, lw=2, label=lab)
         axes[0, j].set_yscale("symlog", linthresh=0.01)
         axes[0, j].axhline(0.05, color=C_RED, lw=1, ls=":")
@@ -710,12 +712,12 @@ def fig_lever_grid(method, label, color, name, unstable=None, extra=()):
                 axes[i, j].axvspan(unstable[b] - 0.25, 5.25, color="#f3d6d3", alpha=0.6, lw=0)
             axes[1, j].text(unstable[b] + 0.45, axes[1, j].get_ylim()[0] + 0.1, "crashed", color=C_RED,
                             fontsize=12, ha="center", va="bottom")
-    axes[0, 0].set_ylabel("wait for a slot (s)", fontsize=13)
+    axes[0, 0].set_ylabel("queue wait (s)", fontsize=13)
     axes[1, 0].set_ylabel("residence (s)", fontsize=13)
-    axes[0, 0].text(1.0, 0.06, "50 ms", color=C_RED, fontsize=12)
+    axes[0, 0].text(1.0, 0.025, "50 ms", color=C_RED, fontsize=12, va="top")
     h, l = axes[0, 0].get_legend_handles_labels()
-    fig.legend(h, l, loc="upper center", ncol=2, frameon=False, fontsize=13, bbox_to_anchor=(0.5, 1.02))
-    mbadge(axes[0, 2], 2.55, 0.25, 1)
+    fig.legend(h, l, loc="upper center", ncol=3, frameon=False, fontsize=12, bbox_to_anchor=(0.5, 1.03))
+    mbadge(axes[0, 2], 2.0, 0.6, 1)
     mbadge(axes[1, 1], 3.0, 2.6, 2)
     if unstable:
         mbadge(axes[0, 0], 4.5, 5.0, 3)

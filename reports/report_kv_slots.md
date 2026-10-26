@@ -308,6 +308,9 @@ hop, staging pool → GPU, stays inside the admitting step. Full grid, same 27 c
 
 ![async vs sync](../figures/kv_async.png)
 
+Same metrics as §4.1, plus residence. In (a) the solid line is vLLM's queue time, the
+dotted line only the part spent waiting for a slot (the difference is the prefetch).
+
 vLLM's queue time now contains the prefetch, which the user still waits through before
 the first decode step but which holds no slot. The table gives capacity both ways: on
 vLLM's queue time (the study's rule) and on the **slot wait** alone (queue time minus
@@ -321,6 +324,7 @@ capacity is resolved to the 0.5 req/s grid step.
 | slot wait at 3 req/s | 1,265 → 260 ms | 340 → 84 | 81 → 17 |
 | residence, async ÷ sync (1–3.5 req/s) | 0.88–0.95 | 0.85–0.95 | 0.84–0.95 |
 | saturation | 2.97 → 3.16 req/s (≤ 3.5; unstable above) | 3.35 → 3.57 | 3.58 → 3.85 |
+| TPOT p50 at 1 / 3 / 3.5 req/s | 14.6 / 33.6 / 71.5 → 14.6 / 25.2 / 44.4 ms | 14.5 / 28.4 / 44.0 → 14.6 / 24.1 / 28.8 | 14.6 / 28.2 / 36.0 → 14.5 / 23.8 / 28.8 |
 
 - At 24 GiB / 2.5 req/s the copy left in the step falls 116 → 70 ms per request and the
   extra time of load-carrying steps 0.67 → 0.41 s per request.
@@ -347,7 +351,10 @@ requests (0.15.1: 9.95 / 12.51 / 15.07), and the median decode step is ~2 ms sho
 small batches. No same-version synchronous control was run, so every comparison below
 mixes the connector with these version effects. Full grid, 27 cells, all ok (DECISIONS D11):
 
-![MP vs sync](../figures/kv_async.png)
+![MP vs sync](../figures/kv_mp.png)
+
+Same metrics as §4.1, plus residence; in (a) the dotted line is the wait for a slot alone
+(the difference to the solid line is the ~42 ms KV wait after the block grant).
 
 | | 24 GiB | 26 GiB | 28 GiB |
 |---|---|---|---|
@@ -356,6 +363,7 @@ mixes the connector with these version effects. Full grid, 27 cells, all ok (DEC
 | capacity on slot wait only | 2 → 3 | 2.5 → 3.5 | 2.5 → 4 |
 | best throughput, sync → MP | 380 → 528 tok/s (+39%) | 429 → 603 (+41%, still rising) | 458 → 503 at 4 req/s, then collapses |
 | residence at 3 req/s | 3.15 → 1.99 s | 3.25 → 1.99 | 3.35 → 1.99 |
+| TPOT p50 at 1 / 3 / 3.5 req/s | 14.6 / 33.6 / 71.5 → 12.4 / 15.9 / 17.1 ms | 14.5 / 28.4 / 44.0 → 12.5 / 15.8 / 16.9 | 14.6 / 28.2 / 36.0 → 12.5 / 15.8 / 16.9 |
 
 - **The stall is gone.** Extra time of load-carrying steps 0.05–0.06 s per request in every
   cell (synchronous: 0.67 s at 24 GiB / 2.5 req/s). A new request waits 41–44 ms (p50) for
