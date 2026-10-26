@@ -712,3 +712,12 @@ vLLM's queue time contains that prefetch, so the study's capacity criterion is a
 - No crash in any cell (the 3-s lookup-timeout branch needs a lookup that slow; at
   saturation the store fetch could queue — if a cell crashes, it is rerun as
   `cops_async_t30`).
+
+**D10 deviation (2026-10-26 02:26).** `kv_cops_async_b24_q4_tr_g` crashed the decode engine
+on LMCache 0.4.4's lookup-timeout `KeyError` (`lmcache_async_lookup_client.py:175`), the
+same bug as under the fallback: with ~30 requests queued, 8 lookups exceeded the 3-s
+`lookup_timeout_ms`. No completed cell (24 GiB, 1–3.5 req/s) logged a single timeout, so
+a longer timeout changes nothing there. The grid continues unchanged; afterwards every
+`cops_async` cell that failed is rerun as `cops_async_t30` (`lookup_timeout_ms: 30000`,
+otherwise identical) under the same `_g` suffix (`run_async_t30.sh`). Analysis uses
+the `_g` cell of either method, noting which.
