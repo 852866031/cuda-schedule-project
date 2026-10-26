@@ -293,18 +293,71 @@ waits for copy i. The 32 pieces alternate but never run at the same time, so the
 takes the same total either way. The schematic shows *why*; the measured figure above
 shows that this is what happened.
 
-**The other two options are not usable on this stack.**
-- `enable_async_loading` crashes the 0.4.4 engine (a `KeyError` on its lookup timeout
-  path).
-- The multi-process connector (`LMCacheMPConnector`), which takes the copy off the engine
-  thread, needs the compiled kernels. Those now exist, so it is the remaining candidate;
-  it has not been tested yet.
+### 6.3 `enable_async_loading`: the store fetch leaves the step
 
-| lever | what it would change | status |
+With the compiled kernels this option runs (under the fallback it crashed LMCache). It
+moves the fetch from LMCache's store into its pinned staging pool to *before* admission:
+the request waits for that prefetch (~100 ms) without holding blocks, and only the last
+hop, staging pool → GPU, stays inside the admitting step. Full grid, same 27 cells
+(DECISIONS D10):
+
+![async vs sync](../figures/kv_async.png)
+
+vLLM's queue time now contains the prefetch, so the capacity rule is applied to the
+**slot wait** (queue time minus prefetch; the trace marks when each lookup is asked and
+answered).
+
+| | 24 GiB | 26 GiB | 28 GiB |
+|---|---|---|---|
+| capacity (slot wait < 50 ms), sync → async | 2 → 2 req/s (2.5 reads 50.3 ms) | 2.5 → 2.5 (3 reads 84 ms) | 2.5 → **3** |
+| slot wait at 3 req/s | 1,265 → 260 ms | 340 → 84 | 81 → 17 |
+| residence, async ÷ sync (1–3.5 req/s) | 0.88–0.95 | 0.85–0.95 | 0.84–0.95 |
+| saturation | 2.97 → 3.16 req/s (≤ 3.5; unstable above) | 3.35 → 3.57 | 3.58 → 3.85 |
+
+- At 24 GiB / 2.5 req/s the copy left in the step falls 116 → 70 ms per request and the
+  extra time of load-carrying steps 0.67 → 0.41 s per request.
+- Every request pays the prefetch: TTFT-side it is ~100 ms at low load; TPOT at 1 req/s
+  is unchanged (14.5 ms).
+- **Unstable under deep queues.** At 24 GiB and 4–5 req/s the decode engine crashed on
+  LMCache 0.4.4's lookup-timeout `KeyError` — also with the timeout raised from 3 s to
+  30 s, so some lookups never completed. vLLM starts the asynchronous lookup for every
+  waiting request it skips past; with 30–90 requests queued they compete for the 6 GiB
+  staging pool (~8 requests' worth). That reading follows the code path; it was not traced
+  further. At 26 / 28 GiB, with shallower queues, every cell ran, but at 4–5 req/s the
+  prefetch itself queues for 1.4–3.9 s: the store fetch becomes the next bottleneck.
+
+### 6.4 The multi-process connector: the copy leaves the engine
+
+LMCache's MP connector runs the copy in a separate server process, which writes into the
+decode engine's blocks over CUDA IPC while the batch keeps decoding; a new request is
+granted its blocks and joins when its KV has arrived. vLLM 0.15.1's copy of this connector
+keys lookups by block hashes and does not work with LMCache 0.4.4, so this part runs on
+**vLLM 0.18.1** (torch 2.10, where LMCache's stock kernels load natively). A source review
+found the same admission, eviction and grant formula as 0.15.1; measured, the grant is 45
+blocks larger (4,025 at 24 GiB = 10.06 slots, so 24 GiB no longer evicts) and the median
+decode step is ~2 ms shorter. No same-version synchronous control was run.
+
+Smoke, 24 GiB / 2.5 req/s (DECISIONS D11):
+
+| | sync, compiled (0.15.1) | MP connector (0.18.1) |
 |---|---|---|
-| asynchronous load (MP connector) | removes the ~120 ms batch stall per admission (1.07 s of 3.15 s decode at 28 GiB / 3 req/s) | untested; needs the compiled kernels, now built |
-| fp8 KV | halves bytes per block → ~19 slots at 24 GiB; each slot still pays the stalls | not run; needs a bf16 control on the same attention backend |
-| decode-side prefix caching | frees the duplicated third of resident KV (§4.5) | not tested: it changes the workload |
+| extra time of load-carrying steps / request | 0.67 s | **0.05 s** |
+| residence (from block grant) | 2.83 s | **1.87 s** |
+| slot wait / KV wait after block grant | 143 ms / — | 4 / 41 ms |
+| TPOT p50 | 24.2 ms | 15.1 ms |
+
+[Grid results pending.]
+
+### 6.5 Summary of the levers
+
+| lever | effect measured here | status |
+|---|---|---|
+| compiled LMCache kernels | copy 190 → 114 ms; saturation +25–30% | adopted as the baseline (§5) |
+| `use_layerwise` | none (no overlap) | not useful on this stack |
+| `enable_async_loading` | residence −5 to −16%; +7% saturation; unstable at 24 GiB ≥ 4 req/s | usable with care |
+| MP connector (vLLM 0.18.1) | stall removed; residence −34% in the smoke | grid [pending] |
+| fp8 KV | would halve bytes per block (≈ 20 slots at 24 GiB) | not run; needs a bf16 control on the same attention backend |
+| decode-side prefix caching | would free the duplicated third of resident KV (§4.5) | not tested: it changes the workload |
 
 Related-work notes with sources: [related_work_notes.md](../output/kv_vram/related_work_notes.md).
 
