@@ -99,9 +99,6 @@ def plot_arm(rows, methods, fname, title):
             lab, c, mk, ls = ARMS[m]
             x = [r["qps"] for r in rs]
             axes[0, j].plot(x, [r["wait_ms"] / 1e3 for r in rs], color=c, marker=mk, ls="-", label=lab)
-            if m != "cops":     # the part of that queue time spent waiting for a slot
-                axes[0, j].plot(x, [max(r["slot_wait_ms"], 0) / 1e3 for r in rs], color=c, marker=mk, ls=":",
-                                mfc="white", label=f"{lab}: wait for a slot only")
             axes[1, j].plot(x, [r["tok_s"] for r in rs], color=c, marker=mk, ls="-", label=lab)
             axes[2, j].plot(x, [r["tpot_ms"] for r in rs], color=c, marker=mk, ls="-", label=lab)
             axes[3, j].plot(x, [r["resid_s"] for r in rs], color=c, marker=mk, ls="-", label=lab)

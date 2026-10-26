@@ -695,9 +695,6 @@ def fig_lever_grid(method, label, color, name, unstable=None, extra=()):
                         key=lambda r: float(r["qps"]))
             q = [float(r["qps"]) for r in rs]
             axes[0, j].plot(q, [float(r["wait_ms"]) / 1e3 for r in rs], marker=mk, color=c, lw=2, label=lab)
-            if m != "cops":
-                axes[0, j].plot(q, [max(float(r["slot_wait_ms"]), 0) / 1e3 for r in rs], marker=mk, color=c,
-                                lw=1.5, ls=":", mfc="white", label="… wait for a slot only")
             axes[1, j].plot(q, [float(r["resid_s"]) for r in rs], marker=mk, color=c, lw=2, label=lab)
         axes[0, j].set_yscale("symlog", linthresh=0.01)
         axes[0, j].axhline(0.05, color=C_RED, lw=1, ls=":")

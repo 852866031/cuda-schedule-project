@@ -308,8 +308,8 @@ hop, staging pool → GPU, stays inside the admitting step. Full grid, same 27 c
 
 ![async vs sync](../figures/kv_async.png)
 
-Same metrics as §4.1, plus residence. In (a) the solid line is vLLM's queue time, the
-dotted line only the part spent waiting for a slot (the difference is the prefetch).
+Same metrics as §4.1, plus residence. (a) is vLLM's queue time, which includes the prefetch;
+the part spent waiting for a slot alone is in the capacity table below.
 
 vLLM's queue time now contains the prefetch, which the user still waits through before
 the first decode step but which holds no slot. The table gives capacity both ways: on
@@ -353,8 +353,8 @@ mixes the connector with these version effects. Full grid, 27 cells, all ok (DEC
 
 ![MP vs sync](../figures/kv_mp.png)
 
-Same metrics as §4.1, plus residence; in (a) the dotted line is the wait for a slot alone
-(the difference to the solid line is the ~42 ms KV wait after the block grant).
+Same metrics as §4.1, plus residence; (a) is vLLM's queue time, which includes the ~42 ms KV
+wait after the block grant (the wait for a slot alone is in the capacity table below).
 
 | | 24 GiB | 26 GiB | 28 GiB |
 |---|---|---|---|
