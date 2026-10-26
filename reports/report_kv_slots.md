@@ -42,15 +42,28 @@ holds the decode queue + KV load with a forwarded token #1); *residence* = admit
 last token. All 24 cells are `ok` (one cell was rerun after a router keep-alive race lost
 a single request; the clean rerun is reported).
 
-## 2. What a slot is
+## 2. Blocks (vLLM's unit) and slots (this study's unit)
 
 ![blocks and slots](../figures/kv_blocks_slots.png)
 
-A KV *block* holds 16 tokens of K and V for all 32 layers: 2 MiB. A request of 6,272
-prompt tokens needs 392 blocks to be admitted and grows to 400 by its last token. The
-decode engine's KV *grant* is what remains of its budget after weights, activations and
-CUDA graphs (budget − 16.23 GiB at every budget tested); divided by 2 MiB it is the block
-pool. A *slot* is the 400 blocks one request holds. Probed grants:
+**Block — a vLLM concept.** vLLM's PagedAttention keeps every request's KV cache in
+fixed-size *blocks* of `block_size` = 16 tokens; one block holds the K and V of those 16
+tokens for all 32 layers (2 MiB for this model). The engine's KV *grant* — what is left of
+its VRAM budget after weights, activations and CUDA graphs (budget − 16.23 GiB at every
+budget tested) — is carved into one shared pool of such blocks. The scheduler allocates
+whole blocks, never tokens: a request is admitted only when enough free blocks exist for
+its whole prompt (6,272 tokens → 392 blocks here), and during generation it takes one
+more block each time a new 16-token group starts — generating token 6,273 opens block
+393, token 6,289 opens block 394, …, token 6,385 opens block 400. If no block is free at
+such a step, vLLM preempts a request (§3, case 2). None of this is specific to our
+workload; it is how vLLM manages KV for any request.
+
+**Slot — this study's unit.** Every request of the reference workload has the same
+length (6,144 prefix + 128 new + 128 generated = 6,400 tokens = 400 blocks), so the pool
+can be read in units of "whole requests that fit": we call the 400 blocks one request
+holds from admission to its last token a *slot*, and c = ⌊blocks ÷ 400⌋ the number of
+whole slots. vLLM has no such notion — it only sees blocks — which is exactly why the
+fractional part matters (below). Probed grants:
 
 | budget | 22 | 23 | 24 | 25 | 26 | 28 GiB |
 |---|---|---|---|---|---|---|
@@ -58,12 +71,10 @@ pool. A *slot* is the 400 blocks one request holds. Probed grants:
 | blocks ÷ 400 | 7.39 | 8.67 | 9.95 | 11.23 | 12.51 | 15.07 |
 | whole slots c | 7 | 8 | 9 | 11 | 12 | 15 |
 
-The fractional part matters through the admission rule (§4): at 24 GiB the 0.95 is
+The fractional part matters through the admission rule (§4.2): at 24 GiB the 0.95 is
 enough to admit a 10th request, at 26 / 28 GiB the 0.51 / 0.07 is not.
 
-## 3. What the scheduler does with the slots
-
-![scheduler decisions](../figures/kv_sched_logic.png)
+## 3. What the scheduler does with the blocks
 
 Two situations compete for the same pool of free blocks in every scheduler step:
 
@@ -93,7 +104,8 @@ options reach it is E4's question.
 
 ![heatmaps](../figures/kv_grid_heat.png)
 
-Decode queue wait, mean per request (ms), with throughput in tok/s:
+Each cell is one launch and one 300-request run: (a) mean decode queue wait (log colour
+scale), (b) output tokens per second, (c) decode-only per-token time. The same numbers:
 
 | req/s | 1 | 1.5 | 2 | 2.25 | 2.5 | 2.75 | 3 | 3.5 | 4 |
 |---|---|---|---|---|---|---|---|---|---|
@@ -111,18 +123,45 @@ Decode queue wait, mean per request (ms), with throughput in tok/s:
   31.2 / 39.0 ms at 24 / 26 / 28 GiB — bigger batches and more stalls (§4.3).
 - **Preemptions:** 1–35 per cell at 24 GiB, none at 26 / 28 GiB.
 
+Where the knee lies is easier to read with iso-wait lines. The figure below repeats panel
+(a) with contours at 0.05 s (the capacity line), 0.5, 2, 5 and 10 s, interpolated
+linearly between the measured cells; each line marks the (budget, rate) combinations
+that give the same mean wait, so its slope says how much rate one GiB buys — about
+0.25 req/s per 2 GiB along the 0.05 s line, less along the 10 s line.
+
+![heatmaps with contours](../figures/kv_grid_heat_contours.png)
+
 The 3D view of the same surface is [kv_grid_3d.png](../figures/kv_grid_3d.png).
 
 ### 4.2 Waiting is integer slots, FCFS, and nothing else
 
+**The model, defined.** Treat the decode engine as a queue with c identical servers (the
+slots): a request arrives at the decode scheduler at time *aᵢ*, waits until a server is
+free (FCFS), then occupies it for its *service time* Sᵢ — the measured residence, admitted
+→ last token, which already includes its own KV load and every stall it sat through. In
+Kendall's notation this is **M/G/c**: Poisson arrivals (M), a general service-time
+distribution (G), c servers. Three predictions of the mean wait Wq are compared with the
+measurement, all using only the slot count and the measured residences:
+
+| prediction | inputs | what it assumes |
+|---|---|---|
+| **FCFS replay** (discrete-event simulation) | the cell's own arrival times aᵢ and each request's own Sᵢ; c | nothing beyond "c servers, FCFS": each request starts at max(aᵢ, earliest server free) |
+| **M/M/c** (Erlang C) | λ = arrivals ÷ window, mean S, c | exponential service, steady state |
+| **Lee–Longton M/G/c** | λ, mean S, CV² of S, c | Wq(M/G/c) ≈ ½(1 + CV²) · Wq(M/M/c): the standard closed-form correction for non-exponential service |
+
+The replay is the strict test: it uses the same 300 arrivals the engine saw, so any gap
+between it and the measurement is behaviour that "c slots, FCFS, measured residence"
+does not contain. The two formulas test whether the *shape* of the curve is the generic
+multi-server shape.
+
 ![queueing models](../figures/kv_mgc.png)
 
-A discrete-event replay of each cell's own decode arrival times through c FCFS servers,
-each request taking its measured residence, reproduces the measured mean wait at every
-rate: within 2% at 24 GiB with c = 10, within 0.1% at 26 / 28 GiB with c = 12 / 15. With
-c ± 1 it is off by 1.5–3×. The replay is partly circular (it uses measured residences),
-so what it shows is narrower and more useful than "a model fits": *nothing besides the
-slot count and the residence is needed to explain the queue* — no scheduler overhead, no
+**Result.** The replay with the *effective* slot count reproduces the measured mean wait
+at every rate: within 2% at 24 GiB with c = 10, within 0.1% at 26 / 28 GiB with c = 12 /
+15 (the dashed line lies on the measured one). With c ± 1 it is off by 1.5–3×. Because
+the replay takes the measured residences as given it is partly circular; what it
+establishes is narrower and more useful than "a model fits": *nothing besides the slot
+count and the residence is needed to explain the queue* — no scheduler overhead, no
 router effect, no KV-transfer delay beyond what is already inside the residence.
 
 Why c = 10 at 24 GiB with a 9.95-request grant: the admission rule needs 392 free blocks,

@@ -32,7 +32,7 @@ def arrow(p, q, c="#333", lw=1.4, ls="-"):
 
 
 # ---------------------------------------------------------------- row 1: tokens -> blocks
-t(2, 96, "1. A request's tokens are stored in KV blocks of 16 tokens", 12.5, bold=True)
+t(2, 96, "1. vLLM stores every request's KV in fixed blocks of 16 tokens (PagedAttention; block_size = 16)", 12.5, bold=True)
 X0, X1, Y, H = 4, 96, 86, 5
 tot = 6400
 sc = (X1 - X0) / tot
@@ -46,7 +46,7 @@ t(X0 + 6336 * sc, Y + H + 1.2, "↓ 128 generated", 8.5, "#9a3f12", "right", "bo
 for k in range(0, 401, 16):
     xx = X0 + k * 16 * sc
     ax.plot([xx, xx], [Y, Y + H], color="white", lw=0.4)
-t(X0, Y + H + 1.2, "÷ 16 tokens per block:  6,272 ÷ 16 = 392 blocks when admitted,  6,400 ÷ 16 = 400 when finished",
+t(X0, Y + H + 1.2, "this workload's request: 6,272 prompt tokens ÷ 16 = 392 blocks at admission; +128 generated tokens → 400 blocks at the end",
   10, "#222", va="bottom")
 # one block detail
 bx, by = 4, 70
@@ -54,11 +54,12 @@ ax.add_patch(FancyBboxPatch((bx, by), 38, 9, boxstyle="round,pad=0.3", fc="#eef3
 t(bx + 19, by + 6.6, "one block = 16 tokens of K and V for all 32 layers", 9.5, "#0d366b", "center", bold=True)
 t(bx + 19, by + 2.8, "16 × 32 layers × 2 (K,V) × 8 KV heads × 128 × 2 B = 2 MiB", 9.5, "#0d366b", "center")
 arrow((X0 + 1500 * sc, Y), (bx + 19, by + 9.3), "#8aa4c4", lw=1)
-t(46, 76, "one request = 400 blocks = 0.78 GiB, resident on the GPU for its whole decode", 10, "#222")
-t(46, 72.5, "whole blocks only: 392 needed at admission, +1 every 16 generated tokens", 10, "#222")
+t(46, 77.5, "vLLM allocates whole blocks, never tokens: a request is admitted only when all 392 are free;", 10, "#222")
+t(46, 74.2, "generating token 6,273 opens block #393, token 6,289 opens #394, … token 6,385 opens #400.", 10, "#222")
+t(46, 70.9, "Run out of free blocks at such a step → vLLM preempts a request (§3, case 2).", 10, "#7a1a12")
 
 # ---------------------------------------------------------------- row 2: GPU memory -> pool -> slots
-t(2, 62, "2. The decode engine's VRAM budget → KV grant → block pool → slots (24 GiB)", 12.5, bold=True)
+t(2, 62, "2. VRAM budget → KV grant → block pool (vLLM) → slots (this study's unit, 24 GiB shown)", 12.5, bold=True)
 GX0, GX1, GY, GH = 4, 96, 52, 6
 gsc = (GX1 - GX0) / 32
 ax.add_patch(Rectangle((GX0, GY), 24 * gsc, GH, fc="white", ec="#444", lw=1.2))
@@ -67,7 +68,8 @@ ax.add_patch(Rectangle((GX0, GY), 16.23 * gsc, GH, fc=C_W, ec="white", lw=0.8))
 ax.add_patch(Rectangle((GX0 + 16.23 * gsc, GY), 7.77 * gsc, GH, fc=C_RUN, ec="white", lw=0.8))
 t(GX0 + 8.1 * gsc, GY + GH / 2, "weights 15 GiB + activations, CUDA graphs, workspace ≈ 16.2 GiB", 9.5, "#0d366b", "center")
 t(GX0 + 20.1 * gsc, GY + GH / 2, "KV grant 7.77 GiB", 9.5, "white", "center", bold=True)
-t(GX0 + 28 * gsc, GY + GH / 2, "not given to the engine", 9, "#666", "center")
+ax.text(GX0 + 28 * gsc, GY + GH / 2, "not given to\nthe engine", fontsize=9, color="#444", ha="center", va="center",
+        bbox=dict(fc="white", ec="none", pad=1.5))
 t(GX0, GY + GH + 1.2, "GPU1 (32 GB): the engine may use 24 GiB (--gpu-memory-utilization); what the model does not need "
   "becomes the KV grant: budget − 16.23 GiB at every budget tested", 9.5, "#222", va="bottom")
 # pool bar
@@ -82,8 +84,8 @@ for i in range(9):
 ax.add_patch(Rectangle((x, PY + 0.6), 380 * psc - 0.3, PH - 1.2, fc=C_FREE, ec="#444", lw=0.6, ls="--"))
 t(x + 190 * psc, PY + PH / 2, "380", 8, "#444", "center")
 arrow((GX0 + 20.1 * gsc, GY), (PX0 + 1990 * psc, PY + PH + 0.3), "#8aa4c4", lw=1)
-t(PX0, PY - 1.8, "7.77 GiB ÷ 2 MiB = 3,980 blocks;  ÷ 400 per request = 9.95 → 9 whole slots + 380 spare blocks.  "
-  "A slot = the 400 blocks one request holds from admission to its last token.", 10, "#222", va="top")
+t(PX0, PY - 1.8, "vLLM: 7.77 GiB ÷ 2 MiB = 3,980 blocks, one shared pool.   This study: a SLOT = the 400 blocks one request of this "
+  "workload holds from admission to its last token → 3,980 ÷ 400 = 9.95 → 9 whole slots + 380 spare blocks.", 10, "#222", va="top")
 t(PX0, PY - 5.2, "Admission needs only 392 free blocks: 3,980 − 9 × 392 = 452 ≥ 392, so a 10th request gets in while the nine are young;",
   9.5, "#7a1a12", va="top")
 t(PX0, PY - 8.2, "once all ten grow (4,000 > 3,980) one is evicted → 24 GiB behaves as 10 slots with occasional evictions.",

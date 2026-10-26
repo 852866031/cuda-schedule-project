@@ -84,7 +84,7 @@ def fig_3d():
 
 
 # ------------------------------------------------------------------ heatmaps
-def fig_heat():
+def fig_heat(contours=False):
     panels = [("decode_queue_ms", 1e-3, "decode queue wait, mean (s)", "(a) queue wait before decode",
                True, [0.05, 0.5, 2, 5, 10]),
               ("tok_per_s", 1, "output tokens / s", "(b) throughput", False, [200, 250, 300, 340]),
@@ -104,9 +104,13 @@ def fig_heat():
                         ha="center", va="center", fontsize=9.5,
                         color="white" if (norm and z > 1) or (not norm and z > np.nanmean(Z)) else "#111")
         Xc, Yc = np.meshgrid(range(len(QPS_COMMON)), range(len(BUDGETS)))
-        if col == "decode_queue_ms":
-            cs = ax.contour(Xc, Yc, Z, levels=levels, colors="#b3261e", linewidths=1)
-            ax.clabel(cs, fmt=lambda v: f"{v:g}", fontsize=8)
+        if contours and col == "decode_queue_ms":
+            cs = ax.contour(Xc, Yc, Z, levels=levels, colors="#b3261e", linewidths=2.2)
+            ax.clabel(cs, fmt=lambda v: f"{v:g} s", fontsize=10, inline=True, inline_spacing=6,
+                      colors="#b3261e")
+            for txt in cs.labelTexts:
+                txt.set_bbox(dict(fc="white", ec="none", pad=1.5))
+                txt.set_fontweight("bold")
         ax.set_xticks(range(len(QPS_COMMON)))
         ax.set_xticklabels([f"{q:g}" for q in QPS_COMMON])
         ax.set_yticks(range(len(BUDGETS)))
@@ -115,8 +119,10 @@ def fig_heat():
         ax.set_title(title)
         fig.colorbar(im, ax=ax, label=cb, fraction=0.046, pad=0.03)
     fig.suptitle("Baseline grid: decode VRAM budget × request rate   "
-                 "(* 24 GiB holds 9.95 requests; a 10th is admitted on its 392 prompt blocks)", y=1.02)
-    fig.savefig(FIGS / "kv_grid_heat.png", dpi=150, bbox_inches="tight")
+                 "(* 24 GiB holds 9.95 requests; a 10th is admitted on its 392 prompt blocks)"
+                 + ("   — red: iso-wait contours (s), interpolated between cells" if contours else ""), y=1.02)
+    fig.savefig(FIGS / ("kv_grid_heat_contours.png" if contours else "kv_grid_heat.png"), dpi=150,
+                bbox_inches="tight")
     plt.close(fig)
 
 
@@ -192,6 +198,7 @@ def fig_scatter():
 if __name__ == "__main__":
     fig_3d()
     fig_heat()
+    fig_heat(contours=True)
     fig_mgc()
     fig_scatter()
     print("-> kv_grid_3d.png kv_grid_heat.png kv_mgc.png kv_wait_vs_free.png")
