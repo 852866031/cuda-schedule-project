@@ -39,9 +39,7 @@ Metric conventions: *decode queue wait* = vLLM's `request_queue_time` on the dec
 engine (arrival at its scheduler → admitted); *capacity* = the highest rate with mean
 queue wait < 50 ms and no failed request; *TPOT* = what the user sees: the mean gap from
 token #1 to the last token (token #1 is forwarded from the prefill engine, so the first
-gap holds the decode queue + KV load); *decode-only TPOT* (tpot2, used only when the
-mechanism in §4.3 is discussed) = the same over gaps 2..N; *residence* = admitted →
-last token. All 24 cells are `ok` (one cell was rerun after a router keep-alive race lost
+gap holds the decode queue + KV load); *residence* = admitted → last token. All 24 cells are `ok` (one cell was rerun after a router keep-alive race lost
 a single request; the clean rerun is reported).
 
 ## 2. Blocks (vLLM's unit) and slots (this study's unit)
@@ -122,9 +120,7 @@ numbers:
 - **While nobody waits, the budget is irrelevant:** at 1 req/s all three budgets give
   128 tok/s, 0 ms queue and the same 17 ms TPOT.
 - **Once requests queue, TPOT follows the queue:** at 3 req/s it is 110 / 75 / 71 ms at
-  24 / 26 / 28 GiB, because the first token-gap carries the decode queue wait. The
-  decode-only part moves the other way (26 / 31 / 39 ms): bigger batches and more load
-  stalls per request — §4.3.
+  24 / 26 / 28 GiB, because the first token-gap carries the decode queue wait.
 - **Preemptions:** 1–35 per cell at 24 GiB, none at 26 / 28 GiB.
 
 The same three quantities as surfaces. In (a) height is the mean wait for a slot: the
@@ -216,41 +212,10 @@ stalls are 34% of all decode wall time. One load call: p50 171 ms, mean 198 ms, 
 LMCache's compiled kernels do not load against this torch and the Python fallback copies
 chunk by chunk.
 
-Two consequences visible in the grid: (i) more slots → more admissions during a
-residence → longer residence, which is why 26 → 28 GiB barely moves saturation
-throughput; (ii) at 4 req/s the 28 GiB engine is *slower per token once decoding* than
-the 24 GiB one (decode-only TPOT 31 vs 19 ms; the end-user TPOT still favours 28 GiB,
-150 vs 209 ms, because its queue is 7 s shorter), although both are saturated:
-
-| 4 req/s | 24 GiB | 28 GiB |
-|---|---|---|
-| running (mean) | 9.6 | 14.9 |
-| one decode step (no load) | 16.2 ms | 18.5 ms |
-| decode per request | 2.72 s | 4.04 s |
-| = own steps | 2.12 s | 2.35 s |
-| + stalled by others' loads | 0.26 s (1.2 × 214 ms) | 0.88 s (3.5 × 249 ms) |
-| requests per load call (mean, max) | 3.4, 10 | 2.4, 7 |
-
-The bigger batch costs 0.23 s; the rest is stalls. Our first reading was that 24 GiB
-wins because its requests are admitted in *cohorts* (3.4 per load call) and so sit
-through fewer separate stalls. A controlled test refuted that mechanism: making the
-router release decode legs in groups of five at 28 GiB reproduced the 24 GiB grouping
-(3.4 per call) and halved the stall count (4.0 → 2.1 per residence), but each stall grew
-in proportion (308 → 508 ms, since a call that loads five requests takes five times as
-long — the copy costs ~190 ms per request in every cell, grouped or not), so stall time
-per residence (1.23 → 1.08 s) and per-token time (30.9 → 32.7 ms) did not move.
-
-What actually sets the stall time is *how many other requests get loaded while this one
-is resident*, at ~190 ms each. At 24 GiB that number is small (1.3 calls × 3.4 ≈ 4 loads
-during a 2.7 s residence, 0.36 s of stall) because the pool holds almost exactly ten and
-eviction re-synchronises the turnover: a whole batch finishes, the next whole batch is
-loaded while almost nobody is decoding, and then decodes undisturbed. At 28 GiB
-completions are spread out, so loads land in the middle of other requests' decode
-(4.0 calls × 2.4 ≈ 10 loads during a 4 s residence, 1.23 s of stall); grouping the
-admissions does not change where they land. Decode time = 128 steps + (loads met while
-resident) × ~190 ms. (Test and numbers: DECISIONS, "Check of the §4.3 explanation".)
-
-![stall check](../figures/kv_stall_check.png)
+One consequence is visible in the grid: more slots → more admissions during a residence
+→ longer residence, which is why 26 → 28 GiB barely moves saturation throughput. Decode
+time per request = 128 steps + (other requests loaded while it is resident) × ~190 ms;
+the second term is what the load path (E4) can remove.
 
 ### 4.4 Same request scheduling in VRAM 24 vs VRAM 28
 

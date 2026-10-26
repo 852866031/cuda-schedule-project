@@ -307,7 +307,12 @@ Decode queue wait, mean per request (ms); throughput in tok/s in brackets:
 - 28 GiB / 1.5 req/s: the first run lost one request to a router keep-alive race
   (recorded, `ok = False`); the `_r2` rerun is clean and is the reported cell.
 
-## Check of the §4.3 explanation — cohort admission (2026-10-25)
+## Check of a §4.3 reading — cohort admission (2026-10-25; dropped from the report)
+
+*Dropped from the report on 2026-10-25: the comparison concerns the decode-only per-token
+time, and the report uses the end-user TPOT (token #1 → last), under which 28 GiB is
+simply better. Kept here as a record; the finding that the copy costs ~190 ms per request
+regardless of grouping stands.*
 
 **What is being checked.** §4.3 reads from the baseline traces that at 4 req/s the 24 GiB
 engine decodes faster per token than the 28 GiB one (tpot2 19 vs 31 ms) because its
