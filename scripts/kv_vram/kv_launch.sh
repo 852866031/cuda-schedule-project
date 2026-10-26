@@ -15,6 +15,7 @@
 #   KV_DTYPE=fp8                     --kv-cache-dtype on BOTH engines (they must agree)
 #   LMC_LAYERWISE=1                  LMCache use_layerwise: true (both engines)
 #   LMC_ASYNC_LOAD=1                 LMCache enable_async_loading: true (decode engine)
+#   LMC_LOOKUP_TIMEOUT_MS=<ms>       LMCache lookup_timeout_ms (decode engine; default 3000)
 #   KV_COPS=1                        compiled lmcache.c_ops (from .venv-lmc) in both engines
 #   ROUTER_BATCH=N [ROUTER_BATCH_TIMEOUT=s]  router holds decode legs until N are ready
 #                                    (cohort-admission check; engines unchanged)
@@ -109,6 +110,7 @@ DEC_APC_FLAG="--no-enable-prefix-caching"
 if [ -n "${KV_DTYPE:-}" ]; then PF_X+=(--kv-cache-dtype "$KV_DTYPE"); DEC_X+=(--kv-cache-dtype "$KV_DTYPE"); fi
 if [ "${LMC_LAYERWISE:-0}" = 1 ]; then LMC_PF+="use_layerwise: true\n"; LMC_DEC+="use_layerwise: true\n"; fi
 [ "${LMC_ASYNC_LOAD:-0}" = 1 ] && LMC_DEC+="enable_async_loading: true\n"
+[ -n "${LMC_LOOKUP_TIMEOUT_MS:-}" ] && LMC_DEC+="lookup_timeout_ms: ${LMC_LOOKUP_TIMEOUT_MS}\n"
 DEC_ENV=""; PF_ENV=""
 [ "${KV_TRACE:-0}" = 1 ] && DEC_ENV="PYTHONPATH=$HERE/site KV_TRACE=1 KV_TRACE_PATH=${KV_TRACE_PATH:?KV_TRACE_PATH}"
 if [ "${KV_COPS:-0}" = 1 ]; then       # compiled kernels in BOTH engines (store side saves with them too)

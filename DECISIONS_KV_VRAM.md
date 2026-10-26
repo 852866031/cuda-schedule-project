@@ -604,3 +604,36 @@ where the wait is 11 ms); c ± 1 is off by 1.5–3×.
 
 Diminishing returns with more slots persist but weaken: 26 → 28 GiB (+25% slots) buys +7%
 saturation throughput (fallback +3%); 24 → 28 GiB buys +21% (fallback +16%).
+
+## D9 (2026-10-26) — asynchronous load with the compiled kernels (E4 revisited)
+
+With `c_ops` available, both asynchronous options rejected in E4 can be retried. Both at
+24 GiB / 2.5 req/s, trace on, against `kv_cops_b24_q2.5_tr_r2` (queue 143 ms, residence
+2.83 s, copy per request 115 ms, excess step time per residence 0.67 s, 7–8 preemptions).
+
+**Smoke A — `enable_async_loading` (`kv_cops_async_b24_q2.5_tr`).** Makes LMCache's
+*lookup / store → L1 prefetch* asynchronous (the request waits in
+`WAITING_FOR_REMOTE_KVS`); the L1 → GPU copy stays inside the admitting step's
+`start_load_kv`. Under the fallback it crashed (`KeyError` on `first_lookup_time` in the
+3-s lookup-timeout path, `lmcache_async_lookup_client.py:175`).
+- **Prediction:** the bug is in LMCache, not the copy path, and L1 allocation failures
+  persist with c_ops (~3,400 per run), so lookups still stall past 3 s → **crashes again**
+  (60%). If it runs: `start_load_kv` falls from ~115 ms to the L1 → GPU part (~60–70 ms:
+  32 × ~2 ms kernel + Python), excess step time 0.67 → ~0.4 s, queue < 100 ms.
+- **If it crashes:** rerun once as `cops_async_t30` (`lookup_timeout_ms: 30000`) so the
+  buggy branch is not taken; same prediction for the result.
+
+**Smoke B — `LMCacheMPConnector`.** vLLM 0.15.1's connector returns "load
+asynchronously" from `get_num_new_matched_tokens`; an LMCache MP server process (in
+`.venv-lmc`, native `c_ops`) copies the KV into vLLM's blocks over CUDA IPC while the
+batch keeps decoding. It replaces the per-engine 6 GiB L1 + TCP store: both engines talk
+to one server. Its L1 is pinned and must hold the 32 prefixes (24 GiB), so the launch
+sets `--l1-size-gb` explicitly and budget-checks pinned + engines against free RAM
+before starting (the server's lazy default would start at 20 GB).
+- **Prediction:** risk first — the server's adapter targets newer vLLM
+  (`lmcache_mp_connector_0180.py` ships beside it), so an API mismatch at startup is
+  likely (50%). If it runs: the admitting step no longer contains the copy, excess step
+  time per residence 0.67 → < 0.2 s, residence 2.83 → ~2.3 s, queue < 50 ms; each
+  admitted request waits ~100–150 ms in `WAITING_FOR_REMOTE_KVS` before joining (not a
+  batch stall). Preempted requests are *recomputed*, not reloaded (connector TODO), so
+  each preemption costs a 6,144-token prefill on the decode GPU (~0.4 s batch stall).

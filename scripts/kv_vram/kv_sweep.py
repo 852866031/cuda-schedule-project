@@ -65,6 +65,8 @@ METHODS = {
     # compiled LMCache kernels (built in .venv-lmc, loaded via site/cops_shim.py)
     "cops": {"KV_COPS": "1"},
     "cops_lw": {"KV_COPS": "1", "LMC_LAYERWISE": "1"},
+           "cops_async": {"KV_COPS": "1", "LMC_ASYNC_LOAD": "1"},
+           "cops_async_t30": {"KV_COPS": "1", "LMC_ASYNC_LOAD": "1", "LMC_LOOKUP_TIMEOUT_MS": "30000"},
 }
 PORTS = {"prefill": 8100, "decode": 8200}
 INVALID_MARKERS = ("RECV TIMEOUT", "kv_cache is None", "Insufficient memory",
