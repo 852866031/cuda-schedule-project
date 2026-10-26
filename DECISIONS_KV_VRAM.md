@@ -425,3 +425,19 @@ each one actually achieves: admitting-step forward time vs the sum of the 32 per
 copies (≈ sum + compute ⇒ no overlap, copies merely relocated; ≈ max(copy, compute) ⇒
 real overlap). One layerwise run so far looks like the former: excess step time per
 residence did not fall; the gain was a shorter load phase and fewer preemptions.
+
+**Smoke 2, reruns (2026-10-25): the layerwise gain is real, and it is not overlap.**
+Both arms repeat: baseline `_r2` queue 3,665 ms, preemptions 34, load p50 566 ms;
+layerwise `_r2` queue 1,556 ms, preemptions 12, load p50 219 ms. The decode engine's
+LMCache log explains it: the baseline retrieve path reserves staging buffers in the 6 GiB
+pinned L1 for the *whole* request (25 chunks × 32 MiB) and, with the L1 full of saved
+chunks, fails the allocation 3,360 times per run (≈ 11 per request) and takes a slow
+path — load p90 1.7 s. The layerwise retriever allocates per layer, never fails (0
+warnings in both runs), and loads in p50 217 ms ≈ the bare copy. Faster loads mean the
+ten running requests collide with the wall less often: preemptions 35 → 12, reloads
+fall with them, residence 4.1 → 3.7 s, and at ρ ≈ 1 that cuts the queue 3×. Excess step
+time per residence did *not* fall (1.40 vs 0.88 s), so the copies are still synchronous
+inside the forward: no overlap was gained. Report: the mechanism is "sidesteps the L1
+pool thrash of 0.4.4's whole-request path", not "overlaps transfer with compute".
+Corollary for the earlier studies: part of the ~400 ms "KV load" was L1 allocation
+thrash, not PCIe. Layerwise passes E4 (ok, grant unchanged, outputs to be compared).

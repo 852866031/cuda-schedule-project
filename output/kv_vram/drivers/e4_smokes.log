@@ -1,0 +1,27 @@
+
+=== kv_lw_b24_q2.5_tr  (method lw, decode 24 GiB, 2.5 QPS, trace on) ===
+  RAM gate [big]: 57665 MB available, needs ~45864 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 7.77 GiB = 63680 tokens = 9 slots; prefill KV 6.66 GiB
+  warm-up 75s, drained; avail RAM 18043 MB, RSS {'decode': 8341, 'prefill': 8401, 'proxy': 38, 'store': 24983}, GPU used [25600, 25671] MiB
+    [measure] 21:49:44 tokens=1230962 decode run=10 wait=3 kv=100% avail RAM 17921 MB
+    [measure] 21:50:14 tokens=2181353 decode run=9 wait=1 kv=89% avail RAM 17910 MB
+    [measure] 21:50:44 tokens=3157012 decode run=10 wait=5 kv=99% avail RAM 17906 MB
+    [measure] 21:51:14 tokens=4158150 decode run=9 wait=7 kv=90% avail RAM 17888 MB
+  TTFT p50=117.32 p95=451.03 ms | TPOT p50=39.48 (decode-only 28.14) ms | ITL p50/mean=16.22/40.86 ms | 308.32 tok/s | failed=0
+  decode: queue 1409 ms, KV load 294 ms, decode 3419 ms (means over 300); preemptions 12
+  decode prefix hit fraction 0.9796 (6144/6272 = 0.980 expected); decode tokens 38400.0 (complete: True)
+  gpu1 smact=0.5195 dram=0.4497 fb=25.07 | swap {'pswpin': 34326, 'pswpout': 0} | host cpu 0.05 | avail 17882 MB | markers {'prefill': {}, 'decode': {}} warnings {'prefill': {'Failed to allocate memory block': 1526}, 'decode': {}} | ok=True
+done
+
+=== kv_async_b24_q2.5_tr  (method async, decode 24 GiB, 2.5 QPS, trace on) ===
+  RAM gate [big]: 58012 MB available, needs ~45864 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 7.77 GiB = 63680 tokens = 9 slots; prefill KV 6.66 GiB
+  warm-up 75s, drained; avail RAM 13893 MB, RSS {'decode': 9822, 'prefill': 10080, 'proxy': 38, 'store': 25932}, GPU used [25342, 25655] MiB
+    [measure] 21:53:54 tokens=1211849 decode run=9 wait=7 kv=90% avail RAM 13856 MB
+    [measure] 21:54:24 tokens=2130282 decode run=10 wait=9 kv=100% avail RAM 13827 MB
+    [measure] 21:54:54 tokens=3048529 decode run=8 wait=23 kv=80% avail RAM 13788 MB
+  TTFT p50=168.9 p95=577.09 ms | TPOT p50=60.13 (decode-only 31.28) ms | ITL p50/mean=16.25/60.55 ms | 229.35 tok/s | failed=86
+  decode: queue 148 ms, KV load 552 ms, decode 107 ms (means over -32); preemptions 0
+  decode prefix hit fraction 0.3571 (6144/6272 = 0.980 expected); decode tokens -256.0 (complete: False)
+  gpu1 smact=0.3782 dram=0.3235 fb=25.05 | swap {'pswpin': 658, 'pswpout': 0} | host cpu 0.16 | avail 57932 MB | markers {'prefill': {}, 'decode': {'EngineDeadError': 38, 'Traceback': 40}} warnings {'prefill': {'Failed to allocate memory block': 2212}, 'decode': {'Failed to allocate memory block': 305}} | ok=False
+done
