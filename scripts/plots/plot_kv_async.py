@@ -29,11 +29,17 @@ ARMS = {"cops": ("synchronous (compiled kernels)", "#9a9a95", "o", "-"),
 SUFFIX = {"cops": ["_tr_r2", "_tr"], "cops_async": ["_tr_g"], "mp18": ["_tr_g", "_tr"]}
 
 
+OK = {r["name"] for r in csv.DictReader(open(REPO / "output" / "summary_kv.csv")) if r["ok"] == "True"}
+ALT = {"cops_async": ["cops_async", "cops_async_t30"]}      # D10: crashed cells rerun with a 30 s lookup timeout
+
+
 def cell(method, b, q):
-    for suf in SUFFIX[method]:
-        p = TL / f"kv_{method}_b{b}_q{q:g}{suf}_req.csv"
-        if p.exists():
-            return p
+    for m in ALT.get(method, [method]):
+        for suf in SUFFIX[method]:
+            name = f"kv_{m}_b{b}_q{q:g}{suf}"
+            p = TL / f"{name}_req.csv"
+            if p.exists() and name in OK:
+                return p
     return None
 
 

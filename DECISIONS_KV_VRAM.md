@@ -743,3 +743,35 @@ holding its blocks (`alloc` → `new` in the trace). Evicted requests are recomp
 reloaded (connector TODO), so 24 GiB's evictions cost a 6,144-token prefill each.
 Risks: protocol or IPC failure at startup (smoke catches it); server-side copy contention
 at high rates.
+
+## D10 outcome — enable_async_loading grid (2026-10-26, 03:53 + reruns)
+
+24 of 27 cells ok. **24 GiB at 4, 4.5 and 5 req/s crashed** the decode engine on LMCache's
+lookup-timeout `KeyError`; the `cops_async_t30` reruns crashed the same way, now after
+lookups that waited more than **30 s**. 26 and 28 GiB ran clean at every rate. With
+`enable_async_loading`, vLLM 0.15.1 starts the asynchronous lookup for every waiting
+request it skips past, so at 24 GiB's deep queues (30–90 waiting) many prefetches compete
+for the 6 GiB staging pool (~8 requests' worth), and some never complete: unstable under
+deep queues (inferred from the code path; not traced further).
+
+| | 24 GiB | 26 GiB | 28 GiB |
+|---|---|---|---|
+| capacity on slot wait (< 50 ms), sync | 2 | 2.5 | 2.5 req/s |
+| capacity on slot wait, async | 2 (2.5 reads 50.3 ms) | 2.5 (3 reads 84 ms) | **3** (17 ms; 3.5 reads 128) |
+| slot wait at 3 req/s, sync → async | 1,265 → 260 ms | 340 → 84 | 81 → 17 |
+| residence, async ÷ sync (1–3.5 req/s) | 0.88–0.95 | 0.85–0.95 | 0.84–0.95 |
+| saturation (best tok/s) sync → async | 380 → 405 (≤ 3.5 req/s; unstable above) | 429 → 457 (+6.5%) | 458 → 492 (+7.4%) |
+| prefetch p50 at ≤ 3 req/s | 99–119 ms | 99–111 | 97–106 |
+| TPOT p50 at 1 req/s | 14.6 ms | 14.6 | 14.5 |
+
+Extra time of load-carrying steps per request (24 GiB, 2.5): 0.67 → 0.41 s. At high
+rates the prefetch itself queues (26 GiB, 5 req/s: 3.9 s median), so the store fetch
+becomes the bottleneck the synchronous path hid inside the step.
+
+**Against the predictions:** grant/slots unchanged — confirmed. Prefetch ~100–150 ms in
+every cell — confirmed (97–119 ms at ≤ 3 req/s); vLLM queue time therefore ≥ ~100 ms
+everywhere — confirmed. TPOT at 1 req/s 14.5–15.5 — confirmed (14.5). Residence −10 to
+−15% — confirmed (−5 to −16%). Saturation 3.3 / 3.7 / 4.0 req/s — **too high** (3.16 at
+24 GiB before it destabilises, 3.57, 3.85). Capacity one step up at every budget —
+**only at 28 GiB** (24: 2.5 req/s misses by 0.3 ms; 26: 3 req/s reads 84 ms). No crash
+— **wrong at 24 GiB ≥ 4 req/s**, as the risk noted.
