@@ -1,0 +1,3 @@
+kernel_name,launch_count,total_duration_ms,avg_duration_us
+"bad_gather_kernel(float const*, int const*, float*, int, int)",624,761.659,1220.61
+"dense_fma_kernel(float const*, float*, int, int)",1248,153.176,122.737
