@@ -1,0 +1,3 @@
+[submodule "branches/literature-review/reproduce/tally"]
+	path = branches/literature-review/reproduce/tally
+	url = https://github.com/tally-project/tally.git
