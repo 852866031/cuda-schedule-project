@@ -1,0 +1,22 @@
+# Raw experiment data (regenerate with scripts/run_sweep.py; summaries are committed)
+output/raw/
+output/logs/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+
+# Local tooling state
+.claude/
+
+# Local virtualenvs (multi-GB; recreate per README)
+.venv/
+.venv-matched/
+
+# venvs are symlinks to ../vram-limit (dir-only patterns above do not match symlinks)
+.venv
+.venv-matched
+.venv-lmc/
+.venv-vllm018/

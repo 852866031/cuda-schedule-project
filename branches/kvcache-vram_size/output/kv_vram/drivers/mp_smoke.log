@@ -1,0 +1,7 @@
+
+=== kv_mp_b24_q2.5_tr_r4  (method mp, decode 24 GiB, 2.5 QPS, trace on) ===
+  RAM gate [big]: 57706 MB available, needs ~44768 MB, swap allowance 3000 MB, floor 4000 MB
+  up in 33s: decode KV 7.77 GiB = 63664 tokens = 9 slots; prefill KV 6.66 GiB
+  warm-up 75s, drained; avail RAM 17854 MB, RSS {'decode': 3699, 'prefill': 3965, 'proxy': 37, 'store': 33582}, GPU used [26340, 26443] MiB
+    [measure] 01:39:41 tokens=1250688 decode run=3 wait=0 kv=30% avail RAM 17854 MB
+    [measure] 01:40:11 tokens=2181808 decode run=7 wait=0 kv=70% avail RAM 17800 MB

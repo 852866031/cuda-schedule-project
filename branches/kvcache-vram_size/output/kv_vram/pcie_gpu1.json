@@ -1,0 +1,167 @@
+{
+ "gpu_index": 1,
+ "gpu": "NVIDIA GeForce RTX 5090",
+ "torch": "2.8.0.dev20250322+cu128",
+ "link_idle_gen_maxgen_width_maxwidth": [
+  1,
+  4,
+  8,
+  16
+ ],
+ "link_after_load": [
+  4,
+  4,
+  8,
+  16
+ ],
+ "pinned": [
+  {
+   "size_mib": 1,
+   "iters": 50,
+   "h2d_ms": 0.0739,
+   "d2h_ms": 0.0724,
+   "h2d_gbps": 14.191,
+   "d2h_gbps": 14.48
+  },
+  {
+   "size_mib": 4,
+   "iters": 50,
+   "h2d_ms": 0.2916,
+   "d2h_ms": 0.2889,
+   "h2d_gbps": 14.385,
+   "d2h_gbps": 14.517
+  },
+  {
+   "size_mib": 16,
+   "iters": 50,
+   "h2d_ms": 1.1613,
+   "d2h_ms": 1.1546,
+   "h2d_gbps": 14.446,
+   "d2h_gbps": 14.531
+  },
+  {
+   "size_mib": 25,
+   "iters": 50,
+   "h2d_ms": 1.8135,
+   "d2h_ms": 1.8039,
+   "h2d_gbps": 14.455,
+   "d2h_gbps": 14.532
+  },
+  {
+   "size_mib": 32,
+   "iters": 50,
+   "h2d_ms": 2.3209,
+   "d2h_ms": 2.3088,
+   "h2d_gbps": 14.458,
+   "d2h_gbps": 14.533
+  },
+  {
+   "size_mib": 64,
+   "iters": 32,
+   "h2d_ms": 4.64,
+   "d2h_ms": 4.6175,
+   "h2d_gbps": 14.463,
+   "d2h_gbps": 14.534
+  },
+  {
+   "size_mib": 256,
+   "iters": 8,
+   "h2d_ms": 18.5557,
+   "d2h_ms": 18.4692,
+   "h2d_gbps": 14.466,
+   "d2h_gbps": 14.534
+  },
+  {
+   "size_mib": 800,
+   "iters": 5,
+   "h2d_ms": 57.983,
+   "d2h_ms": 58.5215,
+   "h2d_gbps": 14.467,
+   "d2h_gbps": 14.334
+  },
+  {
+   "size_mib": 1024,
+   "iters": 5,
+   "h2d_ms": 74.214,
+   "d2h_ms": 74.907,
+   "h2d_gbps": 14.468,
+   "d2h_gbps": 14.334
+  }
+ ],
+ "pageable": [
+  {
+   "size_mib": 1,
+   "iters": 50,
+   "h2d_ms": 0.1134,
+   "d2h_ms": 0.1163,
+   "h2d_gbps": 9.246,
+   "d2h_gbps": 9.02
+  },
+  {
+   "size_mib": 4,
+   "iters": 50,
+   "h2d_ms": 0.3281,
+   "d2h_ms": 0.3312,
+   "h2d_gbps": 12.784,
+   "d2h_gbps": 12.664
+  },
+  {
+   "size_mib": 16,
+   "iters": 50,
+   "h2d_ms": 1.2096,
+   "d2h_ms": 1.197,
+   "h2d_gbps": 13.87,
+   "d2h_gbps": 14.017
+  },
+  {
+   "size_mib": 25,
+   "iters": 50,
+   "h2d_ms": 1.8703,
+   "d2h_ms": 1.846,
+   "h2d_gbps": 14.016,
+   "d2h_gbps": 14.201
+  },
+  {
+   "size_mib": 32,
+   "iters": 50,
+   "h2d_ms": 2.3847,
+   "d2h_ms": 2.3513,
+   "h2d_gbps": 14.071,
+   "d2h_gbps": 14.27
+  },
+  {
+   "size_mib": 64,
+   "iters": 32,
+   "h2d_ms": 4.7347,
+   "d2h_ms": 4.6594,
+   "h2d_gbps": 14.174,
+   "d2h_gbps": 14.403
+  },
+  {
+   "size_mib": 256,
+   "iters": 8,
+   "h2d_ms": 18.8345,
+   "d2h_ms": 18.5444,
+   "h2d_gbps": 14.252,
+   "d2h_gbps": 14.475
+  },
+  {
+   "size_mib": 800,
+   "iters": 5,
+   "h2d_ms": 58.7889,
+   "d2h_ms": 57.8612,
+   "h2d_gbps": 14.269,
+   "d2h_gbps": 14.498
+  },
+  {
+   "size_mib": 1024,
+   "iters": 5,
+   "h2d_ms": 75.2364,
+   "d2h_ms": 74.0465,
+   "h2d_gbps": 14.272,
+   "d2h_gbps": 14.501
+  }
+ ],
+ "peak_pinned_h2d_gbps": 14.468,
+ "peak_pinned_d2h_gbps": 14.534
+}

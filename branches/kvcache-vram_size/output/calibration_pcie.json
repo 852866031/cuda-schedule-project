@@ -1,0 +1,132 @@
+{
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "gpu_total_gib": 31.354,
+  "torch": "2.8.0.dev20250322+cu128",
+  "pcie_idle": {
+    "gen_current": 1,
+    "gen_max": 4,
+    "width_current": 8,
+    "width_max": 16
+  },
+  "pcie_under_load": {
+    "gen_current": 4,
+    "gen_max": 4,
+    "width_current": 8,
+    "width_max": 16
+  },
+  "pinned": [
+    {
+      "size_mib": 1,
+      "iters": 50,
+      "h2d_ms": 0.0741,
+      "d2h_ms": 0.0736,
+      "h2d_gbps": 14.149,
+      "d2h_gbps": 14.253
+    },
+    {
+      "size_mib": 4,
+      "iters": 50,
+      "h2d_ms": 0.2916,
+      "d2h_ms": 0.2929,
+      "h2d_gbps": 14.386,
+      "d2h_gbps": 14.319
+    },
+    {
+      "size_mib": 16,
+      "iters": 50,
+      "h2d_ms": 1.1612,
+      "d2h_ms": 1.1708,
+      "h2d_gbps": 14.448,
+      "d2h_gbps": 14.33
+    },
+    {
+      "size_mib": 64,
+      "iters": 32,
+      "h2d_ms": 4.6399,
+      "d2h_ms": 4.6819,
+      "h2d_gbps": 14.464,
+      "d2h_gbps": 14.334
+    },
+    {
+      "size_mib": 256,
+      "iters": 8,
+      "h2d_ms": 18.5552,
+      "d2h_ms": 18.7272,
+      "h2d_gbps": 14.467,
+      "d2h_gbps": 14.334
+    },
+    {
+      "size_mib": 1024,
+      "iters": 5,
+      "h2d_ms": 74.214,
+      "d2h_ms": 74.9068,
+      "h2d_gbps": 14.468,
+      "d2h_gbps": 14.334
+    }
+  ],
+  "pageable": [
+    {
+      "size_mib": 1,
+      "iters": 50,
+      "h2d_ms": 0.1166,
+      "d2h_ms": 0.1128,
+      "h2d_gbps": 8.995,
+      "d2h_gbps": 9.296
+    },
+    {
+      "size_mib": 4,
+      "iters": 50,
+      "h2d_ms": 0.3346,
+      "d2h_ms": 0.329,
+      "h2d_gbps": 12.536,
+      "d2h_gbps": 12.749
+    },
+    {
+      "size_mib": 16,
+      "iters": 50,
+      "h2d_ms": 1.2148,
+      "d2h_ms": 1.207,
+      "h2d_gbps": 13.811,
+      "d2h_gbps": 13.9
+    },
+    {
+      "size_mib": 64,
+      "iters": 32,
+      "h2d_ms": 4.7391,
+      "d2h_ms": 4.7189,
+      "h2d_gbps": 14.161,
+      "d2h_gbps": 14.221
+    },
+    {
+      "size_mib": 256,
+      "iters": 8,
+      "h2d_ms": 18.8346,
+      "d2h_ms": 18.8024,
+      "h2d_gbps": 14.252,
+      "d2h_gbps": 14.277
+    },
+    {
+      "size_mib": 1024,
+      "iters": 5,
+      "h2d_ms": 75.217,
+      "d2h_ms": 75.0984,
+      "h2d_gbps": 14.275,
+      "d2h_gbps": 14.298
+    }
+  ],
+  "big_pin_test": {
+    "target_gib": 24,
+    "pinned_gib": 24,
+    "success": true,
+    "error": null,
+    "alloc_seconds": 2.95,
+    "h2d_gbps_while_held": 14.467
+  },
+  "derived": {
+    "peak_h2d_gbps": 14.468,
+    "peak_d2h_gbps": 14.334,
+    "kv_bytes_per_token": 131072,
+    "kv_gib_per_8k_prefix": 1.0,
+    "t_load_8k_prefix_ms": 74.21
+  }
+}
