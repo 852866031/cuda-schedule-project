@@ -1,0 +1,3 @@
+[submodule "reproduce/tally"]
+	path = reproduce/tally
+	url = https://github.com/tally-project/tally.git
