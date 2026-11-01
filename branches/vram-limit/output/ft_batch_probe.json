@@ -1,0 +1,21 @@
+[
+  {
+    "n_offload": 0,
+    "n_resident": 32,
+    "batch": 2,
+    "seq_len": 2048,
+    "tokens_per_step": 4096,
+    "lora_rank": 16,
+    "trainable_params": 13631488,
+    "load_s": 1.5,
+    "step_s_median": 1.162,
+    "step_s_min": 1.144,
+    "step_s_max": 1.162,
+    "tokens_per_s": 3524.2,
+    "mfu": 1.132,
+    "peak_vram_gib": 23.04,
+    "offloaded_weight_gib": 0.0,
+    "loss_mean": 13.0146,
+    "steps": 2
+  }
+]

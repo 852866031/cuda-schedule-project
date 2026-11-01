@@ -1,0 +1,16 @@
+# Raw experiment data (regenerate with scripts/run_sweep.py; summaries are committed)
+output/raw/
+output/logs/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+
+# Local tooling state
+.claude/
+
+# Local virtualenvs (multi-GB; recreate per README)
+.venv/
+.venv-matched/
