@@ -1,0 +1,6 @@
+# local-only state of this checkout (virtualenvs, raw experiment data left over from the kvcache-vram_size worktree)
+.venv
+.venv-matched
+.venv-lmc/
+.venv-vllm018/
+output/
