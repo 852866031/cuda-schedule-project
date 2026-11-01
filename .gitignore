@@ -18,3 +18,5 @@ __pycache__/
 # venvs are symlinks to ../vram-limit (dir-only patterns above do not match symlinks)
 .venv
 .venv-matched
+.venv-lmc/
+.venv-vllm018/
