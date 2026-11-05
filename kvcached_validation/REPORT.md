@@ -139,13 +139,13 @@ Findings:
    ~1k tok/s on stores, loads are synchronous on the worker, so every load of a 4–6k-token prefix
    stalls all decoding for ~0.8 s (the 1–4 s token-stream stalls and the 2.5 s TTFT in both
    columns). None of that is kvcached's doing.
-2. **Why in-flight loads/stores survive a shrink.** A load is synchronous inside the worker's step,
-   so a shrink (which only acts through the engine thread's allocation path) cannot interleave
-   with it. A store is asynchronous, but `LMCacheMPConnector.request_finished` returns
-   `_can_store=True`, i.e. vLLM keeps the finished request's blocks until `get_finished` reports
-   the store complete; kvcached never sees those pages freed, so it cannot unmap them under a copy.
-   kvcached's `offload_pins` (which pin pages for vLLM's native OffloadingConnector) are not
-   involved. The stress variant below exercised this window deliberately.
+2. **In-flight loads and stores vs. page release — the argument that looked safe was not.** A load
+   is synchronous inside the worker's step, so a shrink cannot interleave with it. A store is
+   asynchronous; `LMCacheMPConnector.request_finished` returns `_can_store=True`, so vLLM keeps a
+   finished request's blocks until `get_finished` reports the store done, and one would expect
+   kvcached never to unmap a page under a copy. The stress variant below shows that expectation
+   does not hold: with larger stores the asynchronous gather reads an unmapped kvcached page and
+   the engine dies, with or without a limit change.
 3. **Outputs.** The LMCache MP connector changes greedy outputs relative to a no-connector engine
    on 4 of 8 short prompts; kvcached does not (8/8 identical without the connector, 8/8 identical
    to the plain+connector engine with it). Deterministic across three repeats. Not investigated
