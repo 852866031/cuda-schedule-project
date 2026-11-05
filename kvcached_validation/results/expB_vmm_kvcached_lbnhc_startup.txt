@@ -1,0 +1,81 @@
+engine died
+(APIServer pid=121621)     async with build_async_engine_client_from_engine_args(
+(APIServer pid=121621)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=121621)   File "/home/jiaxuan/miniconda3/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=121621)     return await anext(self.gen)
+(APIServer pid=121621)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/entrypoints/launchers/api_server/entry.py", line 94, in build_async_engine_client_from_engine_args
+(APIServer pid=121621)     async_llm = AsyncLLM.from_vllm_config(
+(APIServer pid=121621)                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 235, in from_vllm_config
+(APIServer pid=121621)     return cls(
+(APIServer pid=121621)            ^^^^
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 169, in __init__
+(APIServer pid=121621)     self.engine_core = EngineCoreClient.make_async_mp_client(
+(APIServer pid=121621)                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(APIServer pid=121621)     return func(*args, **kwargs)
+(APIServer pid=121621)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 163, in make_async_mp_client
+(APIServer pid=121621)     return AsyncMPClient(
+(APIServer pid=121621)            ^^^^^^^^^^^^^^
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(APIServer pid=121621)     return func(*args, **kwargs)
+(APIServer pid=121621)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 1060, in __init__
+(APIServer pid=121621)     super().__init__(
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/kvcached/integration/vllm/patches.py", line 1554, in _patched_client_init
+(APIServer pid=121621)     original_init(self, *args, **kwargs)
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 656, in __init__
+(APIServer pid=121621)     with launch_core_engines(
+(APIServer pid=121621)          ^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=121621)   File "/home/jiaxuan/miniconda3/lib/python3.12/contextlib.py", line 144, in __exit__
+(APIServer pid=121621)     next(self.gen)
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/utils.py", line 1240, in launch_core_engines
+(APIServer pid=121621)     wait_for_engine_startup(
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/kvcached/integration/vllm/patches.py", line 1697, in _patched_wait
+(APIServer pid=121621)     result = original_wait(*args, **kwargs)
+(APIServer pid=121621)              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=121621)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/utils.py", line 1320, in wait_for_engine_startup
+(APIServer pid=121621)     raise RuntimeError(
+(APIServer pid=121621) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+304:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935017]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+305:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935019]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+306:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935023]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+307:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935025]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+308:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935027]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+309:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935030]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+310:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935032]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+311:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935034]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+312:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935036]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+313:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935038]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+314:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935043]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+315:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935047]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+316:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935050]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+317:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935052]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+318:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935056]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+319:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935058]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+320:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935060]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+321:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935062]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+322:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935065]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+323:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935067]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+324:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935070]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+325:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935072]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+326:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935074]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+327:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935076]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+328:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935080]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+329:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935082]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+330:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935085]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+331:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935087]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+332:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935090]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+333:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935093]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+334:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935096]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+335:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935099]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+336:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935102]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+337:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935105]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+338:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935108]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:111 [p:122188 t:122188]mem_unmap during FTensor cleanup failed: unknown CUDA driver error
+339:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935111]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/ftensor.cpp:116 [p:122188 t:122188]address_free during FTensor cleanup failed: unknown CUDA driver error
+340:[KVCACHED_MEMORY_POOL][ERROR][2026-11-05 15:50:54.935131]/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/page.cpp:40 [p:122188 t:122188]GPU page teardown: physical page release failed in CUDA: unknown CUDA driver error
+342:(APIServer pid=121621) Traceback (most recent call last):
+410:(APIServer pid=121621)     raise RuntimeError(
+411:(APIServer pid=121621) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}

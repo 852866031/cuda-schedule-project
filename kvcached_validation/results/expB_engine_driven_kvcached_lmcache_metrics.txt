@@ -1,0 +1,5 @@
+lmcache_mp_lookup_hit_tokens_total{cache_salt="",model_name="/home/jiaxuan/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3-8B/snapshots/8cde5ca8380496c9a6cc7ef3a8b46a0372a1d920"} 379648.0
+lmcache_mp_lookup_hit_l1_tokens_total{cache_salt="",model_name="/home/jiaxuan/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3-8B/snapshots/8cde5ca8380496c9a6cc7ef3a8b46a0372a1d920"} 379648.0
+lmcache_mp_lookup_hit_l2_tokens_total{cache_salt="",model_name="/home/jiaxuan/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3-8B/snapshots/8cde5ca8380496c9a6cc7ef3a8b46a0372a1d920"} 0.0
+lmcache_mp_lookup_hit_l1_keys_total{cache_salt="",model_name="/home/jiaxuan/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3-8B/snapshots/8cde5ca8380496c9a6cc7ef3a8b46a0372a1d920"} 1483.0
+lmcache_mp_lookup_hit_l2_keys_total{cache_salt="",model_name="/home/jiaxuan/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3-8B/snapshots/8cde5ca8380496c9a6cc7ef3a8b46a0372a1d920"} 0.0

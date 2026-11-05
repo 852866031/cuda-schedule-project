@@ -1,0 +1,3 @@
+stored lines: 53
+retrieved lines: 31
+error lines: 0

@@ -1,0 +1,14 @@
+# No-resize stress run crash: kvcached + LMCacheMPConnector (engine_driven), 6k-token sessions, limit never changed
+
+725:(EngineCore pid=158037) [31;20m[2026-11-05 16:11:57,326] LMCache ERROR:[0m Async engine-driven store failed for request_id=cmpl-8b31a85e6675e79a-0-9091b59f [3m(async_engine_driven.py:324:lmcache.v1.multiprocess.transfer_context.async_engine_driven)[0m
+726:(EngineCore pid=158037) Traceback (most recent call last):
+728:(EngineCore pid=158037)     gather_done.synchronize()
+731:(EngineCore pid=158037) torch.AcceleratorError: CUDA error: an illegal memory access was encountered
+738:(EngineCore pid=158037) [31;20m[2026-11-05 16:11:57,786] LMCache ERROR:[0m Failed to scatter retrieved CPU context chunks [3m(worker_transfer.py:998:lmcache.v1.multiprocess.transfer_context.worker_transfer)[0m
+739:(EngineCore pid=158037) Traceback (most recent call last):
+744:(EngineCore pid=158037) torch.AcceleratorError: CUDA error: an illegal memory access was encountered
+761:(APIServer pid=157957) ERROR 11-05 16:11:58 [async_llm.py:843] Traceback (most recent call last):
+767:(APIServer pid=157957) ERROR 11-05 16:11:58 [async_llm.py:843] vllm.v1.engine.exceptions.EngineDeadError: EngineCore encountered an issue. See stack trace (above) for the root cause.
+
+# kernel log
+Nov 05 16:11:57 jiaxuan-WorkStation kernel: NVRM: Xid (PCI:0000:01:00): 31, pid=158037, name=VLLM::EngineCor, channel 0x0000000e, intr 00000000. MMU Fault: ENGINE GRAPHICS GPC9 GPCCLIENT_T1_12 faulted @ 0x1f00_14ac9000. Fault is of type FAULT_PDE ACCESS_TYPE_VIRT_READ

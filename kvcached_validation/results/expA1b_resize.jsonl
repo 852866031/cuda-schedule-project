@@ -1,0 +1,2 @@
+{"t_cmd": 1793910676.5598774, "t_done": 1793910677.9752262, "offset": 40.0, "size": "2G", "rc": 0, "stdout": "Updated kv cache limit for vllm_a to 2.00 GB (2147483648 bytes)", "stderr": ""}
+{"t_cmd": 1793910726.5598607, "t_done": 1793910727.9548357, "offset": 90.0, "size": "12G", "rc": 0, "stdout": "Updated kv cache limit for vllm_a to 12.00 GB (12884901888 bytes)", "stderr": ""}

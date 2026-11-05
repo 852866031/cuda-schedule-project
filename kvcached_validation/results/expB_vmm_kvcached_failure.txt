@@ -1,0 +1,46 @@
+# B2: kvcached + LMCacheMPConnector, lmcache_driven + use_vmm_api — engine start failure
+
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,727] LMCache INFO:[0m lmcache.mp.mp_transfer_mode = lmcache_driven (overridden, default: auto) [3m(vllm_multi_process_adapter.py:221:lmcache.integration.vllm.vllm_multi_process_adapter)[0m
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,727] LMCache INFO:[0m lmcache.mp.isolated_ipc = False [3m(vllm_multi_process_adapter.py:229:lmcache.integration.vllm.vllm_multi_process_adapter)[0m
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,727] LMCache INFO:[0m lmcache.mp.use_vmm_api = True (overridden, default: False) [3m(vllm_multi_process_adapter.py:221:lmcache.integration.vllm.vllm_multi_process_adapter)[0m
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,727] LMCache INFO:[0m lmcache.mp.hash_algorithm = blake3 [3m(vllm_multi_process_adapter.py:229:lmcache.integration.vllm.vllm_multi_process_adapter)[0m
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,735] LMCache INFO:[0m LMCache MP worker adapter created with instance_id=165078417565578333 [3m(vllm_multi_process_adapter.py:1415:lmcache.integration.vllm.vllm_multi_process_adapter)[0m
+(EngineCore pid=120871) [kvcached][INFO][2026-11-05 15:49:37][model_runner_v2.py:226] kvcached MRV2 persistent allocation: pools=32 page_bytes=65536 blocks=6661 layout=BLNHC
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,765] LMCache INFO:[0m Registering kv caches! [3m(lmcache_mp_connector.py:867:lmcache.integration.vllm.lmcache_mp_connector)[0m
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,765] LMCache INFO:[0m Engine KV Format: EngineKVFormat.NL_X_NB_BS_NH_CS NL x [NB, BS, NH, CS] [3m(detection.py:69:lmcache.v1.gpu_connector.kv_format.detection)[0m
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,765] LMCache INFO:[0m Engine KV Format: EngineKVFormat.NL_X_NB_BS_NH_CS NL x [NB, BS, NH, CS] [3m(detection.py:69:lmcache.v1.gpu_connector.kv_format.detection)[0m
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,766] LMCache INFO:[0m Registering kv caches [3m(vllm_multi_process_adapter.py:1614:lmcache.integration.vllm.vllm_multi_process_adapter)[0m
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,766] LMCache INFO:[0m Creating transfer context (device_type=cuda, mode=lmcache_driven) [3m(worker_transfer.py:1069:lmcache.v1.multiprocess.transfer_context.worker_transfer)[0m
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,766] LMCache INFO:[0m Auto-selected backend [cuda] for accelerator 'cuda' from candidate backends [cuda, rocm]. [3m(__init__.py:154:lmcache.v1.platform)[0m
+(EngineCore pid=120871) [32;20m[2026-11-05 15:49:37,768] LMCache INFO:[0m Wrapping 32 KV cache tensors for IPC [3m(kv_wrap.py:71:lmcache.v1.platform.kv_wrap)[0m
+...
+(EngineCore pid=120871)     self.kv_connector.register_kv_caches(kv_caches_dict)
+(EngineCore pid=120871)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/integration/vllm/lmcache_mp_connector.py", line 881, in register_kv_caches
+(EngineCore pid=120871)     self.worker_adapter.register_kv_caches(
+(EngineCore pid=120871)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/integration/vllm/vllm_multi_process_adapter.py", line 1631, in register_kv_caches
+(EngineCore pid=120871)     self._send_register_kv_caches_request(kv_caches)
+(EngineCore pid=120871)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/integration/vllm/vllm_multi_process_adapter.py", line 1665, in _send_register_kv_caches_request
+(EngineCore pid=120871)     transfer_ctx.register(
+(EngineCore pid=120871)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/v1/multiprocess/transfer_context/worker_transfer.py", line 528, in register
+(EngineCore pid=120871)     future = self._submit_registration(
+(EngineCore pid=120871)              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=120871)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/v1/multiprocess/transfer_context/worker_transfer.py", line 233, in _submit_registration
+(EngineCore pid=120871)     return submit()
+(EngineCore pid=120871)            ^^^^^^^^
+(EngineCore pid=120871)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/v1/multiprocess/transfer_context/worker_transfer.py", line 531, in <lambda>
+(EngineCore pid=120871)     wrap_kv_caches(kv_caches),
+(EngineCore pid=120871)     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=120871)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/v1/platform/kv_wrap.py", line 80, in wrap_kv_caches
+(EngineCore pid=120871)     wrappers.append(wrap_one_kv_cache(value))
+(EngineCore pid=120871)                     ^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=120871)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/v1/platform/kv_wrap.py", line 37, in wrap_one_kv_cache
+(EngineCore pid=120871)     return resolve_kv_wrapper_factory(get_device(tensor).type)(tensor)
+(EngineCore pid=120871)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=120871)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/v1/platform/devices/cuda/ipc_wrapper.py", line 550, in wrap
+(EngineCore pid=120871)     return cls(tensor)
+(EngineCore pid=120871)            ^^^^^^^^^^^
+(EngineCore pid=120871)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/v1/platform/devices/cuda/ipc_wrapper.py", line 563, in __init__
+(EngineCore pid=120871)     raise ValueError(
+(EngineCore pid=120871) ValueError: VmmCudaIPCWrapper requires a tensor that is contiguous (possibly after permutation); got shape=(6661, 16, 8, 256) stride=(1048576, 2048, 256, 1)
+(EngineCore pid=120871) Worker 0 IPC listener stopped, removed /tmp/kvcached-tp-vllm_a-03565977/w0.sock
+[rank0]:[W1105 15:49:38.806162550 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())

@@ -1,0 +1,6 @@
+{"t_cmd": 1793912670.7011015, "t_done": 1793912672.1547756, "offset": 30.0, "size": "2G", "rc": 0, "stdout": "No enough free space to decrease for the new kv_cache_limit for vllm_a\nUpdated kv cache limit for vllm_a to 2.00 GB (2147483648 bytes)", "stderr": ""}
+{"t_cmd": 1793912685.70106, "t_done": 1793912687.3003988, "offset": 45.0, "size": "12G", "rc": 0, "stdout": "Updated kv cache limit for vllm_a to 12.00 GB (12884901888 bytes)", "stderr": ""}
+{"t_cmd": 1793912700.7010524, "t_done": 1793912702.3051422, "offset": 60.0, "size": "2G", "rc": 0, "stdout": "No enough free space to decrease for the new kv_cache_limit for vllm_a\nUpdated kv cache limit for vllm_a to 2.00 GB (2147483648 bytes)", "stderr": ""}
+{"t_cmd": 1793912715.701058, "t_done": 1793912717.217591, "offset": 75.0, "size": "12G", "rc": 0, "stdout": "Updated kv cache limit for vllm_a to 12.00 GB (12884901888 bytes)", "stderr": ""}
+{"t_cmd": 1793912730.7010446, "t_done": 1793912732.2329624, "offset": 90.0, "size": "2G", "rc": 0, "stdout": "Updated kv cache limit for vllm_a to 2.00 GB (2147483648 bytes)", "stderr": ""}
+{"t_cmd": 1793912745.701054, "t_done": 1793912747.2038963, "offset": 105.0, "size": "12G", "rc": 0, "stdout": "Updated kv cache limit for vllm_a to 12.00 GB (12884901888 bytes)", "stderr": ""}

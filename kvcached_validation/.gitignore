@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+# raw engine/server logs are large; the result excerpts in results/ are committed instead
+logs/*.log
+logs/*.out
+logs/*.pid

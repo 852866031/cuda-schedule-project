@@ -1,0 +1,47 @@
+# Stress run crash: kvcached + LMCacheMPConnector (engine_driven), 6k-token sessions, alternating 2G/12G limits
+# engine log (EngineCore) 16:06:26–16:06:30
+(APIServer pid=143334) INFO 11-05 16:06:26 [loggers.py:315] Engine 000: Avg prompt throughput: 2049.5 tokens/s, Avg generation throughput: 74.8 tokens/s, Running: 3 reqs, Waiting: 0 reqs, GPU KV cache usage: 26.3%, Prefix cache hit rate: 0.0%, External prefix cache hit rate: 51.9%
+(APIServer pid=143334) INFO 11-05 16:06:26 [metrics.py:107] KV Transfer metrics: LMCache MP lookup count=6, LMCache MP lookup avg latency (ms)=62.009
+(APIServer pid=143334) INFO:     127.0.0.1:53102 - "GET /metrics HTTP/1.1" 200 OK
+(APIServer pid=143334) INFO:     127.0.0.1:53110 - "GET /metrics HTTP/1.1" 200 OK
+(APIServer pid=143334) INFO:     127.0.0.1:48086 - "POST /v1/completions HTTP/1.1" 200 OK
+(APIServer pid=143334) INFO:     127.0.0.1:53126 - "GET /metrics HTTP/1.1" 200 OK
+(APIServer pid=143334) INFO:     127.0.0.1:53024 - "POST /v1/completions HTTP/1.1" 200 OK
+(APIServer pid=143334) INFO:     127.0.0.1:53132 - "GET /metrics HTTP/1.1" 200 OK
+(APIServer pid=143334) INFO:     127.0.0.1:53138 - "POST /v1/completions HTTP/1.1" 200 OK
+(APIServer pid=143334) INFO:     127.0.0.1:33084 - "GET /metrics HTTP/1.1" 200 OK
+(EngineCore pid=144264) [31;20m[2026-11-05 16:06:29,064] LMCache ERROR:[0m Async engine-driven store failed for request_id=cmpl-947b92e11ebd23d7-0-befd1f79 [3m(async_engine_driven.py:324:lmcache.v1.multiprocess.transfer_context.async_engine_driven)[0m
+(EngineCore pid=144264) Traceback (most recent call last):
+(EngineCore pid=144264)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/v1/multiprocess/transfer_context/async_engine_driven.py", line 310, in _prepare_gather_and_commit
+(EngineCore pid=144264)     gather_done.synchronize()
+(EngineCore pid=144264)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/torch/cuda/streams.py", line 254, in synchronize
+(EngineCore pid=144264)     super().synchronize()
+(EngineCore pid=144264) torch.AcceleratorError: CUDA error: an illegal memory access was encountered
+(EngineCore pid=144264) Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+(EngineCore pid=144264) CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+(EngineCore pid=144264) For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+(EngineCore pid=144264) 
+[rank0]:[W1105 16:06:29.469602104 CUDAEvent.h:57] Warning: CUDA warning: an illegal memory access was encountered (function ~CUDAEvent)
+(APIServer pid=143334) INFO:     127.0.0.1:33094 - "POST /v1/completions HTTP/1.1" 200 OK
+(APIServer pid=143334) INFO:     127.0.0.1:33102 - "GET /metrics HTTP/1.1" 200 OK
+(APIServer pid=143334) INFO:     127.0.0.1:33106 - "GET /metrics HTTP/1.1" 200 OK
+(EngineCore pid=144264) [31;20m[2026-11-05 16:06:30,276] LMCache ERROR:[0m Failed to scatter retrieved CPU context chunks [3m(worker_transfer.py:998:lmcache.v1.multiprocess.transfer_context.worker_transfer)[0m
+(EngineCore pid=144264) Traceback (most recent call last):
+(EngineCore pid=144264)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/lmcache/v1/multiprocess/transfer_context/worker_transfer.py", line 986, in submit_retrieve
+(EngineCore pid=144264)     event.wait()
+(EngineCore pid=144264)   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/torch/cuda/streams.py", line 223, in wait
+(EngineCore pid=144264)     super().wait(stream)
+(EngineCore pid=144264) torch.AcceleratorError: CUDA error: an illegal memory access was encountered
+(EngineCore pid=144264) Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+(EngineCore pid=144264) CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+(EngineCore pid=144264) For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+(EngineCore pid=144264) 
+/home/jiaxuan/.cache/uv/sdists-v9/pypi/kvcached/0.1.6/9GFFrYTOHOght-GC/src/csrc/page_allocator.cpp:542 gpu_vmm::mem_get_info(&avail_phy_mem_size, &total_phy_mem_size) failed in CUDA runtime (700): an illegal memory access was encountered
+(APIServer pid=143334) INFO:     127.0.0.1:33120 - "GET /metrics HTTP/1.1" 200 OK
+
+# kernel log (journalctl -k)
+Nov 05 16:06:29 jiaxuan-WorkStation kernel: NVRM: GPU at PCI:0000:01:00: GPU-0accc17c-6e60-d45f-ff54-dfcb05f40720
+Nov 05 16:06:29 jiaxuan-WorkStation kernel: NVRM: GPU Board Serial Number: 0
+Nov 05 16:06:29 jiaxuan-WorkStation kernel: NVRM: Xid (PCI:0000:01:00): 31, pid=144264, name=VLLM::EngineCor, channel 0x0000000e, intr 00000000. MMU Fault: ENGINE GRAPHICS GPC6 GPCCLIENT_T1_12 faulted @ 0x1f00_0a4dc000. Fault is of type FAULT_PDE ACCESS_TYPE_VIRT_READ
+
+# kvcached VMM reservation base seen in B1: invalid device pointer: 0x1f0000000000 (same 0x1f00... range as the fault address)

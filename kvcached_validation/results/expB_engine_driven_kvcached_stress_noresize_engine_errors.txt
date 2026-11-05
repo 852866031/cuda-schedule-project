@@ -1,0 +1,30 @@
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     async for item in iterator:  # type: ignore[union-attr]
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 706, in generate
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     out = q.get_nowait() or await q.get()
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]                             ^^^^^^^^^^^^^
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/output_processor.py", line 91, in get
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     raise output
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/completion/serving.py", line 308, in completion_stream_generator
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     async for prompt_idx, res in result_generator:
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/utils/async_utils.py", line 108, in merge_async_iterators
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     async for item in iterator:  # type: ignore[union-attr]
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 706, in generate
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     out = q.get_nowait() or await q.get()
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]                             ^^^^^^^^^^^^^
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/output_processor.py", line 91, in get
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     raise output
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/completion/serving.py", line 308, in completion_stream_generator
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     async for prompt_idx, res in result_generator:
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/utils/async_utils.py", line 108, in merge_async_iterators
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     async for item in iterator:  # type: ignore[union-attr]
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 706, in generate
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     out = q.get_nowait() or await q.get()
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]                             ^^^^^^^^^^^^^
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/output_processor.py", line 91, in get
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     raise output
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 789, in output_handler
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     outputs = await engine_core.get_output_async()
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]   File "/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 1175, in get_output_async
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498]     raise self._format_exception(outputs) from None
+(APIServer pid=157957) ERROR 11-05 16:11:58 [serving.py:498] vllm.v1.engine.exceptions.EngineDeadError: EngineCore encountered an issue. See stack trace (above) for the root cause.
