@@ -7,17 +7,19 @@
 #                       from LMCache and kvcached's occupied pages are only running requests)
 #   --kv-bytes N        plain only: static --kv-cache-memory-bytes (default 12G)
 #   --gpu I             CUDA device (default 0)
+#   --offload GiB       vLLM native CPU KV offloading (OffloadingConnector) with a pinned DRAM tier of GiB
 # Log: $LOGS/vllm_<tag>.log ; pid: $LOGS/vllm_<tag>.pid
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
 TAG=$1; MODE=$2; shift 2
-LMC=""; APC=0; KVB=$((12*1024*1024*1024)); GPU=0
+LMC=""; APC=0; KVB=$((12*1024*1024*1024)); GPU=0; OFF=""
 while [[ $# -gt 0 ]]; do
   case $1 in
     --lmcache) LMC=$2; shift 2;;
     --apc) APC=1; shift;;
     --kv-bytes) KVB=$2; shift 2;;
     --gpu) GPU=$2; shift 2;;
+    --offload) OFF=$2; shift 2;;
     --) shift; break;;
     *) echo "unknown option $1"; exit 2;;
   esac
@@ -46,9 +48,10 @@ if [[ -n $LMC ]]; then
   esac
   ARGS+=(--kv-transfer-config "{\"kv_connector\": \"LMCacheMPConnector\", \"kv_connector_module_path\": \"lmcache.integration.vllm.lmcache_mp_connector\", \"kv_role\": \"kv_both\", \"kv_connector_extra_config\": {$EXTRA}}")
 fi
+[[ -n $OFF ]] && ARGS+=(--kv-offloading-size "$OFF" --kv-offloading-backend native)
 ARGS+=("$@")
 LOG="$LOGS/vllm_${TAG}.log"
-echo "# $(date -Is) MODE=$MODE LMC=$LMC APC=$APC GPU=$GPU" > "$LOG"
+echo "# $(date -Is) MODE=$MODE LMC=$LMC APC=$APC GPU=$GPU OFFLOAD=$OFF VENV=${VENV_NAME:-.venv}" > "$LOG"
 echo "# vllm ${ARGS[*]}" >> "$LOG"
 env | grep -E "^(ENABLE_KVCACHED|KVCACHED_|VLLM_USE_V2|PYTHONHASHSEED|OMP_NUM|CUDA_VISIBLE)" >> "$LOG"
 nohup vllm "${ARGS[@]}" >> "$LOG" 2>&1 &

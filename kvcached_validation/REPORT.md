@@ -12,6 +12,7 @@ Everything here was built from scratch in its own venv; predictions and outcomes
 | What happens to running requests at a shrink? | None is killed or stopped at the shrink instant. Memory falls at the rate requests complete. **But** once the resident set sits at the new cap, vLLM's ordinary full-cache preemption kicks in: growing decodes get preempted and recomputed (A2: 15 preemptions, stalls of 1.7–7 s, every request still completed with correct length). |
 | Time to release / re-acquire memory | Release: first movement 0.5 s after the limit is visible; fits under the limit after ~3 s (A1, short outputs) to ~21 s (A2, 512-token outputs: bounded by the lifetime of the resident requests). Re-acquire: bounded by prefill admission, 2.4 → 11.9 GiB in 5–6 s. |
 | Per-step overhead of kvcached at a static budget | **None measurable**: decode step p50 14.03 ms vs 14.03 ms, p90 16.17 vs 16.18 ms, TTFT identical, greedy outputs byte-identical (8/8 prompts). |
+| Fixed 2 QPS with DRAM offload, shrink the budget live (vram-limit study 1 redone with kvcached, §7) | **Flat down to the in-flight-KV knee.** 13 → 4 GiB: TTFT p50 51 → 155 ms, p95 < 0.8 s, ITL and tok/s unchanged, 0 preemptions, 0 failures, the DRAM tier absorbing the lost GPU hits (72 → 95 %); at 3 and 2 GiB the engine queues (TTFT 3 s / 18 s) but never preempts or stalls. Without offload the knee is at 8 GiB (TTFT p50 0.5 s) and 5 GiB costs 3.5 s. Needs kvcached main (page pinning for the native offload copies) and `KVCACHED_MAX_CACHED_TOKENS=-1`. |
 | kvcached + LMCache multi-process connector | **Does not work on these versions.** The default (`lmcache_driven`) and VMM-IPC modes cannot start: LMCache's server-side zero-copy path needs an exportable GPU handle and kvcached's VMM pages are created non-exportable (`requestedHandleTypes=0`). The `engine_driven` mode (worker-side copies) starts and serves, but under store traffic of a few thousand tokens per store the engine dies within 1.5–2.5 min with a CUDA illegal-memory-access in LMCache's asynchronous store gather (kernel `Xid 31` MMU read fault on an unmapped kvcached page), with or without any limit change; the plain engine with the same connector and load is unaffected. |
 
 ## 2. Environment
@@ -202,10 +203,99 @@ that large stores lose within 1.5–2.5 minutes. Resizing is *not* required to t
   native `OffloadingConnector`, which kvcached ≥ 0.1.6-main explicitly supports on vLLM 0.29/0.30,
   as the offload path instead of LMCache).
 
-## 7. Caveats
+## 7. Live shrink sweep at fixed RPS with DRAM offload (re-doing the vram-limit study 1 with kvcached)
 
-- One GPU, one model (Llama-3-8B bf16), TP=1, kvcached 0.1.6 rather than main (main has 40+
-  commits since, including the prefix-cache release on shrink and an own CPU-offload path).
+The `vram-limit` branch's study 1 (`branches/vram-limit/reports/report_simple_inference.md`) swept
+the GPU KV budget of an offloading engine by **restarting** it at each budget. Here the same
+workload and the same offload backend are driven through one continuous run in which the budget
+is shrunk **live** with `kvctl limit`.
+
+Setup: Llama-3-8B, 32 sessions × 6144-token prefixes (24 GiB of KV demand), every request = one
+session's prefix + 128 unique tokens → 128 output tokens, Poisson **2 QPS**, Zipf-1.1 session
+choice, 32-request warm-up; vLLM native CPU offload (`--kv-offloading-size 24
+--kv-offloading-backend native`, a 24 GiB pinned DRAM tier); prefix caching on. Engine: kvcached
+**main** (`9106e0f`, 2026-11-04) in `.venv-main`, because 0.1.6 has no page pinning for vLLM's
+`OffloadingConnector` (main pins the pages of every offload copy job; it logged "Pinning kvcached
+pages for OffloadingConnector copies") and because main releases cached prefixes when the limit
+is lowered. `KVCACHED_MAX_CACHED_TOKENS=-1` so the GPU prefix cache may fill the budget (the
+default bound of 16 000 tokens ≈ 2 GiB would have capped every window at the same ~4 GiB; that
+first attempt is kept as `results/sweep_offload_zipf*`). Baseline 60 s at the start-up limit
+(13 G), then 10G → 8G → 6G → 5G → 4G → 3G → 2G, 60 s (≈110 requests) each; the first 5 s after
+each change are excluded from the window's request statistics. Runner:
+`scripts/run_shrink_sweep.sh`, analysis `scripts/analyze_sweep.py`.
+
+### With offload (`results/sweep_offload_zipf_full.png`)
+
+| limit | req ok/fail | TTFT p50 | TTFT p95 | ITL p50 | tok/s | preempt | GPU prefix hit | DRAM hit | kvcached used | waiting max |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 13 G (start) | 116/0 | 51 ms | 499 ms | 12.6 ms | 263 | 0 | 76 % | 72 % | 12.3 GiB | 1 |
+| 10 G | 106/0 | 52 | 454 | 12.7 | 247 | 0 | 72 % | 81 % | 10.0 | 1 |
+| 8 G | 105/0 | 91 | 399 | 13.1 | 244 | 0 | 55 % | 88 % | 8.0 | 2 |
+| 6 G | 105/0 | 72 | 351 | 12.6 | 244 | 0 | 55 % | 87 % | 6.0 | 1 |
+| 5 G | 114/0 | 146 | 770 | 13.1 | 265 | 0 | 48 % | 92 % | 5.0 | 4 |
+| 4 G | 119/0 | 155 | 795 | 12.9 | 277 | 0 | 43 % | 95 % | 4.0 | 5 |
+| 3 G | 108/0 | 3 210 | 5 837 | 12.2 | 251 | 0 | 29 % | 91 % | 3.0 | 13 |
+| 2 G | 99/0 | 18 019 | 23 670 | 11.8 | 230 | 0 | 20 % | 93 % | 2.0 | 34 |
+
+Each `kvctl limit` evicted cached prefixes down to exactly the new limit within the window (the
+"kvcached used" column equals the limit) while the engine kept serving. From 13 GiB down to
+4 GiB the decode side is untouched (ITL 12.6–13.1 ms, 244–277 tok/s) and TTFT p50 moves from
+51 ms to 155 ms as GPU prefix hits fall from 76 % to 43 % and the DRAM tier absorbs the rest
+(DRAM hit 72 → 95 %); p95 stays under 0.8 s; **zero preemptions, zero stalls, zero failures in
+every window**. At 3 GiB and 2 GiB the resident set no longer fits (2 QPS × ~1.8 s ≈ 3.7
+requests in flight × 0.77 GiB), and the engine queues: TTFT p50 3.2 s then 18 s with 13 and 34
+waiting, still with zero preemptions and every request completing.
+
+Against study 1's static sweep at the nearest GPU-KV sizes:
+
+| GPU KV | study 1 (restart per budget): TTFT p50 / p95, preemptions | this run (live shrink) |
+|---|---|---|
+| 13.8 / 12.3 GiB | 54 / 305 ms, 0 | 51 / 499 ms, 0 |
+| 5.8 / 6 GiB | 73 / 332 ms, 0 | 72 / 351 ms, 0 |
+| 3.8 / 4 GiB | 135 / 1 528 ms, 4 | 155 / 795 ms, 0 |
+| 2.8 / 3 GiB | 2 078 / 5 451 ms, 7 | 3 210 / 5 837 ms, 0 |
+| 1.8 / 2 GiB | 4 856 / 10 666 ms, engine stalled | 18 019 / 23 670 ms, engine healthy, all complete |
+
+Same knee, same flat region; past the knee kvcached turns the overload into admission queueing
+(it refuses to back pages beyond the limit, so vLLM's scheduler waits) instead of the
+preempt-recompute spiral and stall that the static budget produced.
+
+### Without offload (control, `results/sweep_nooffload_zipf_full.png`)
+
+Same engine, same sweep, no offload tier (an evicted prefix must be recomputed: ~0.4 s of
+prefill for 6144 tokens).
+
+| limit | req ok/fail | TTFT p50 | TTFT p95 | ITL p50 | preempt | GPU prefix hit | kvcached used | waiting max |
+|---|---|---|---|---|---|---|---|---|
+| 13 G (start) | 116/0 | 52 ms | 1 265 ms | 13.5 ms | 0 | 76 % | 12.4 GiB | 1 |
+| 10 G | 106/0 | 66 | 773 | 13.8 | 0 | 72 % | 10.0 | 0 |
+| 8 G | 105/0 | 505 | 2 580 | 15.5 | 0 | 55 % | 8.0 | 7 |
+| 6 G | 105/0 | 500 | 1 541 | 14.2 | 0 | 55 % | 6.0 | 2 |
+| 5 G | 114/0 | 3 488 | 9 041 | 14.9 | 0 | 48 % | 5.0 | 18 |
+| 4 G | 119/0 | 7 053 | 13 410 | 13.9 | 1 | 41 % | 4.0 | 26 |
+| 3 G | 108/0 | 27 986 | 56 741 | 12.0 | 3 | 40 % | 3.0 | 52 |
+| 2 G | 99/0 | 89 754 | 107 649 | 11.8 | 1 | 10 % | 2.0 | 107 |
+
+Without the DRAM tier the knee moves up to where the Zipf hot set stops fitting: TTFT p50 is
+already 0.5 s at 8 GiB and 3.5 s at 5 GiB, where the offloaded run was still at 91 and 146 ms,
+and the queue starts building at 5 GiB instead of 3 GiB. Side by side, TTFT p50 with / without
+offload: 13 G 51 / 52 ms, 10 G 52 / 66, 8 G 91 / 505, 6 G 72 / 500, 5 G 146 / 3 488,
+4 G 155 / 7 053 ms. Decode (ITL) is unaffected in both runs.
+
+**Answer to the question asked:** at a fixed 2 QPS with DRAM offload, the KV budget of a running
+engine can be shrunk live from 13 GiB to 4 GiB with no change in decode speed or throughput and
+TTFT p50 rising only from 51 to 155 ms (p95 under 0.8 s), zero preemptions and zero failures;
+the wall is the in-flight KV (between 4 and 3 GiB here), exactly where study 1 found it with
+restarts, and past it kvcached queues instead of spiralling. Without offload the same shrink
+costs recompute from 8 GiB downward.
+
+## 8. Caveats
+
+- One GPU, one model (Llama-3-8B bf16), TP=1. Experiments A and B use kvcached 0.1.6; the
+  sweep of §7 uses kvcached main (`9106e0f`) because 0.1.6 lacks the offload page pins and the
+  prefix-cache release on shrink. The LMCache crash of §5 was not re-tested on main (main has no
+  LMCache-specific pinning either).
+- §7's sweep is one run per arm (Zipf only; uniform not run); windows are 60 s ≈ 110 requests.
 - Prefill throughput of this GPU/config (~9.6k tok/s for 6k-token prompts) limited the load that
   could be applied without queueing; A1 was over-subscribed, A2 at capacity.
 - FlashInfer's sampler was disabled in every run (JIT refuses sm_120 in this build); attention ran

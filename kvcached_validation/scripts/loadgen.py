@@ -23,7 +23,14 @@ import aiohttp
 ap = argparse.ArgumentParser()
 ap.add_argument("--url", default="http://localhost:8000")
 ap.add_argument("--model", default="meta-llama/Meta-Llama-3-8B")
-ap.add_argument("--mode", choices=["stream", "session", "check"], default="stream")
+ap.add_argument("--mode", choices=["stream", "session", "check", "prefix"], default="stream")
+ap.add_argument("--n-sessions", type=int, default=32)
+ap.add_argument("--prefix-tokens", type=int, default=6144)
+ap.add_argument("--unique-tokens", type=int, default=128)
+ap.add_argument("--skew", choices=["zipf", "uniform"], default="zipf")
+ap.add_argument("--zipf-s", type=float, default=1.1)
+ap.add_argument("--warmup", type=int, default=32)
+ap.add_argument("--warmup-concurrency", type=int, default=4)
 ap.add_argument("--out", required=True)
 ap.add_argument("--rate", type=float, default=2.0)
 ap.add_argument("--duration", type=float, default=120)
@@ -117,6 +124,41 @@ async def run_sessions():
         deadline = time.time() + args.duration
         await asyncio.gather(*[run_session(session, i, deadline) for i in range(args.sessions)])
 
+async def run_prefix():
+    """Study-1 style workload: N fixed sessions of P-token prefixes; each request is one session's
+    prefix + U unique tokens, M output tokens; Poisson arrivals at --rate; session chosen Zipf(s) or
+    uniformly. A warm-up first touches every session once (so each prefix is in the GPU/offload
+    cache), then measured requests run for --duration seconds."""
+    sessions = [rand_tokens(args.prefix_tokens, random.Random(args.seed * 7919 + i)) for i in range(args.n_sessions)]
+    if args.skew == "zipf":
+        w = [1.0 / (i + 1) ** args.zipf_s for i in range(args.n_sessions)]
+    else:
+        w = [1.0] * args.n_sessions
+    pick = random.Random(args.seed + 1)
+    conn = aiohttp.TCPConnector(limit=0)
+    timeout = aiohttp.ClientTimeout(total=None, sock_read=600)
+    async with aiohttp.ClientSession(connector=conn, timeout=timeout) as session:
+        # warm-up: every session once, a few at a time
+        sem = asyncio.Semaphore(args.warmup_concurrency)
+        async def warm(i):
+            async with sem:
+                await one_request(session, f"w{i}", sessions[i] + rand_tokens(args.unique_tokens, pick), args.max_tokens)
+        await asyncio.gather(*[warm(i) for i in range(min(args.warmup, args.n_sessions))])
+        print("warm-up done", flush=True)
+        tasks = []; t0 = time.time(); rid = 0; t_next = t0
+        while True:
+            now = time.time()
+            if now >= t0 + args.duration: break
+            if now < t_next:
+                await asyncio.sleep(min(t_next - now, 0.05)); continue
+            sid = pick.choices(range(args.n_sessions), weights=w)[0]
+            prompt = sessions[sid] + rand_tokens(args.unique_tokens, pick)
+            tasks.append(asyncio.create_task(one_request(session, f"r{rid}_s{sid}", prompt, args.max_tokens)))
+            rid += 1
+            t_next += pick.expovariate(args.rate)
+        print(f"sent {rid} requests; waiting for completion", flush=True)
+        await asyncio.gather(*tasks)
+
 CHECK_PROMPTS = [
     "The history of the Roman Empire begins with",
     "In computer science, a hash table is",
@@ -134,5 +176,6 @@ async def run_check():
             print(f"c{i}: {rec['text'][:80]!r}")
 
 if args.mode == "stream": asyncio.run(run_stream())
+elif args.mode == "prefix": asyncio.run(run_prefix())
 elif args.mode == "session": asyncio.run(run_sessions())
 else: asyncio.run(run_check())

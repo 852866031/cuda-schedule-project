@@ -26,7 +26,8 @@ except Exception as e:  # kvcached absent in a plain-only environment
     print("kvcached CLI utils unavailable:", e, file=sys.stderr)
 
 WANT = ("vllm:num_requests_running", "vllm:num_requests_waiting", "vllm:kv_cache_usage_perc",
-        "vllm:num_preemptions_total")
+        "vllm:num_preemptions_total", "vllm:prefix_cache_queries_total", "vllm:prefix_cache_hits_total",
+        "vllm:external_prefix_cache_queries_total", "vllm:external_prefix_cache_hits_total")
 metrics = {k: "" for k in WANT}
 metrics_lock = threading.Lock()
 stop = threading.Event()
@@ -55,7 +56,7 @@ signal.signal(signal.SIGINT, lambda *a: stop.set())
 with open(args.out, "w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["t", "nvml_used", "nvml_free", "kvc_limit", "kvc_used", "kvc_prealloc",
-                "running", "waiting", "kv_usage", "preemptions"])
+                "running", "waiting", "kv_usage", "preemptions", "pc_queries", "pc_hits", "ext_queries", "ext_hits"])
     t_end = time.time() + args.duration
     nxt = time.time()
     while not stop.is_set() and time.time() < t_end:
