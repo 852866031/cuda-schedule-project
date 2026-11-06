@@ -42,5 +42,5 @@
 <mxCell id="l4dot" value="" style="ellipse;aspect=fixed;fillColor=none;strokeColor=#888888;dashed=1;" vertex="1" parent="l4"><mxGeometry x="10" y="7" width="14" height="14" as="geometry"/></mxCell>
 <mxCell id="l5dot" value="" style="ellipse;aspect=fixed;fillColor=none;strokeColor=#888888;dashed=1;" vertex="1" parent="l5"><mxGeometry x="10" y="7" width="14" height="14" as="geometry"/></mxCell>
 <mxCell id="l6dot" value="" style="ellipse;aspect=fixed;fillColor=#ff7f0e;strokeColor=#ff7f0e;" vertex="1" parent="l6"><mxGeometry x="10" y="7" width="14" height="14" as="geometry"/></mxCell>
-<mxCell id="leg" value="dot = the colour of this scheme's line in the results figure; dashed circle = not plotted there (the tenant did not survive the first phase)" style="text;html=1;fontSize=12;align=left;" vertex="1" parent="1"><mxGeometry x="0" y="958" width="960" height="24" as="geometry"/></mxCell>
+<mxCell id="leg" value="dot = the colour of this scheme's line in the results figure; dashed circle = not plotted there (the tenant did not survive the first phase)" style="text;html=1;fontSize=12;align=left;" vertex="1" parent="1"><mxGeometry x="0" y="962" width="960" height="40" as="geometry"/></mxCell>
 </root></mxGraphModel>
