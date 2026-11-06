@@ -52,13 +52,24 @@ def scrape():
         stop.wait(args.metrics_interval)
 
 threading.Thread(target=scrape, daemon=True).start()
+
+pcie = {"tx": "", "rx": ""}
+def pcie_loop():
+    while not stop.is_set():
+        try:
+            pcie["tx"] = pynvml.nvmlDeviceGetPcieThroughput(h, pynvml.NVML_PCIE_UTIL_TX_BYTES)   # KB/s, 20 ms window
+            pcie["rx"] = pynvml.nvmlDeviceGetPcieThroughput(h, pynvml.NVML_PCIE_UTIL_RX_BYTES)
+        except Exception:
+            pcie["tx"] = pcie["rx"] = ""
+        stop.wait(0.01)
+threading.Thread(target=pcie_loop, daemon=True).start()
 signal.signal(signal.SIGTERM, lambda *a: stop.set())
 signal.signal(signal.SIGINT, lambda *a: stop.set())
 
 with open(args.out, "w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["t", "nvml_used", "nvml_free", "kvc_limit", "kvc_used", "kvc_prealloc",
-                "running", "waiting", "kv_usage", "preemptions", "pc_queries", "pc_hits", "ext_queries", "ext_hits", "queue_sum", "queue_count", "success"])
+                "running", "waiting", "kv_usage", "preemptions", "pc_queries", "pc_hits", "ext_queries", "ext_hits", "queue_sum", "queue_count", "success", "pcie_tx_kbs", "pcie_rx_kbs"])
     t_end = time.time() + args.duration
     nxt = time.time()
     while not stop.is_set() and time.time() < t_end:
@@ -74,7 +85,7 @@ with open(args.out, "w", newline="") as f:
                 pass
         with metrics_lock:
             m = [metrics[k] for k in WANT]
-        w.writerow([f"{t:.3f}", mem.used, mem.free, lim, used, pre, *m])
+        w.writerow([f"{t:.3f}", mem.used, mem.free, lim, used, pre, *m, pcie["tx"], pcie["rx"]])
         f.flush()
         nxt += args.interval
         d = nxt - time.time()

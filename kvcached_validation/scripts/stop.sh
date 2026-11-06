@@ -6,6 +6,6 @@ for f in "$LOGS"/*.pid; do
   pid=$(cat "$f"); if kill -0 "$pid" 2>/dev/null; then echo "killing $(basename "$f") pid $pid"; kill "$pid"; fi
 done
 sleep 3
-pkill -f "vllm serve" 2>/dev/null; pkill -f "lmcache server" 2>/dev/null; pkill -f "VLLM::EngineCore" 2>/dev/null
+pkill -f "[v]llm serve" 2>/dev/null; pkill -f "[l]mcache server" 2>/dev/null; pkill -f "[V]LLM::EngineCore" 2>/dev/null
 sleep 2; rm -f "$LOGS"/*.pid
 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader

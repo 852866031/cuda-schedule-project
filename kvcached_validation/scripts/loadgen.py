@@ -31,6 +31,7 @@ ap.add_argument("--skew", choices=["zipf", "uniform"], default="zipf")
 ap.add_argument("--zipf-s", type=float, default=1.1)
 ap.add_argument("--warmup", type=int, default=32)
 ap.add_argument("--warmup-concurrency", type=int, default=4)
+ap.add_argument("--rps-schedule", default=None, help="prefix mode: 't0:r0,t1:r1,...' seconds from end of warm-up; overrides --rate; r=0 pauses")
 ap.add_argument("--out", required=True)
 ap.add_argument("--rate", type=float, default=2.0)
 ap.add_argument("--duration", type=float, default=120)
@@ -145,17 +146,31 @@ async def run_prefix():
                 await one_request(session, f"w{i}", sessions[i] + rand_tokens(args.unique_tokens, pick), args.max_tokens)
         await asyncio.gather(*[warm(i) for i in range(min(args.warmup, args.n_sessions))])
         print("warm-up done", flush=True)
+        sched = None
+        if args.rps_schedule:
+            sched = sorted((float(a), float(b)) for a, b in (x.split(":") for x in args.rps_schedule.split(",")))
+            print("rps schedule:", sched, flush=True)
+        def rate_at(rel):
+            if not sched: return args.rate
+            r = sched[0][1]
+            for t, v in sched:
+                if rel >= t: r = v
+            return r
         tasks = []; t0 = time.time(); rid = 0; t_next = t0
+        with open(args.out + ".t0", "w") as f0: f0.write(f"{t0:.6f}\n")
         while True:
             now = time.time()
             if now >= t0 + args.duration: break
+            rate = rate_at(now - t0)
+            if rate <= 0:
+                await asyncio.sleep(0.1); t_next = time.time(); continue
             if now < t_next:
                 await asyncio.sleep(min(t_next - now, 0.05)); continue
             sid = pick.choices(range(args.n_sessions), weights=w)[0]
             prompt = sessions[sid] + rand_tokens(args.unique_tokens, pick)
             tasks.append(asyncio.create_task(one_request(session, f"r{rid}_s{sid}", prompt, args.max_tokens)))
             rid += 1
-            t_next += pick.expovariate(args.rate)
+            t_next += pick.expovariate(rate)
         print(f"sent {rid} requests; waiting for completion", flush=True)
         await asyncio.gather(*tasks)
 
