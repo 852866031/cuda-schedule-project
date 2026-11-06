@@ -17,7 +17,7 @@ kvcached main + peft).
 | `run_eval.sh <scheme>` | one scheme end to end (MPS, engine, router, sampler, tenant, load, teardown, analysis): decode_alone, adjust_notenant, static_split, adjust, adjust_nogate, adjust_mps20 |
 | `run_eval2.sh` / `run_eval3.sh` | the same plus the green-context schemes (green32, green_dyn, engine_green) and the optimisation scheme (green_opt); separate files only because a running bash script must not be edited |
 | `teardown.sh` | stop everything |
-| `analyze_coloc.py`, `compare_arms.py`, `plot_arms.py` | per-arm phase tables + timeline/transfer figures; cross-arm table (+ dense all-arms figure `arms_all.png`); the report's Figures 1–2 (`arms.png`, `arms_tradeoff.png`) |
+| `analyze_coloc.py`, `compare_arms.py`, `plot_arms.py`, `plot_workload.py` | per-arm phase tables + timeline/transfer figures; cross-arm table (+ dense all-arms figure `arms_all.png`); the report's Figures 1–2 (`arms.png`, `arms_tradeoff.png`); the workload-trace figure |
 
 ```bash
 cd coloc_adjust

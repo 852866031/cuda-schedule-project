@@ -72,6 +72,10 @@ seeded) with a piecewise-constant RPS schedule after a 32-request warm-up:
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | RPS | 1 | 2 | 3 | 1 | 4 | 0.5 | 2 | 3 | 2 | 1 | 1 |
 
+![workload](figures/workload.png)
+
+*Figure 0 — the workload trace every scheme is driven with (`../plot_workload.py`, from the baseline run's request log). (a) The offered arrival rate and the Poisson arrivals actually generated, 10-s bins; the same seeded sequence is replayed in every scheme. (b) Session popularity: Zipf(1.1) over 32 sessions, so a few prefixes dominate the host-RAM store's traffic. Every request carries a 6144-token session prefix plus 128 new tokens and produces 128 tokens, i.e. about 0.77 GiB of KV while in flight.*
+
 Four schemes, each one continuous 11-minute run (`run_eval.sh`): **A** decode alone (limit 13 GiB,
 no tenant); **B** static split (engine fixed at 6.69 GiB = the 2-QPS need, tenant at a fixed
 6 GiB budget → cfg 2, gate on) — "partition once"; **C** the prototype (VRAM scheduler + tiered

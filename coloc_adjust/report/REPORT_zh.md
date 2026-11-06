@@ -93,6 +93,10 @@ token 吞吐成正比（每 1k tok/s 约慢 2.3%），说明争的是 **DRAM 带
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 到达率 (req/s) | 1 | 2 | 3 | 1 | 4 | 0.5 | 2 | 3 | 2 | 1 | 1 |
 
+![workload](figures/workload.png)
+
+*图 0：所有方案共用的负载轨迹（`../plot_workload.py`，取自 baseline 那次运行的请求日志）。(a) 时间表给定的到达率和实际生成的 Poisson 到达（10 秒一格），固定种子，每个方案重放的是同一条序列。(b) 32 个 session 的热度，Zipf(1.1)，少数几个前缀占了大部分流量。每个请求带 6144 token 的 session 前缀加 128 个新 token，生成 128 个 token，在飞行中占约 0.77 GiB 的 KV。*
+
 推理看 TPOT、调度排队时间、交付吞吐、失败数（decode-only 的 TTFT 只是取 KV + 128 token
 prefill，不做评价指标）；训练看 token/s 和它所处的档位。每个阶段去掉前 10 秒。
 
