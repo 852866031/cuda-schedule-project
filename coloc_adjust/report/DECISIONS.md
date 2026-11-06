@@ -37,7 +37,7 @@ pauses. Against the lendable table in DESIGN §2: 0.5 QPS → cfg 1, 1–2 QPS �
   ~8 s; at 0.5 QPS the limit shrank to 2–4 GiB after the 5-s hold and the tenant resumed at
   cfg 1 (9.2 GiB). Decode at 2 QPS beside the gated tenant (no MPS): TTFT p50 178 ms, TPOT p50
   14.8 ms (solo 13.3), p95 27 ms, 0 failures.
-- Controller look-ahead shortened from 2 s to 1 s of arrivals (the tenant drops a tier in
+- VRAM scheduler look-ahead shortened from 2 s to 1 s of arrivals (the tenant drops a tier in
   ≤ 1 step, 0.1–1.5 s); at 3 QPS the 2-s horizon alone was 4.7 GiB.
 - MPS: the daemon exits silently when the pipe directory path is long (Unix socket limit);
   `/tmp/coloc_mps/pipe` works.
@@ -108,13 +108,13 @@ Schemes E (adjust, no tenant), C, D, F launched 23:0x with the rebuilt signal.
 ## D6. Schemes with the rebuilt busy signal (22:47–23:48) and mid-step preemption
 
 Results in `results/no_midstep_preempt/` (C, D, F) and `results/adjust_notenant_*` (E).
-- **E, controller without tenant = A exactly** (TPOT 12.9/15.2/21.2/12.5/26.0 … in both, queue
+- **E, VRAM scheduler without tenant = A exactly** (TPOT 12.9/15.2/21.2/12.5/26.0 … in both, queue
   wait within 3 ms, same throughput, 0 preemptions): resizing the limit live with load costs
   decode nothing. The limit followed the schedule: 5.0 / 8.0 / 12.6 / 4.5 / 12.6 / 3.0 GiB.
 - **C (gate) with the true busy signal: the tenant trained 9 steps in 11 minutes** — the engine
   is never idle while a request runs, so the gate never opens. Worse: the tenant sat inside the
   gate's spin loop holding its 5 GiB, never reached the between-steps budget check, so when the
-  controller raised the limit kvcached could not map pages and the engine queued for seconds
+  VRAM scheduler raised the limit kvcached could not map pages and the engine queued for seconds
   (4.4 s at 4 QPS, up to 15 s later) — a gated tenant that cannot be preempted is the worst of
   both worlds. **Fix:** the tenant now polls the budget every 50 ms from the per-block hooks and
   inside the gate wait and aborts the step (`Preempt`) when the budget no longer fits its config;
@@ -142,7 +142,7 @@ tenant at ~0 progress; D/F lose their preemptions at 3–4 QPS and most of the 4
 - **D (no gate)**: TPOT +27 % at 1 QPS (16.4), +22 % at 2 QPS, +0.5 % at 3 QPS; **0 preemptions**
   now (26 mid-step preemptions on the tenant side instead); 4 QPS queue 3.3 s (1.2 alone).
   Tenant 11.0k / 4.9k / 0.15k / 12.7k / 0 / 16.3k tok/s by phase.
-- **F (MPS 20 %) was invalid**: the controller's loop died at its first tick (a helper called
+- **F (MPS 20 %) was invalid**: the VRAM scheduler's loop died at its first tick (a helper called
   before its definition in the SM-share edit), so the tenant saw no budget, held 8.7 GiB (cfg 1)
   throughout and the engine's queue grew to minutes. Kept in `results/mps20_broken_controller/`
   as the "what if nobody adjusts" accident; fixed and re-running.
@@ -174,12 +174,12 @@ fewer SMs hurt it; the decode-only question is left to the `engine_green` scheme
   12.5 / 26.1 ms and queue wait identical to the no-tenant baseline in every phase (the tenant
   was absent, see next point), confirming that a bandwidth-bound decode step does not need the
   whole SM array: 42 SMs can be handed to a tenant *exclusively*.
-- **green_dyn / engine_green tenants died after 12 steps**: the controller's interpolated SM
+- **green_dyn / engine_green tenants died after 12 steps**: the VRAM scheduler's interpolated SM
   share changed by a few SMs almost every tick, the tenant re-created its green context every
   step, and the caching allocator's blocks bound to the old streams were never reused — reserved
   memory grew 6.2 → 8.1 GiB in four steps and the tenant OOM-ed down every tier. Fix: compare the
   *requested* count (the driver rounds), switch at most every 5 s, `empty_cache()` on a switch;
-  controller quantises the share to multiples of 16 SMs.
+  VRAM scheduler quantises the share to multiples of 16 SMs.
 
 ## D9. Green-context round, second pass (01:50–02:40)
 

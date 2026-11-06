@@ -99,7 +99,7 @@ kv_used = (num(samp, "kvc_used") / GiB).rolling(5, min_periods=1).mean()
 ax[1].fill_between(samp.rel, fixed, fixed + kv_used, color="#2a9d8f", label="KV in use (kvcached)")
 if ctl is not None:
     lim = np.interp(samp.rel, ctl.rel, num(ctl, "limit_gib"))
-    ax[1].step(samp.rel, fixed + lim, color="#c1121f", lw=1.2, label="KV limit set by the controller")
+    ax[1].step(samp.rel, fixed + lim, color="#c1121f", lw=1.2, label="KV limit set by the VRAM scheduler")
 if ft is not None:
     res = np.interp(samp.rel, ft.rel, num(ft, "reserved_gib").ffill().fillna(0))
     ax[1].fill_between(samp.rel, args.total_gib - res, args.total_gib, color="#e9c46a", label="fine-tune tenant")

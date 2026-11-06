@@ -10,7 +10,7 @@ measurable cost, with vLLM's native DRAM offload. This document designs the loop
 ## 1. Goal
 
 One GPU (GPU 0, RTX 5090, 31.35 GiB usable) serves a Llama-3-8B decode node and, beside it, a
-Qwen2.5-0.5B LoRA fine-tune. A controller watches the request rate; when it rises the decode
+Qwen2.5-0.5B LoRA fine-tune. A VRAM scheduler watches the request rate; when it rises the decode
 node's KV budget grows and the tenant shrinks (in steps, down to nothing); when it falls the
 budget shrinks and the tenant grows back. Decode must keep its SLO-relevant metrics (TPOT,
 scheduler queueing, throughput, zero failures) at the decode-alone level; the tenant should make
@@ -27,7 +27,7 @@ snapshot interval of work.
 | compute sharing | MPS daemon on, idle-window gate: engine publishes its busy window to `/dev/shm`, the trainer issues each transformer block's kernels only while decode is idle, with a 1-block CUDA-event fence (gate v1.1, the frontier scheme of the colocation-ft study: TTFT at 1×, TPOT +41 %, no knob) | best inference protection measured; MPS lets kernels co-reside instead of time-slicing |
 | reference workload | 32 sessions × 6144-token prefixes + 128 new tokens → 128 out, seeded, now with a **piecewise-constant RPS schedule** | the same request stream family as every earlier study |
 
-Memory arithmetic that drives the controller (measured): engine fixed footprint 17.7 GiB
+Memory arithmetic that drives the VRAM scheduler (measured): engine fixed footprint 17.7 GiB
 (weights 15.0 + runtime 2.7, NVML at idle with kvcached); KV per request = 6272 tokens × 128 KiB
 = 0.766 GiB; mean residence R ≈ 1.9 s at 2 QPS (retrieve 0.77 GiB + 128-token prefill + 128
 decode steps). In-flight count N = λ·R; its Poisson p95 ≈ N + 2√N + 1.
@@ -45,7 +45,7 @@ decode steps). In-flight count N = λ·R; its Poisson p95 ≈ N + 2√N + 1.
 ```
                  /metrics (1 s)            kvctl limit (bytes)
   ┌──────────┐ ───────────────► ┌────────────┐ ───────────────► ┌──────────────────────┐
-  │ loadgen  │  requests        │ controller │                  │ vLLM + kvcached      │
+  │ loadgen  │  requests        │ VRAM scheduler │                  │ vLLM + kvcached      │
   │ RPS      │ ───────────────► │ rate est.  │  /dev/shm/       │ in-flight KV elastic │
   │ schedule │                  │ KV policy  │  coloc_ft_budget │ busy-window page     │
   └──────────┘                  │ FT budget  │ ───────┐         └──────────┬───────────┘
@@ -71,7 +71,7 @@ identified as the residual TPOT cost.
 
 Nothing of the scheduler lives inside vLLM. A thin HTTP router (aiohttp, streaming
 pass-through, ~1 ms) sits in front of the engine; every request passes through it, so the
-controller knows, in its own process, exactly what the engine holds:
+VRAM scheduler knows, in its own process, exactly what the engine holds:
 
 - on arrival: prompt length (token ids are counted directly; text prompts are tokenized with
   the model's tokenizer) and `max_tokens` → the request's final block count
@@ -79,12 +79,12 @@ controller knows, in its own process, exactly what the engine holds:
 - while streaming: tokens generated so far (counted from the SSE chunks' `token_ids`), so the
   blocks it holds now are ⌈(prompt + generated) / 16⌉ and the growth left is known;
 - on first token: the request has been admitted (it moved from *waiting* to *running*);
-  before that it is waiting (or being loaded/prefilled, which for the controller counts as
+  before that it is waiting (or being loaded/prefilled, which for the VRAM scheduler counts as
   admitted-and-growing, and is cross-checked against vLLM's `num_requests_running` gauge);
 - on completion / error: removed.
 
 The router publishes `{running, waiting, blocks_in_use, blocks_running_final,
-blocks_waiting_admit, blocks_waiting_final, ts}` to the controller (shared in-process, it is
+blocks_waiting_admit, blocks_waiting_final, ts}` to the VRAM scheduler (shared in-process, it is
 the same program) — the same fields the KV-slots model needs (a request is admitted when its
 prompt's blocks are free and takes one more block per 16 generated tokens), computed from
 what the client sent rather than from engine internals. vLLM's `/metrics` gauges
@@ -98,10 +98,10 @@ What still runs inside the engine process is **observation only**, loaded via `P
 and, optionally, the connector transfer tracer (§3.6). Neither makes a scheduling decision;
 both can be switched off (scheme D runs without them).
 
-### 3.3 Controller (`controller.py`) — inference first, engine-state driven
+### 3.3 VRAM scheduler (`controller.py`) — inference first, engine-state driven
 
 Tick every **100 ms** (the router's view is updated per streamed chunk; kvcached applies a
-limit within ~100 ms of its segment changing; `kvctl` itself takes 1.3 s, so the controller
+limit within ~100 ms of its segment changing; `kvctl` itself takes 1.3 s, so the VRAM scheduler
 calls kvcached's Python API `set_instance_memory_limit` directly, ~ms).
 
 1. **Demand** `D = blocks_running_final + blocks_waiting_final` × 2 MiB (block bytes for
@@ -124,7 +124,7 @@ calls kvcached's Python API `set_instance_memory_limit` directly, ~ms).
 4. One CSV row per tick: all of the above plus kvcached used/limit, running/waiting, queue
    wait, the tenant's acknowledged tier and footprint.
 
-The two numbers to report about the controller itself: reaction latency (RPS step → limit
+The two numbers to report about the VRAM scheduler itself: reaction latency (RPS step → limit
 raised → tenant released → kvcached used rises) and how often the engine queued *because of*
 the tenant (admissions delayed while `blocks_in_use + waiting_admit > limit` and the tenant
 still held memory).
@@ -196,8 +196,8 @@ Schemes, each one continuous run against the same RPS schedule:
 |---|---|---|---|
 | A `decode_alone` | kvcached limit fixed at 12.65 GiB (all) | none | reference |
 | B `static_split` | fixed at the 2-QPS need (6.7 GiB) | FT at a fixed tier 0 budget (6 GiB), gate on | today's answer: partition once |
-| C `adjust` | controller | FT worker with tiers, gate on | the prototype |
-| D `adjust_nogate` | controller | FT worker, no gate | isolates what the gate buys |
+| C `adjust` | VRAM scheduler | FT worker with tiers, gate on | the prototype |
+| D `adjust_nogate` | VRAM scheduler | FT worker, no gate | isolates what the gate buys |
 
 Per 1-s bin: offered RPS, λ̂, in-flight, kvcached limit/used, NVML, FT tier/footprint/tok/s,
 decode TPOT (per request, binned by completion), TTFT, scheduler queue wait, delivered tok/s,
@@ -228,7 +228,7 @@ in-flight KV used, KV limit line, FT footprint, free) with the RPS schedule abov
 - Decode under scheme C within 10 % of scheme A on TPOT and delivered throughput in every phase, queue
   wait within 100 ms except during the ≤ 10 s after an RPS step, zero failures, zero
   preemptions attributable to the tenant.
-- The tenant's tier follows the schedule within one controller tick (1 s) on the way down and
+- The tenant's tier follows the schedule within one VRAM scheduler tick (1 s) on the way down and
   within the hysteresis window (10 s) on the way up; no OOM in the engine ever; tenant progress
   (tokens/s integrated) above scheme B's whenever RPS ≤ 2 and never below zero progress loss at a
   kill (snapshot check: step counter continuity).
@@ -259,7 +259,7 @@ coloc_adjust/
   xfer_trace.py        shared writer for transfer records; the sitecustomize uses it for the connector
   ft_worker.py         tiered LoRA trainer (micro-batch, activation offload, weight offload, pause, snapshots, gate)
   layer_offload.py     LayerStreamer/OffloadManager (from the finetune study, unchanged)
-  run_eval.sh          one scheme end to end (engine, MPS, controller, worker, load, teardown)
+  run_eval.sh          one scheme end to end (engine, MPS, VRAM scheduler, worker, load, teardown)
   analyze_coloc.py     bins, phase tables, figures
   results/, logs/
 ```
@@ -272,10 +272,10 @@ Environment: `kvcached_validation/.venv-main` (+ `peft`).
   decode much), MPS active-thread caps on the tenant, the CUPTI kernel gate. The busy-window
   signal on vLLM 0.30 had to be rebuilt around a GPU completion event because Model Runner V2
   launches steps asynchronously; the first version measured launch time only (~5 % duty).
-- A second baseline scheme: the controller adjusting the limit by load with **no tenant**
+- A second baseline scheme: the VRAM scheduler adjusting the limit by load with **no tenant**
   (`adjust_notenant`), so the cost of resizing itself is separated from the cost of the tenant.
 - Next compute-sharing candidate (Jiaxuan, 2026-11-05): **dynamic SM partitioning with CUDA
-  green contexts** for *both* workloads — the controller would move SMs between the decode
+  green contexts** for *both* workloads — the VRAM scheduler would move SMs between the decode
   context and the tenant context with the load, the way it now moves VRAM. Feasibility notes:
   green contexts (`cuGreenCtxCreate`, CUDA ≥ 12.4) are driver-API objects; torch has no
   binding, so each process needs a small C extension that creates the green context + a stream

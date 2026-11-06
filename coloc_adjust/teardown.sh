@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop everything the prototype starts: tenant, controller/router, load generator, sampler,
+# Stop everything the prototype starts: tenant, VRAM scheduler + router, load generator, sampler,
 # engine (via the kvcached_validation stop script), MPS daemon + server. Invoke as `bash teardown.sh`
 # and keep these pattern strings out of the invoking command line (pkill -f matches any process
 # whose command line contains them, including the shell that typed them).

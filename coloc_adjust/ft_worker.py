@@ -2,7 +2,7 @@
 """Tiered, preemptable LoRA fine-tune tenant (design §3.4).
 
 Trains LoRA (r=16, q/k/v/o) on Qwen2.5-0.5B with deterministic synthetic batches; before each
-optimizer step it reads the tenant budget published by the controller and picks the highest
+optimizer step it reads the tenant budget published by the VRAM scheduler and picks the highest
 tier whose calibrated peak fits:
 
   tier 0  full batch                               tier 1  micro-batches k=2/4/8 (grad accumulation)
@@ -50,7 +50,7 @@ ap.add_argument("--margin-gib", type=float, default=0.3, help="headroom kept bet
 ap.add_argument("--up-hold", type=float, default=3.0, help="seconds a larger budget must persist before climbing a tier")
 ap.add_argument("--green-sms", type=int, default=0, help="run all tenant kernels on a CUDA green context of this many SMs (0 = full device)")
 ap.add_argument("--green-remaining-of", type=int, default=0, help="run on the SMs left after an N-SM split (disjoint from an engine on the first N)")
-ap.add_argument("--green-dynamic", action="store_true", help="take the SM count from the budget file's 'sms' field (controller-driven); --green-sms is the fallback")
+ap.add_argument("--green-dynamic", action="store_true", help="take the SM count from the budget file's 'sms' field (VRAM-scheduler-driven); --green-sms is the fallback")
 args = ap.parse_args()
 
 # tier configurations, most to least GPU-hungry; (tier, k micro-batches, activation offload, n layers weight-offloaded)

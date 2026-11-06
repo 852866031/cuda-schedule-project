@@ -28,7 +28,7 @@ token 吞吐成正比（每 1k tok/s 约慢 2.3%），说明争的是 **DRAM 带
   prompt 长度、已经生成了多少 token、是否还在排队，于是能用 kv_slots 报告里的模型算出
   "现在跑着的 + 排队的请求一共需要多少 KV"：进入时 ⌈prompt/16⌉ 个 block，之后每 16 个
   token 加一个 block，每个 block 2 MiB（Llama-3-8B）。
-- **Controller**（同一个进程，100 ms 一拍）：算出需求后通过 kvcached 的
+- **VRAM scheduler**（同一个进程，100 ms 一拍）：算出需求后通过 kvcached 的
   `set_instance_memory_limit` 改 vLLM 的 KV 上限，再把剩下的显存
   （31.35 − 17.7 权重和运行时 − 1 余量 − KV 上限）写进 `/dev/shm/coloc_ft_budget`
   发布给训练任务。
@@ -39,11 +39,11 @@ token 吞吐成正比（每 1k tok/s 约慢 2.3%），说明争的是 **DRAM 带
 - **传输追踪**（`xfer_trace.py`）：每一次 host↔GPU 拷贝都记录时间戳、时长、字节数、来源
   （推理的 KV offload 算 inf，训练的激活/权重/快照算 ft）。
 
-## 2. Controller 每一拍做什么（图 B）
+## 2. VRAM scheduler 每一拍做什么（图 B）
 
 ![03_controller_loop](figures/03_controller_loop.png)
 
-*图 B：controller 的一拍。需求超上限立刻涨；低于上限 1 GiB 持续 5 秒才缩，且不低于运行中请求已持有的量。*
+*图 B：VRAM scheduler 的一拍。需求超上限立刻涨；低于上限 1 GiB 持续 5 秒才缩，且不低于运行中请求已持有的量。*
 
 原则是**推理绝对优先**：
 
@@ -111,7 +111,7 @@ prefill，不做评价指标）；训练看 token/s 和它所处的档位。每�
 | A | **空闲窗口 gate**：引擎补丁发布 busy，训练每个 block 前等 GPU 空闲 | 用 CUDA 完成事件重测后发现 MRV2 的 decode 只要有请求在跑就 ~100% busy，训练几乎拿不到窗口，整个 11 分钟只跑了 32 步。**饿死。** |
 | B | **MPS 不限**：两个进程共用所有 SM | 训练进度最多，但 1–2 QPS 时 decode TPOT 慢 20–30%。 |
 | C | **MPS 固定 20% SM**（`CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=20`） | 代价减半（+12–13%），训练保留约 60% 的进度。**目前最实用的折中。** |
-| D | **动态 green context**：controller 按到达率发 SM 数（128/64/32/16），训练进程内切换 | 能跑，但 PyTorch 分配器的内存池绑在 stream 上，切换会漏内存（5 GiB 的配置占到 7.7 GiB reserved）→ OOM → 暂停。**进程内动态切换不可靠。** |
+| D | **动态 green context**：VRAM scheduler 按到达率发 SM 数（128/64/32/16），训练进程内切换 | 能跑，但 PyTorch 分配器的内存池绑在 stream 上，切换会漏内存（5 GiB 的配置占到 7.7 GiB reserved）→ OOM → 暂停。**进程内动态切换不可靠。** |
 | E | **引擎放到 128/170 SM 的 green context 上** | decode 性能和 baseline **一样**（TPOT 12.9–13.2 ms vs 12.9）。decode 根本不是 SM 瓶颈，让出 1/4 的 SM 是免费的。 |
 | F | **静态不相交分区**：引擎 SM 0–127，训练另外 42 个 SM | 训练 10.5k tok/s，但 decode 仍然 +26% TPOT，和 B 一样。**分区本身不解决干扰。** |
 
@@ -147,7 +147,7 @@ prefill，不做评价指标）；训练看 token/s 和它所处的档位。每�
 ![timeline](figures/adjust_nogate_timeline.png)
 
 以 MPS 不限（方案 B）为例，六行从上到下：到达率；GPU 显存分配（青色 = 推理 KV 实际占用，
-红线 = controller 设的 KV 上限，黄色 = 训练任务占用，只画 17.7 GiB 权重以上的部分）；
+红线 = VRAM scheduler 设的 KV 上限，黄色 = 训练任务占用，只画 17.7 GiB 权重以上的部分）；
 decode TPOT（蓝 = 本方案，灰 = baseline 同一时间线）；调度排队；训练吞吐；训练所处的档位。
 
 可以直接看到：到达率涨 → 红线立刻上抬、黄色被压缩、档位往下掉；4 QPS 阶段训练整个暂停
@@ -164,7 +164,7 @@ decode 代价不是 PCIe 争用，是 GPU 内部的 DRAM 带宽。
 ## 8. 结论和下一步
 
 **解决了的**
-- 不改 vLLM，用 router + controller + kvcached 就能让推理的 KV 预算跟着负载在线涨缩，
+- 不改 vLLM，用 router + VRAM scheduler + kvcached 就能让推理的 KV 预算跟着负载在线涨缩，
   推理零失败、零代价。
 - 训练任务按三层设计降档、卸载、暂停、恢复，中途抢占（50 ms 内）和 DRAM 快照都工作。
 - 全部 host↔GPU 数据移动可追踪，带来源标签。
@@ -183,7 +183,7 @@ decode 代价不是 PCIe 争用，是 GPU 内部的 DRAM 带宽。
 
 ---
 
-文件索引：`controller.py`（router + controller）、`ft_worker.py`（训练任务）、
+文件索引：`controller.py`（router + VRAM scheduler）、`ft_worker.py`（训练任务）、
 `green_ctx.py`（green context 封装）、`hp_patch/sitecustomize.py`（引擎观察补丁）、
 `run_eval*.sh`（各方案的启动脚本）、`analyze_coloc.py` / `plot_arms.py`（分析和画图）、
 `../results/`（每个方案的阶段表、时间线图、传输图）。

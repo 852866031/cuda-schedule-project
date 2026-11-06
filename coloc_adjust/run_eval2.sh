@@ -2,10 +2,10 @@
 # One evaluation scheme end to end (design §3.7).
 #   run_eval2.sh <scheme> [schedule]     schemes of run_eval.sh plus:
 #     green32        tenant on a fixed 32-SM green context (no gate, MPS on)
-#     green_dyn      tenant SM share set by the controller from the arrival rate (SM_TABLE), no gate
+#     green_dyn      tenant SM share set by the VRAM scheduler from the arrival rate (SM_TABLE), no gate
 #     engine_green   engine confined to ENGINE_SMS (default 128) SMs + tenant on the rest-ish (green_dyn table)
 # Starts: MPS daemon, decode-only engine (kvcached main, 28 GiB DRAM tier, prefix caching off,
-# busy-window patch + transfer tracer), router/controller on :8001, sampler, FT worker (per scheme),
+# busy-window patch + transfer tracer), router + VRAM scheduler on :8001, sampler, FT worker (per scheme),
 # then the reference prefix workload with the RPS schedule through the router; tears everything
 # down and runs analyze_coloc.py. Logs in coloc_adjust/logs, results in coloc_adjust/results.
 set -uo pipefail
@@ -32,11 +32,11 @@ export PYTHONPATH=$C/hp_patch COLOC_HP_SIGNAL=1 COLOC_XFER_TRACE=1
 if ! "$KV/scripts/wait_ready.sh" "coloc_$ARM" 600 > "$L/${ARM}_engine_start.txt" 2>&1; then echo "engine failed"; cat "$L/${ARM}_engine_start.txt" | tail -5; exit 3; fi
 unset PYTHONPATH COLOC_HP_SIGNAL COLOC_XFER_TRACE COLOC_ENGINE_SMS
 
-# --- router / controller
+# --- router / VRAM scheduler
 CTL_OPTS=(--listen 8001 --upstream http://localhost:$VLLM_PORT --ipc "$KV_IPC" --log "${S}_controller.csv")
 case $ARM in
   decode_alone) CTL_OPTS+=(--no-adjust);;
-  adjust_notenant) ;;   # controller adjusts the KV limit by load, nobody uses the freed VRAM: the baseline for the prototype
+  adjust_notenant) ;;   # VRAM scheduler adjusts the KV limit by load, nobody uses the freed VRAM: the baseline for the prototype
   static_split) CTL_OPTS+=(--no-adjust --fixed-budget-gib "${STATIC_FT_GIB:-6}"); kvctl limit "$KV_IPC" "${STATIC_KV_GIB:-6.7}G" > /dev/null;;
   adjust|adjust_nogate|adjust_mps20|green32) ;;
   green_dyn|engine_green) CTL_OPTS+=(--sm-table "${SM_TABLE:-0:128,0.5:96,1:64,2:32,3:16,4:16}");;

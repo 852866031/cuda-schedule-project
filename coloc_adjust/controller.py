@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-"""Router + controller for the colocation VRAM-adjust prototype (design §3.2–3.3).
+"""Router + VRAM scheduler for the colocation VRAM-adjust prototype (design §3.2–3.3).
 
 The router is a streaming HTTP pass-through in front of vLLM. It keeps a table of every
 in-flight request (prompt tokens, max_tokens, tokens generated so far, admitted or waiting)
 and derives the engine's KV block demand from it — nothing is read from vLLM internals. The
-controller task ticks every --tick seconds, turns the demand into a KV limit for kvcached
+VRAM scheduler task ticks every --tick seconds, turns the demand into a KV limit for kvcached
 (inference first: grows immediately, shrinks with hysteresis) and publishes what is left of
 the GPU as the tenant's budget (/dev/shm/coloc_ft_budget).
 
@@ -133,7 +133,7 @@ async def proxy_any(request: web.Request):
         data = await up.read()
         return web.Response(status=up.status, body=data, content_type=up.content_type)
 
-# ---------------------------------------------------------------- controller
+# ---------------------------------------------------------------- VRAM scheduler
 def read_json(path):
     try:
         with open(path) as f: return json.load(f)

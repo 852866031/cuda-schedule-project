@@ -2,7 +2,7 @@
 # One evaluation scheme end to end (design §3.7).
 #   run_eval.sh <scheme> [schedule]      scheme = decode_alone | adjust_notenant | static_split | adjust | adjust_nogate | adjust_mps20
 # Starts: MPS daemon, decode-only engine (kvcached main, 28 GiB DRAM tier, prefix caching off,
-# busy-window patch + transfer tracer), router/controller on :8001, sampler, FT worker (per scheme),
+# busy-window patch + transfer tracer), router + VRAM scheduler on :8001, sampler, FT worker (per scheme),
 # then the reference prefix workload with the RPS schedule through the router; tears everything
 # down and runs analyze_coloc.py. Logs in coloc_adjust/logs, results in coloc_adjust/results.
 set -uo pipefail
@@ -28,11 +28,11 @@ export PYTHONPATH=$C/hp_patch COLOC_HP_SIGNAL=1 COLOC_XFER_TRACE=1
 if ! "$KV/scripts/wait_ready.sh" "coloc_$ARM" 600 > "$L/${ARM}_engine_start.txt" 2>&1; then echo "engine failed"; cat "$L/${ARM}_engine_start.txt" | tail -5; exit 3; fi
 unset PYTHONPATH COLOC_HP_SIGNAL COLOC_XFER_TRACE
 
-# --- router / controller
+# --- router / VRAM scheduler
 CTL_OPTS=(--listen 8001 --upstream http://localhost:$VLLM_PORT --ipc "$KV_IPC" --log "${S}_controller.csv")
 case $ARM in
   decode_alone) CTL_OPTS+=(--no-adjust);;
-  adjust_notenant) ;;   # controller adjusts the KV limit by load, nobody uses the freed VRAM: the baseline for the prototype
+  adjust_notenant) ;;   # VRAM scheduler adjusts the KV limit by load, nobody uses the freed VRAM: the baseline for the prototype
   static_split) CTL_OPTS+=(--no-adjust --fixed-budget-gib "${STATIC_FT_GIB:-6}"); kvctl limit "$KV_IPC" "${STATIC_KV_GIB:-6.7}G" > /dev/null;;
   adjust|adjust_nogate|adjust_mps20) ;;
 esac

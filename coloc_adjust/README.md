@@ -13,7 +13,7 @@ kvcached main + peft).
 | `xfer_trace.py` | shared CSV writer for host↔GPU transfer records |
 | `tiers.json` | calibrated per-config peak need (`ft_worker.py --calibrate`) |
 | `green_ctx.py` | CUDA green contexts from Python (ctypes on libcuda): carve N SMs, get a stream; `python green_ctx.py 16 32 64` benchmarks |
-| `diagrams/*.drawio`, `diagrams/export_png.py` | system architecture, tenant tiers, controller loop, compute-sharing mechanisms; the exporter renders them to `report/figures/` with headless Chrome |
+| `diagrams/*.drawio`, `diagrams/export_png.py` | system architecture, tenant tiers, VRAM scheduler loop, compute-sharing mechanisms; the exporter renders them to `report/figures/` with headless Chrome |
 | `run_eval.sh <scheme>` | one scheme end to end (MPS, engine, router, sampler, tenant, load, teardown, analysis): decode_alone, adjust_notenant, static_split, adjust, adjust_nogate, adjust_mps20 |
 | `run_eval2.sh` / `run_eval3.sh` | the same plus the green-context schemes (green32, green_dyn, engine_green) and the optimisation scheme (green_opt); separate files only because a running bash script must not be edited |
 | `teardown.sh` | stop everything |

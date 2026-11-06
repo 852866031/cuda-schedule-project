@@ -35,11 +35,11 @@ Compute sharing: MPS daemon (user-space), engine and tenant as MPS clients.
 
 ![system](figures/01_system_architecture.png)
 
-*Diagram 1 — the components and what triggers what: the router feeds demand to the controller, the controller sets kvcached's limit (red, inference first) and publishes the remainder to the tenant; the observation patch only reports.*
+*Diagram 1 — the components and what triggers what: the router feeds demand to the VRAM scheduler, the VRAM scheduler sets kvcached's limit (red, inference first) and publishes the remainder to the tenant; the observation patch only reports.*
 
-![controller](figures/03_controller_loop.png)
+![VRAM scheduler](figures/03_controller_loop.png)
 
-*Diagram 2 — one controller tick: grow at once when demand exceeds the limit, shrink only after 5 s of slack and never below what running requests hold.*
+*Diagram 2 — one VRAM scheduler tick: grow at once when demand exceeds the limit, shrink only after 5 s of slack and never below what running requests hold.*
 
 ![tiers](figures/02_tenant_tiers.png)
 
@@ -74,7 +74,7 @@ seeded) with a piecewise-constant RPS schedule after a 32-request warm-up:
 
 Four schemes, each one continuous 11-minute run (`run_eval.sh`): **A** decode alone (limit 13 GiB,
 no tenant); **B** static split (engine fixed at 6.69 GiB = the 2-QPS need, tenant at a fixed
-6 GiB budget → cfg 2, gate on) — "partition once"; **C** the prototype (controller + tiered
+6 GiB budget → cfg 2, gate on) — "partition once"; **C** the prototype (VRAM scheduler + tiered
 tenant + gate); **D** the prototype without the gate. Per-phase numbers skip the first 10 s of
 each phase. Decode is judged on TPOT, scheduler queue wait, delivered throughput and failures
 (decode-only TTFT is fetch + 128-token prefill, ~160 ms); the tenant on tokens/s and its
@@ -85,16 +85,16 @@ configuration.
 | scheme | engine KV limit | tenant | compute sharing |
 |---|---|---|---|
 | A `decode_alone` | fixed 13 GiB | none | – |
-| E `adjust_notenant` | controller | none | – (baseline for the prototype: resizing without anyone using the freed VRAM) |
+| E `adjust_notenant` | VRAM scheduler | none | – (baseline for the prototype: resizing without anyone using the freed VRAM) |
 | B `static_split` | fixed 6.69 GiB | fixed 6 GiB budget (cfg 2) | gate (irrelevant, see below) |
-| C `adjust` | controller | tiered | idle-window gate + MPS |
-| D `adjust_nogate` | controller | tiered | MPS co-run, no cap |
-| F `adjust_mps20` | controller | tiered | MPS, tenant capped at 20 % of SM threads |
-| G `green32` | controller | tiered | tenant on a 32-SM green context, no gate |
-| H `green_dyn` | controller | tiered | tenant SM count from the arrival rate (128/96/64/32/16 at 0/0.5/1/2/≥3 QPS) |
-| I `engine_green` | controller | tiered | engine steps on a 128-SM green context, tenant as in H |
-| J `green_opt` | controller, smoothed shrink (10-s max) | tiered | tenant SM table 96/64/32/16/8 |
-| K `green_split` | controller | tiered | engine steps on SMs 0–127, tenant on the remaining 42 SMs (static, disjoint) |
+| C `adjust` | VRAM scheduler | tiered | idle-window gate + MPS |
+| D `adjust_nogate` | VRAM scheduler | tiered | MPS co-run, no cap |
+| F `adjust_mps20` | VRAM scheduler | tiered | MPS, tenant capped at 20 % of SM threads |
+| G `green32` | VRAM scheduler | tiered | tenant on a 32-SM green context, no gate |
+| H `green_dyn` | VRAM scheduler | tiered | tenant SM count from the arrival rate (128/96/64/32/16 at 0/0.5/1/2/≥3 QPS) |
+| I `engine_green` | VRAM scheduler | tiered | engine steps on a 128-SM green context, tenant as in H |
+| J `green_opt` | VRAM scheduler, smoothed shrink (10-s max) | tiered | tenant SM table 96/64/32/16/8 |
+| K `green_split` | VRAM scheduler | tiered | engine steps on SMs 0–127, tenant on the remaining 42 SMs (static, disjoint) |
 
 ![compute sharing](figures/04_compute_sharing.png)
 
@@ -215,7 +215,7 @@ Figure-centred summary (diagrams 1–4 above, sources in `../diagrams/*.drawio`;
 Figures 1–2 above, `../results/<scheme>_timeline.png`, `../results/<scheme>_xfer.png`):
 
 1. **The memory half of the problem is solved** (diagrams 1–3). A router in front of vLLM
-   knows the exact KV demand of what is running and queued; the controller raises kvcached's
+   knows the exact KV demand of what is running and queued; the VRAM scheduler raises kvcached's
    limit the moment demand exceeds it and lowers it with hysteresis; the tenant climbs and drops a
    ladder of configurations (micro-batching → activation offload → weight streaming → pause) with
    a 50-ms preemption poll inside its steps and DRAM snapshots. Over an 11-minute schedule from
@@ -238,7 +238,7 @@ Figures 1–2 above, `../results/<scheme>_timeline.png`, `../results/<scheme>_xf
 4. **Host↔GPU traffic is not the bottleneck**: inference loads run at 13.5 GiB/s, average link
    use is 1.4 GiB/s, and loads that overlap tenant copies are not measurably slower.
 
-What to do next: (a) a feedback controller for the tenant's rate — measure decode TPOT against
+What to do next: (a) a feedback VRAM scheduler for the tenant's rate — measure decode TPOT against
 its no-tenant value for the current RPS and move the SM cap to hold a target inflation; (b) a
 tenant whose steps are bandwidth-light (smaller models, or LoRA on a model whose weights are
 already resident, i.e. DeltaServe-style co-serving) — the arithmetic says the interference is
