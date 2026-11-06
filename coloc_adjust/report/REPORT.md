@@ -1,7 +1,7 @@
 # Colocation VRAM-adjust prototype — report
 
 Date: 2026-11-05/06. Branch `kvcached-validation`, directory `coloc_adjust/`. Design in
-[DESIGN.md](DESIGN.md), run-by-run predictions and outcomes in [DECISIONS.md](DECISIONS.md).
+[DESIGN.md](../DESIGN.md), run-by-run predictions and outcomes in [DECISIONS.md](DECISIONS.md).
 
 ## 1. What was built
 
@@ -32,6 +32,18 @@ Qwen2.5-0.5B LoRA fine-tune. Three pieces, none of them inside vLLM's scheduler:
   NVML's PCIe TX/RX counters every 100 ms.
 
 Compute sharing: MPS daemon (user-space), engine and tenant as MPS clients.
+
+![system](figures/01_system_architecture.png)
+
+*Diagram 1 — the components and what triggers what: the router feeds demand to the controller, the controller sets kvcached's limit (red, inference first) and publishes the remainder to the tenant; the observation patch only reports.*
+
+![controller](figures/03_controller_loop.png)
+
+*Diagram 2 — one controller tick: grow at once when demand exceeds the limit, shrink only after 5 s of slack and never below what running requests hold.*
+
+![tiers](figures/02_tenant_tiers.png)
+
+*Diagram 3 — the tenant's ladder and the triggers that move it: budget polls inside the step, OOM as a signal, 3-s hold before climbing, DRAM snapshots around every move.*
 
 ### Tenant configurations (calibrated solo on GPU 1, `tiers.json`)
 
@@ -84,9 +96,11 @@ configuration.
 | J `green_opt` | controller, smoothed shrink (10-s max) | tiered | tenant SM table 96/64/32/16/8 |
 | K `green_split` | controller | tiered | engine steps on SMs 0–127, tenant on the remaining 42 SMs (static, disjoint) |
 
-Diagram `diagrams/04_compute_sharing.drawio` shows mechanisms A–E side by side.
+![compute sharing](figures/04_compute_sharing.png)
 
-![arms](results/arms.png)
+*Diagram 4 — the compute-sharing mechanisms tried (source `../diagrams/04_compute_sharing.drawio`); the memory loop is the same in all of them.*
+
+![arms](figures/arms.png)
 
 *Figure 1 — decode latency (a), scheduler queue wait (b) and fine-tune throughput (c) against the
 arrival rate, pooling the phases that share a rate (marker = mean, bar = min..max across the
@@ -97,7 +111,7 @@ first phase (table in 2.3). Reading: adaptive arms sit on the baseline in (a) an
 where the tenant is paused, and pay a tenant-speed-dependent premium at 0.5–2 QPS; the static split
 pays 20–80 % everywhere and queues seconds once the load passes 2 QPS.*
 
-![tradeoff](results/arms_tradeoff.png)
+![tradeoff](figures/arms_tradeoff.png)
 
 *Figure 2 — the same runs, one point per arm and phase: decode slowdown over the baseline against
 the tenant's throughput in that phase. The adaptive arms fall on one line regardless of mechanism
@@ -140,7 +154,7 @@ Green-context arms (`green_ctx.py`, ctypes on libcuda; details in DECISIONS D8�
 | K `green_split` (engine 128 SMs, tenant the other 42, static) | 16.3 / 18.3 ms, 123 / 145 ms | 10.5k / 13.5k | tenant progress of D, decode cost of D: **disjoint SMs do not remove the interference** |
 
 
-### 2.4 Reading the tables (see `results/*_timeline.png` for the per-second view, e.g. `adjust_nogate_timeline.png`)
+### 2.4 Reading the tables (see `../results/*_timeline.png` for the per-second view, e.g. `adjust_nogate_timeline.png`)
 
 - **Resizing costs decode nothing.** E equals A in every phase to within noise (TPOT within 0.1 ms,
   queue wait within 3 ms): changing kvcached's limit 3 ↔ 12.6 GiB with the load is invisible
@@ -176,8 +190,8 @@ Green-context arms (`green_ctx.py`, ctypes on libcuda; details in DECISIONS D8�
 
 ## 3. Host↔GPU transfers
 
-Every host↔GPU copy was recorded with its source (figure `results/<arm>_xfer.png`; records in
-`results/<arm>_xfer_{inf,ft}.csv`; NVML PCIe counters in the sampler CSV).
+Every host↔GPU copy was recorded with its source (figure `../results/<arm>_xfer.png`; records in
+`../results/<arm>_xfer_{inf,ft}.csv`; NVML PCIe counters in the sampler CSV).
 
 | | per copy | per 11-minute run |
 |---|---|---|
@@ -197,10 +211,10 @@ structure (bursts of 15 GiB/s at every admission); their 20-ms sampling overstat
 
 ## 4. What this shows
 
-Figure-centred summary (the diagrams are in `diagrams/*.drawio`; the measured curves in
-Figures 1–2 above, `results/<arm>_timeline.png`, `results/<arm>_xfer.png`):
+Figure-centred summary (diagrams 1–4 above, sources in `../diagrams/*.drawio`; the measured curves in
+Figures 1–2 above, `../results/<arm>_timeline.png`, `../results/<arm>_xfer.png`):
 
-1. **The memory half of the problem is solved** (diagrams 01, 02, 03). A router in front of vLLM
+1. **The memory half of the problem is solved** (diagrams 1–3). A router in front of vLLM
    knows the exact KV demand of what is running and queued; the controller raises kvcached's
    limit the moment demand exceeds it and lowers it with hysteresis; the tenant climbs and drops a
    ladder of configurations (micro-batching → activation offload → weight streaming → pause) with
@@ -208,7 +222,7 @@ Figures 1–2 above, `results/<arm>_timeline.png`, `results/<arm>_xfer.png`):
    0.5 to 4 QPS the engine never failed, never preempted and queued only at the 4-QPS spike
    (2–4 s against 1.2 s alone); resizing itself costs nothing (E = A). Static partitioning (B)
    lost on both sides: 8–26 s of queueing at and after 3–4 QPS, and idle VRAM at low load.
-2. **The compute half has a price that no placement trick removes** (diagram 04). The engine is
+2. **The compute half has a price that no placement trick removes** (diagram 4). The engine is
    busy ~100 % of the time while any request runs, so the idle-window gate (C) only starves the
    tenant. Co-running costs decode TPOT in proportion to the tenant's token rate (+2.5 % per
    1k tok/s at 1 QPS, +20 % per 10k at 2 QPS, nothing at ≥ 3 QPS where the tenant is paused

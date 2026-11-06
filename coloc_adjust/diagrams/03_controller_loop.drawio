@@ -17,5 +17,5 @@
 <mxCell id="a6" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="q2" target="g3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
 <mxCell id="a7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="g1" target="p" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
 <mxCell id="a8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="g2" target="p" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-<mxCell id="a9" value="set_instance_memory_limit" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=2;" edge="1" source="g1" target="eng" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="a9" value="set_instance_memory_limit" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=2;exitX=0.5;exitY=0;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="g1" target="eng" parent="1"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="410" y="215"/></Array></mxGeometry></mxCell>
 </root></mxGraphModel>

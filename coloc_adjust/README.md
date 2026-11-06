@@ -1,7 +1,7 @@
 # Colocation VRAM-adjust prototype
 
-Design: [DESIGN.md](DESIGN.md). Run log with predictions and outcomes: [DECISIONS.md](DECISIONS.md).
-Report: [REPORT.md (English; Chinese plain-language version: REPORT_zh.md)](REPORT.md). Environment: `../kvcached_validation/.venv-main` (vLLM 0.30 +
+Design: [DESIGN.md](DESIGN.md). Run log with predictions and outcomes: [report/DECISIONS.md](report/DECISIONS.md).
+Report: [report/REPORT.md](report/REPORT.md) (English) and [report/REPORT_zh.md](report/REPORT_zh.md) (Chinese, plain language); figures and the rendered diagrams in `report/figures/`. Environment: `../kvcached_validation/.venv-main` (vLLM 0.30 +
 kvcached main + peft).
 
 | file | role |
@@ -13,7 +13,7 @@ kvcached main + peft).
 | `xfer_trace.py` | shared CSV writer for host↔GPU transfer records |
 | `tiers.json` | calibrated per-config peak need (`ft_worker.py --calibrate`) |
 | `green_ctx.py` | CUDA green contexts from Python (ctypes on libcuda): carve N SMs, get a stream; `python green_ctx.py 16 32 64` benchmarks |
-| `diagrams/*.drawio` | system architecture, tenant tiers, controller loop, compute-sharing mechanisms (open in draw.io) |
+| `diagrams/*.drawio`, `diagrams/export_png.py` | system architecture, tenant tiers, controller loop, compute-sharing mechanisms; the exporter renders them to `report/figures/` with headless Chrome |
 | `run_eval.sh <arm>` | one arm end to end (MPS, engine, router, sampler, tenant, load, teardown, analysis): decode_alone, adjust_notenant, static_split, adjust, adjust_nogate, adjust_mps20 |
 | `run_eval2.sh` / `run_eval3.sh` | the same plus the green-context arms (green32, green_dyn, engine_green) and the optimisation arm (green_opt); separate files only because a running bash script must not be edited |
 | `teardown.sh` | stop everything |

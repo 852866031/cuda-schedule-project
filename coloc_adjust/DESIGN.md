@@ -252,7 +252,7 @@ in-flight KV used, KV limit line, FT footprint, free) with the RPS schedule abov
 ```
 coloc_adjust/
   DESIGN.md            this document
-  DECISIONS.md         prediction/outcome per run
+  report/DECISIONS.md  prediction/outcome per run
   hp_patch/sitecustomize.py   observation only: busy-window page (+ optional connector transfer tracer); no scheduling
   router.py            streaming HTTP pass-through; request table (prompt, generated, max_tokens) → block demand
   controller.py        router demand → KV limit (kvcached API) → tenant budget, 100 ms ticks; same process as the router

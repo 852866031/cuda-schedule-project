@@ -1,7 +1,7 @@
 # Colocation VRAM-adjust 原型：做了什么、发生了什么、结论是什么
 
 > 中文白话版。数据、表格和每个实验的预测/结果记录见英文 [REPORT.md](REPORT.md) 和 [DECISIONS.md](DECISIONS.md)。
-> 系统图在 `diagrams/`（draw.io 格式，用 draw.io 或 VS Code 的 Draw.io 插件打开）。
+> 系统图嵌在下面（PNG 在 `figures/`，draw.io 源文件在 `../diagrams/`，`../diagrams/export_png.py` 重新导出）。
 > 所有实验在 2× RTX 5090 的 GPU 1 上跑，推理模型 Llama-3-8B（vLLM 0.30 + kvcached），
 > 训练模型 Qwen2.5-0.5B LoRA。
 
@@ -16,7 +16,11 @@ token 吞吐成正比（每 1k tok/s 约慢 2.3%），说明争的是 **DRAM 带
 
 ---
 
-## 1. 系统长什么样（图 `diagrams/01_system_architecture.drawio`）
+## 1. 系统长什么样（图 A）
+
+![01_system_architecture](figures/01_system_architecture.png)
+
+*图 A：组件和触发关系。红色是推理优先的动作（KV 上限立刻涨），虚线是只观察不干预，金色是训练任务的分配器上限跟着发布的预算走。*
 
 设计上有一个硬约束：**不改 vLLM 的调度代码**。所以调度逻辑全部放在引擎外面：
 
@@ -35,7 +39,11 @@ token 吞吐成正比（每 1k tok/s 约慢 2.3%），说明争的是 **DRAM 带
 - **传输追踪**（`xfer_trace.py`）：每一次 host↔GPU 拷贝都记录时间戳、时长、字节数、来源
   （推理的 KV offload 算 inf，训练的激活/权重/快照算 ft）。
 
-## 2. Controller 每一拍做什么（图 `diagrams/03_controller_loop.drawio`）
+## 2. Controller 每一拍做什么（图 B）
+
+![03_controller_loop](figures/03_controller_loop.png)
+
+*图 B：controller 的一拍。需求超上限立刻涨；低于上限 1 GiB 持续 5 秒才缩，且不低于运行中请求已持有的量。*
 
 原则是**推理绝对优先**：
 
@@ -49,7 +57,11 @@ token 吞吐成正比（每 1k tok/s 约慢 2.3%），说明争的是 **DRAM 带
 最坏情况是 vLLM 短暂排队等页。在线改上限本身对推理没有代价：
 "引擎单独跑、上限跟着负载变"和"引擎单独跑、上限固定 13 GiB"的 TPOT 每个阶段相差 < 0.1 ms。
 
-## 3. 训练任务的降级阶梯（图 `diagrams/02_tenant_tiers.drawio`）
+## 3. 训练任务的降级阶梯（图 C）
+
+![02_tenant_tiers](figures/02_tenant_tiers.png)
+
+*图 C：训练任务的阶梯和每一步的触发条件：step 中途轮询预算、OOM 当信号、爬升前等 3 秒、每次换档前后快照到 DRAM。*
 
 按你定的三层抢占设计实现，校准后的显存需求（`tiers.json`，GPU 1 单独测）：
 
@@ -86,7 +98,11 @@ prefill，不做评价指标）；训练看 token/s 和它所处的档位。每�
 
 **Baseline** 按你的定义：引擎单独跑、KV 上限随到达率调整、没有训练任务。
 
-## 5. 算力共享试了六种（图 `diagrams/04_compute_sharing.drawio`）
+## 5. 算力共享试了六种（图 D）
+
+![04_compute_sharing](figures/04_compute_sharing.png)
+
+*图 D：六种算力共享机制，每一行是机制、训练任务怎么跑、结果。显存环路在所有行里相同。*
 
 显存环路在所有 arm 里完全一样，只换算力共享机制：
 
@@ -101,9 +117,9 @@ prefill，不做评价指标）；训练看 token/s 和它所处的档位。每�
 
 ## 6. 看图
 
-### 图 1 `results/arms.png`：各 arm 的指标对到达率
+### 图 1：各 arm 的指标对到达率
 
-![arms](results/arms.png)
+![arms](figures/arms.png)
 
 三个面板：(a) decode TPOT，(b) 调度排队，(c) 训练吞吐。相同到达率的阶段合并
 （点 = 均值，误差线 = 重复阶段的最小到最大）。
@@ -118,17 +134,17 @@ prefill，不做评价指标）；训练看 token/s 和它所处的档位。每�
   推理在每个到达率都慢 20–80%，超过 2 QPS 后排队到秒级，而且一旦积压就恢复不了
   （1 QPS 的误差线拉到 8 秒就是这个原因）。
 
-### 图 2 `results/arms_tradeoff.png`：推理变慢多少 vs 训练跑多快
+### 图 2：推理变慢多少 vs 训练跑多快
 
-![tradeoff](results/arms_tradeoff.png)
+![tradeoff](figures/arms_tradeoff.png)
 
 每个 arm 每个阶段一个点。所有 adaptive arm 不管用什么共享机制都落在同一条过原点的直线上：
 **每 1k 训练 tok/s，decode TPOT 慢约 2.3%**。static split 的点（空心）偏离这条线，因为它的
 代价来自 KV 不够而不是训练速度。这张图是"瓶颈是 DRAM 带宽"这个结论的直接证据。
 
-### 图 3 `results/<arm>_timeline.png`：每个 arm 的逐秒时间线
+### 图 3（每个 arm 一张，`../results/<arm>_timeline.png`）：每个 arm 的逐秒时间线
 
-![timeline](results/adjust_nogate_timeline.png)
+![timeline](figures/adjust_nogate_timeline.png)
 
 以 MPS 不限（arm B）为例，六行从上到下：到达率；GPU 显存分配（青色 = 推理 KV 实际占用，
 红线 = controller 设的 KV 上限，黄色 = 训练任务占用，只画 17.7 GiB 权重以上的部分）；
@@ -140,7 +156,7 @@ decode TPOT（蓝 = 本 arm，灰 = baseline 同一时间线）；调度排队�
 
 ## 7. 传输路径不是瓶颈
 
-每一次 host↔GPU 拷贝都记了下来（`results/<arm>_xfer.png`，原始记录在 `xfer_*.csv`）。
+每一次 host↔GPU 拷贝都记了下来（`../results/<arm>_xfer.png`，原始记录在 `xfer_*.csv`）。
 推理的 KV load 走 13.5 GiB/s 左右，训练的激活 offload 和权重流式有并发时 load 时长中位数
 没有可测的变化。训练的快照（约 1 GiB）每 10 步一次，在 PCIe 上是短脉冲。所以上面的
 decode 代价不是 PCIe 争用，是 GPU 内部的 DRAM 带宽。
@@ -170,4 +186,4 @@ decode 代价不是 PCIe 争用，是 GPU 内部的 DRAM 带宽。
 文件索引：`controller.py`（router + controller）、`ft_worker.py`（训练任务）、
 `green_ctx.py`（green context 封装）、`hp_patch/sitecustomize.py`（引擎观察补丁）、
 `run_eval*.sh`（各 arm 的启动脚本）、`analyze_coloc.py` / `plot_arms.py`（分析和画图）、
-`results/`（每个 arm 的阶段表、时间线图、传输图）。
+`../results/`（每个 arm 的阶段表、时间线图、传输图）。
