@@ -10,8 +10,8 @@ the GPU as the tenant's budget (/dev/shm/coloc_ft_budget).
 
     .venv-main/bin/python coloc_adjust/controller.py --listen 8001 --upstream http://localhost:8000 \
         --ipc vllm_a --log results/c_controller.csv            # adjusting
-    ... --no-adjust                                             # router + logging only (arms A/B)
-    ... --no-adjust --fixed-budget-gib 6                        # arm B: constant tenant budget
+    ... --no-adjust                                             # router + logging only (decode-alone and static-split schemes)
+    ... --no-adjust --fixed-budget-gib 6                        # static split: constant tenant budget
 """
 import argparse, asyncio, csv, json, math, os, sys, time, urllib.request
 from collections import deque
@@ -37,7 +37,7 @@ ap.add_argument("--shrink-window", type=float, default=0.0, help="if > 0: shrink
 ap.add_argument("--shrink-margin-gib", type=float, default=1.0)
 ap.add_argument("--tick", type=float, default=0.1)
 ap.add_argument("--no-adjust", action="store_true")
-ap.add_argument("--fixed-budget-gib", type=float, default=None, help="publish a constant tenant budget (arm B)")
+ap.add_argument("--fixed-budget-gib", type=float, default=None, help="publish a constant tenant budget (static split)")
 ap.add_argument("--budget-file", default="/dev/shm/coloc_ft_budget")
 ap.add_argument("--state-file", default="/dev/shm/coloc_ft_state")
 ap.add_argument("--log", required=True)

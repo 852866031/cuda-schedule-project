@@ -1,4 +1,4 @@
-# Arms side by side (per RPS phase, first 10 s of each phase excluded)
+# Schemes side by side (per RPS phase, first 10 s of each phase excluded)
 
 ## TPOT p50 ms
 

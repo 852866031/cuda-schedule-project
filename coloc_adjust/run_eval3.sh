@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# One evaluation arm end to end (design §3.7).
-#   run_eval2.sh <arm> [schedule]     arms of run_eval.sh plus:
+# One evaluation scheme end to end (design §3.7).
+#   run_eval2.sh <scheme> [schedule]     schemes of run_eval.sh plus:
 #     green32        tenant on a fixed 32-SM green context (no gate, MPS on)
 #     green_dyn      tenant SM share set by the controller from the arrival rate (SM_TABLE), no gate
 #     engine_green   engine confined to ENGINE_SMS (default 128) SMs + tenant on the rest-ish (green_dyn table)
 # Starts: MPS daemon, decode-only engine (kvcached main, 28 GiB DRAM tier, prefix caching off,
-# busy-window patch + transfer tracer), router/controller on :8001, sampler, FT worker (per arm),
+# busy-window patch + transfer tracer), router/controller on :8001, sampler, FT worker (per scheme),
 # then the reference prefix workload with the RPS schedule through the router; tears everything
 # down and runs analyze_coloc.py. Logs in coloc_adjust/logs, results in coloc_adjust/results.
 set -uo pipefail

@@ -1,4 +1,4 @@
-"""Plain-language names for the evaluation arms (shared by the figure scripts)."""
+"""Plain-language names for the evaluation schemes (the --arm values) (shared by the figure scripts)."""
 
 NAMES = {
     "decode_alone":    "Inference alone, fixed 13 GiB KV",

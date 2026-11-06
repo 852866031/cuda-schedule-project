@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# One evaluation arm end to end (design §3.7).
-#   run_eval.sh <arm> [schedule]      arm = decode_alone | adjust_notenant | static_split | adjust | adjust_nogate | adjust_mps20
+# One evaluation scheme end to end (design §3.7).
+#   run_eval.sh <scheme> [schedule]      scheme = decode_alone | adjust_notenant | static_split | adjust | adjust_nogate | adjust_mps20
 # Starts: MPS daemon, decode-only engine (kvcached main, 28 GiB DRAM tier, prefix caching off,
-# busy-window patch + transfer tracer), router/controller on :8001, sampler, FT worker (per arm),
+# busy-window patch + transfer tracer), router/controller on :8001, sampler, FT worker (per scheme),
 # then the reference prefix workload with the RPS schedule through the router; tears everything
 # down and runs analyze_coloc.py. Logs in coloc_adjust/logs, results in coloc_adjust/results.
 set -uo pipefail

@@ -15,7 +15,7 @@ metrics = [("tpot50", "TPOT p50 ms", "{:.1f}"), ("tpot95", "TPOT p95 ms", "{:.1f
            ("tok_s_done", "delivered tok/s", "{:.0f}"), ("failed", "failed", "{:.0f}"), ("preempt", "preemptions", "{:.0f}"),
            ("ft_tok_s", "FT tok/s", "{:.0f}"), ("ft_cfg_mode", "FT cfg (mode)", "{:.0f}"), ("ft_reserved_gib", "FT GiB", "{:.2f}"),
            ("limit_gib", "KV limit GiB", "{:.2f}")]
-lines = ["# Arms side by side (per RPS phase, first 10 s of each phase excluded)", ""]
+lines = ["# Schemes side by side (per RPS phase, first 10 s of each phase excluded)", ""]
 ref = P[arms[0]]
 for key, label, fmt in metrics:
     if not any(key in P[a] for a in arms): continue
@@ -28,7 +28,7 @@ for key, label, fmt in metrics:
         lines.append(f"| {r.t_from:.0f}–{r.t_to:.0f} s ({r.rps:g}) | " + " | ".join(cells) + " |")
     lines.append("")
 open(args.out + "_table.md", "w").write("\n".join(lines)); print("\n".join(lines))
-# dense every-arm figure (the report's figures come from plot_arms.py)
+# dense every-scheme figure (the report's figures come from plot_arms.py)
 fig, ax = plt.subplots(4, 1, figsize=(11, 11), sharex=True)
 x = np.arange(len(ref)); wdt = 0.8 / len(arms); labels = [f"{r.rps:g} rps\n{r.t_from:.0f}s" for _, r in ref.iterrows()]
 for j, a in enumerate(arms):
@@ -40,4 +40,4 @@ ax[2].plot(x, ref.offered_tok_s, "k_", ms=25, mew=2, label="offered")
 ax[0].set_ylabel("TPOT p50 ms"); ax[1].set_ylabel("queue wait ms (log)"); ax[1].set_yscale("log"); ax[2].set_ylabel("delivered tok/s"); ax[3].set_ylabel("FT tok/s")
 for a_ in ax: a_.grid(True, alpha=0.3)
 ax[0].legend(fontsize=8); ax[2].legend(fontsize=8); ax[3].set_xticks(x); ax[3].set_xticklabels(labels, fontsize=8)
-fig.suptitle("Colocation arms per RPS phase"); fig.tight_layout(); fig.savefig(args.out + "_all.png", dpi=130); print("figure:", args.out + "_all.png")
+fig.suptitle("Colocation schemes per RPS phase"); fig.tight_layout(); fig.savefig(args.out + "_all.png", dpi=130); print("figure:", args.out + "_all.png")

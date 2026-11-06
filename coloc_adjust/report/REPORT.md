@@ -24,7 +24,7 @@ Qwen2.5-0.5B LoRA fine-tune. Three pieces, none of them inside vLLM's scheduler:
   → pause (snapshot, everything to host). LoRA weights, optimizer, scheduler, step and RNG are
   snapshotted to DRAM every 10 steps and before every tier change; the worker resumes from the
   snapshot. An idle-window gate (engine busy page, per-block hooks, 1-block fence) is on in the
-  main arm; the torch allocator cap follows the budget so a mis-estimate OOMs the tenant, never
+  main scheme; the torch allocator cap follows the budget so a mis-estimate OOMs the tenant, never
   the engine.
 - **Transfer tracing**: every host↔GPU copy is recorded with its source — the engine's native
   offload transfers (bytes and CUDA-event time from vLLM's own transfer results, via an
@@ -72,7 +72,7 @@ seeded) with a piecewise-constant RPS schedule after a 32-request warm-up:
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | RPS | 1 | 2 | 3 | 1 | 4 | 0.5 | 2 | 3 | 2 | 1 | 1 |
 
-Four arms, each one continuous 11-minute run (`run_eval.sh`): **A** decode alone (limit 13 GiB,
+Four schemes, each one continuous 11-minute run (`run_eval.sh`): **A** decode alone (limit 13 GiB,
 no tenant); **B** static split (engine fixed at 6.69 GiB = the 2-QPS need, tenant at a fixed
 6 GiB budget → cfg 2, gate on) — "partition once"; **C** the prototype (controller + tiered
 tenant + gate); **D** the prototype without the gate. Per-phase numbers skip the first 10 s of
@@ -80,9 +80,9 @@ each phase. Decode is judged on TPOT, scheduler queue wait, delivered throughput
 (decode-only TTFT is fetch + 128-token prefill, ~160 ms); the tenant on tokens/s and its
 configuration.
 
-### 2.1 What the arms are
+### 2.1 What the schemes are
 
-| arm | engine KV limit | tenant | compute sharing |
+| scheme | engine KV limit | tenant | compute sharing |
 |---|---|---|---|
 | A `decode_alone` | fixed 13 GiB | none | – |
 | E `adjust_notenant` | controller | none | – (baseline for the prototype: resizing without anyone using the freed VRAM) |
@@ -100,25 +100,25 @@ configuration.
 
 *Diagram 4 — the compute-sharing mechanisms tried (source `../diagrams/04_compute_sharing.drawio`); the memory loop is the same in all of them.*
 
-![arms](figures/arms.png)
+![schemes](figures/arms.png)
 
 *Figure 1 — decode latency (a), scheduler queue wait (b) and fine-tune throughput (c) against the
 arrival rate, pooling the phases that share a rate (marker = mean, bar = min..max across the
 repeats; `plot_arms.py`). The baseline is the engine alone with its KV limit following the load
-(arm E; arm A with a fixed 13 GiB limit is identical to it). Arms G–J are left out: `green32`
-coincides with the MPS 20 % cap, and the dynamic green-context arms lost their tenant in the
-first phase (table in 2.3). Reading: adaptive arms sit on the baseline in (a) and (b) at 3–4 QPS,
+(scheme E; scheme A with a fixed 13 GiB limit is identical to it). Schemes G–J are left out: `green32`
+coincides with the MPS 20 % cap, and the dynamic green-context schemes lost their tenant in the
+first phase (table in 2.3). Reading: adaptive schemes sit on the baseline in (a) and (b) at 3–4 QPS,
 where the tenant is paused, and pay a tenant-speed-dependent premium at 0.5–2 QPS; the static split
 pays 20–80 % everywhere and queues seconds once the load passes 2 QPS.*
 
 ![tradeoff](figures/arms_tradeoff.png)
 
-*Figure 2 — the same runs, one point per arm and phase: decode slowdown over the baseline against
-the tenant's throughput in that phase. The adaptive arms fall on one line regardless of mechanism
+*Figure 2 — the same runs, one point per scheme and phase: decode slowdown over the baseline against
+the tenant's throughput in that phase. The adaptive schemes fall on one line regardless of mechanism
 (MPS, MPS cap, disjoint green partition): about +2.3 % TPOT per 1 000 tenant tokens/s. The static
 split's points are off that line because its cost is KV starvation, not the tenant's speed.*
 
-### 2.2 Decode under each arm (TPOT p50 in ms; scheduler queue wait in ms)
+### 2.2 Decode under each scheme (TPOT p50 in ms; scheduler queue wait in ms)
 
 | phase | A alone | E adjust, no tenant | B static | C gate | D no gate | F MPS 20 % | G green 32 |
 |---|---|---|---|---|---|---|---|
@@ -131,7 +131,7 @@ split's points are off that line because its cost is KV starvation, not the tena
 | 2 → 3 → 2 → 1 (480–600 s) | 15.5–20.2 / 122–157 | same | 20.7–23.1 / 145–4 258 | 15.6–20.2 / 110–173 | 16.6–20.5 / 135–211 | 14.2–20.8 / 128–199 | 14.0–20.4 / 116–205 |
 | failures / preemptions | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
 
-### 2.3 The tenant under each arm (tok/s; its configuration)
+### 2.3 The tenant under each scheme (tok/s; its configuration)
 
 | phase | B static | C gate | D no gate | F MPS 20 % | G green 32 |
 |---|---|---|---|---|---|
@@ -143,9 +143,9 @@ split's points are off that line because its cost is KV starvation, not the tena
 | 0.5 QPS | 12.0k | 0 | 16.3k (cfg 1, 8.7 GiB) | 7.7k | 7.3k |
 | whole run, steps | 1 844 | 32 (21 preempted) | 1 310 (26 preempted mid-step) | 735 | 696 |
 
-Green-context arms (`green_ctx.py`, ctypes on libcuda; details in DECISIONS D8–D10):
+Green-context schemes (`green_ctx.py`, ctypes on libcuda; details in DECISIONS D8–D10):
 
-| arm | decode at 1 / 2 QPS (TPOT, queue) | tenant at 1 / 0.5 QPS | note |
+| scheme | decode at 1 / 2 QPS (TPOT, queue) | tenant at 1 / 0.5 QPS | note |
 |---|---|---|---|
 | G `green32` (tenant on 32 SMs) | 14.4 / 16.6 ms, 119 / 132 ms | 6.3k / 7.3k tok/s | same trade as the MPS 20 % cap |
 | H `green_dyn` (SM count from λ̂) | tenant died in phase 1 | 1.4k then 0 | re-creating the context on every share change leaked allocator memory (7.7 GiB reserved for a 5 GiB config) → OOM to pause |
@@ -184,25 +184,25 @@ Green-context arms (`green_ctx.py`, ctypes on libcuda; details in DECISIONS D8�
   un-capped co-running (+26 % TPOT at 1 QPS) while the tenant gets the same ~10.5k tok/s as D.
   The interference is DRAM bandwidth: a decode step streams the 15 GiB of weights every
   ~13 ms, and the tenant's GEMMs on *any* SMs compete for the same memory system. Across the
-  arms the decode cost follows the tenant's throughput, not its placement: 0 tok/s → 12.9 ms,
+  schemes the decode cost follows the tenant's throughput, not its placement: 0 tok/s → 12.9 ms,
   6.3–6.7k → 14.4–14.6 ms, 10.5–11k → 16.3–16.4 ms — ≈ +2.5 % TPOT per 1k tenant tok/s at 1 QPS.
 
 
 ## 3. Host↔GPU transfers
 
-Every host↔GPU copy was recorded with its source (figure `../results/<arm>_xfer.png`; records in
-`../results/<arm>_xfer_{inf,ft}.csv`; NVML PCIe counters in the sampler CSV).
+Every host↔GPU copy was recorded with its source (figure `../results/<scheme>_xfer.png`; records in
+`../results/<scheme>_xfer_{inf,ft}.csv`; NVML PCIe counters in the sampler CSV).
 
 | | per copy | per 11-minute run |
 |---|---|---|
 | inference loads (DRAM → GPU, one per admitted request) | 768 MiB in 55.7 ms = **13.5 GiB/s** (≈ 93 % of the 14.5 GB/s the link delivers) | 1 176 loads, 880 GiB, 1.36 GiB/s average |
 | inference stores (GPU → DRAM, one per finished request) | 16 MiB in 1.2 ms | 1 219 stores, 51 GiB |
-| tenant activation offload (tier 2) | 4.7 GB out and 4.7 GB back per step, 354 ms out | 6 steps in arm D, 56 GiB |
-| tenant pause / resume | ~1 GB in 195 / 98 ms | 8 / 9 times in arm D |
-| tenant snapshots | 8 MB, < 50 ms | 176 in arm D |
+| tenant activation offload (tier 2) | 4.7 GB out and 4.7 GB back per step, 354 ms out | 6 steps in scheme D, 56 GiB |
+| tenant pause / resume | ~1 GB in 195 / 98 ms | 8 / 9 times in scheme D |
+| tenant snapshots | 8 MB, < 50 ms | 176 in scheme D |
 
 Contention: inference loads that overlapped a tenant copy took 56.1–56.3 ms against 55.7 ms
-alone (n = 32–74 per arm) — no measurable slowdown, because the link is busy only ~10 % of the
+alone (n = 32–74 per scheme) — no measurable slowdown, because the link is busy only ~10 % of the
 time on average and the tenant's large copies are rare (activation offload is the slow tier that
 the budget ladder seldom lands on). The NVML counters agree with the records on the time
 structure (bursts of 15 GiB/s at every admission); their 20-ms sampling overstates peaks (a
@@ -212,7 +212,7 @@ structure (bursts of 15 GiB/s at every admission); their 20-ms sampling overstat
 ## 4. What this shows
 
 Figure-centred summary (diagrams 1–4 above, sources in `../diagrams/*.drawio`; the measured curves in
-Figures 1–2 above, `../results/<arm>_timeline.png`, `../results/<arm>_xfer.png`):
+Figures 1–2 above, `../results/<scheme>_timeline.png`, `../results/<scheme>_xfer.png`):
 
 1. **The memory half of the problem is solved** (diagrams 1–3). A router in front of vLLM
    knows the exact KV demand of what is running and queued; the controller raises kvcached's

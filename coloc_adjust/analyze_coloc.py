@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Per-second bins, per-phase tables and figures for one evaluation arm (design §3.7).
+"""Per-second bins, per-phase tables and figures for one evaluation scheme (selected with --arm) (design §3.7).
   analyze_coloc.py --arm adjust --dir results --schedule "0:1,90:2,..."
 Inputs: <dir>/<arm>_{load.jsonl,sampler.csv,controller.csv,ft.csv,xfer_inf.csv,xfer_ft.csv,t0.txt}
 Outputs: <dir>/<arm>_phases.csv, <arm>_phases.md, <arm>_bins.csv, <arm>_timeline.png, <arm>_xfer.png
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 ap = argparse.ArgumentParser()
 ap.add_argument("--arm", required=True); ap.add_argument("--dir", default="results")
 ap.add_argument("--schedule", required=True); ap.add_argument("--skip", type=float, default=10.0)
-ap.add_argument("--baseline", default="adjust_notenant", help="arm whose decode latency is overlaid; '' for none")
+ap.add_argument("--baseline", default="adjust_notenant", help="scheme whose decode latency is overlaid; '' for none")
 ap.add_argument("--engine-fixed-gib", type=float, default=17.7); ap.add_argument("--total-gib", type=float, default=31.3536)
 args = ap.parse_args()
 GiB = 1024 ** 3; P = lambda s: os.path.join(args.dir, f"{args.arm}_{s}")
@@ -109,7 +109,7 @@ ax[1].axhline(fixed, color="k", lw=0.5, ls=":")
 ax[1].text(-33, fixed + 0.2, f"engine weights + runtime below {fixed} GiB", fontsize=7, va="bottom")
 ax[1].set_ylim(fixed - 0.5, args.total_gib + 3.2); ax[1].set_ylabel("GPU memory (GiB)"); ax[1].set_yticks(range(18, 32, 2))
 ax[1].legend(fontsize=7.5, loc="upper center", ncol=4, frameon=False)
-# (3) decode latency: this arm vs the baseline run on the same timeline
+# (3) decode latency: this scheme vs the baseline run on the same timeline
 def rolling_tpot(df, win=10.0):
     d = df[df.ok].sort_values("t_send")
     out = [d[(d.t_send > t - win) & (d.t_send <= t)].tpot.median() * 1e3 for t in tt]
@@ -120,8 +120,8 @@ if args.baseline and args.baseline != args.arm and os.path.exists(os.path.join(a
     B = pd.DataFrame([dict(t_send=r["t_send"] - bt0, ok=bool(r["status"] == 200 and not r["error"] and r["tok_t"]),
                            tpot=((r["t_done"] - r["tok_t"][0]) / max(1, r["n_out"] - 1)) if r["tok_t"] else np.nan) for r in breqs])
     ax[2].plot(tt, rolling_tpot(B), color="#888888", lw=1.5, label="baseline: inference alone (10-s median)")
-ax[2].plot(R.t_send, R.tpot * 1e3, ".", ms=2.5, color="#1f77b4", alpha=0.35, label="this arm, per request")
-ax[2].plot(tt, rolling_tpot(R), color="#1f77b4", lw=1.5, label="this arm (10-s median)")
+ax[2].plot(R.t_send, R.tpot * 1e3, ".", ms=2.5, color="#1f77b4", alpha=0.35, label="this scheme, per request")
+ax[2].plot(tt, rolling_tpot(R), color="#1f77b4", lw=1.5, label="this scheme (10-s median)")
 ax[2].set_ylabel("decode TPOT (ms)"); ax[2].legend(fontsize=7.5, loc="upper left", ncol=3)
 # (4) scheduler queue wait
 q = num(samp, "queue_sum"); qc = num(samp, "queue_count")
@@ -142,7 +142,7 @@ if ft is not None:
     ax[5].set_ylim(len(CFG_LABELS) - 0.5, -0.5); ax[5].set_ylabel("FT config")
 else:
     for k in (4, 5):
-        ax[k].text(0.5, 0.5, "no fine-tune tenant in this arm", transform=ax[k].transAxes, ha="center", color="#666666")
+        ax[k].text(0.5, 0.5, "no fine-tune tenant in this scheme", transform=ax[k].transAxes, ha="center", color="#666666")
         ax[k].set_yticks([])
     ax[4].set_ylabel("fine-tune (k tok/s)"); ax[5].set_ylabel("FT config")
 for a_ in ax:

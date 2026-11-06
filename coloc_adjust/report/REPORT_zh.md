@@ -53,7 +53,7 @@ token 吞吐成正比（每 1k tok/s 约慢 2.3%），说明争的是 **DRAM 带
    block 加队头请求的需求——永远不会收走运行中请求的页（kvcached 本身也保证这点）。
 4. 训练任务的预算只在 kvcached 实际 mapped 的字节数 ≤ 新上限之后才涨回去。
 
-验证结果：**所有 arm 零失败请求，零 preemption**，引擎从未因为训练任务还占着页而出错，
+验证结果：**所有方案零失败请求，零 preemption**，引擎从未因为训练任务还占着页而出错，
 最坏情况是 vLLM 短暂排队等页。在线改上限本身对推理没有代价：
 "引擎单独跑、上限跟着负载变"和"引擎单独跑、上限固定 13 GiB"的 TPOT 每个阶段相差 < 0.1 ms。
 
@@ -104,7 +104,7 @@ prefill，不做评价指标）；训练看 token/s 和它所处的档位。每�
 
 *图 D：六种算力共享机制，每一行是机制、训练任务怎么跑、结果。显存环路在所有行里相同。*
 
-显存环路在所有 arm 里完全一样，只换算力共享机制：
+显存环路在所有方案里完全一样，只换算力共享机制：
 
 | | 机制 | 结果 |
 |---|---|---|
@@ -117,7 +117,7 @@ prefill，不做评价指标）；训练看 token/s 和它所处的档位。每�
 
 ## 6. 看图
 
-### 图 1：各 arm 的指标对到达率
+### 图 1：各方案的指标对到达率
 
 ![arms](figures/arms.png)
 
@@ -125,9 +125,9 @@ prefill，不做评价指标）；训练看 token/s 和它所处的档位。每�
 （点 = 均值，误差线 = 重复阶段的最小到最大）。
 
 怎么读：
-- 灰色 baseline 是下界。3–4 QPS 时所有 adaptive arm 和 baseline 重合——因为训练已经被
+- 灰色 baseline 是下界。3–4 QPS 时所有 自适应方案 和 baseline 重合——因为训练已经被
   暂停了，显存全给了推理。
-- 0.5–2 QPS 时 adaptive arm 比 baseline 高出一截，高多少取决于训练跑得多快：MPS 不限
+- 0.5–2 QPS 时 自适应方案 比 baseline 高出一截，高多少取决于训练跑得多快：MPS 不限
   （蓝）和不相交分区（橙）最高，MPS 20%（绿）一半，gate（紫）贴着 baseline 但训练吞吐
   是 0。
 - 红色 static split（引擎固定 6.69 GiB = 2 QPS 的需求，训练固定 6 GiB）**两头都输**：
@@ -138,17 +138,17 @@ prefill，不做评价指标）；训练看 token/s 和它所处的档位。每�
 
 ![tradeoff](figures/arms_tradeoff.png)
 
-每个 arm 每个阶段一个点。所有 adaptive arm 不管用什么共享机制都落在同一条过原点的直线上：
+每个方案 每个阶段一个点。所有 自适应方案 不管用什么共享机制都落在同一条过原点的直线上：
 **每 1k 训练 tok/s，decode TPOT 慢约 2.3%**。static split 的点（空心）偏离这条线，因为它的
 代价来自 KV 不够而不是训练速度。这张图是"瓶颈是 DRAM 带宽"这个结论的直接证据。
 
-### 图 3（每个 arm 一张，`../results/<arm>_timeline.png`）：每个 arm 的逐秒时间线
+### 图 3（每个方案一张，`../results/<arm>_timeline.png`）：每个方案的逐秒时间线
 
 ![timeline](figures/adjust_nogate_timeline.png)
 
-以 MPS 不限（arm B）为例，六行从上到下：到达率；GPU 显存分配（青色 = 推理 KV 实际占用，
+以 MPS 不限（方案 B）为例，六行从上到下：到达率；GPU 显存分配（青色 = 推理 KV 实际占用，
 红线 = controller 设的 KV 上限，黄色 = 训练任务占用，只画 17.7 GiB 权重以上的部分）；
-decode TPOT（蓝 = 本 arm，灰 = baseline 同一时间线）；调度排队；训练吞吐；训练所处的档位。
+decode TPOT（蓝 = 本方案，灰 = baseline 同一时间线）；调度排队；训练吞吐；训练所处的档位。
 
 可以直接看到：到达率涨 → 红线立刻上抬、黄色被压缩、档位往下掉；4 QPS 阶段训练整个暂停
 （黄色退到 0.4 GiB，档位 = paused），推理 TPOT 和 baseline 重合；负载回落 5 秒后红线下调，
@@ -185,5 +185,5 @@ decode 代价不是 PCIe 争用，是 GPU 内部的 DRAM 带宽。
 
 文件索引：`controller.py`（router + controller）、`ft_worker.py`（训练任务）、
 `green_ctx.py`（green context 封装）、`hp_patch/sitecustomize.py`（引擎观察补丁）、
-`run_eval*.sh`（各 arm 的启动脚本）、`analyze_coloc.py` / `plot_arms.py`（分析和画图）、
-`../results/`（每个 arm 的阶段表、时间线图、传输图）。
+`run_eval*.sh`（各方案的启动脚本）、`analyze_coloc.py` / `plot_arms.py`（分析和画图）、
+`../results/`（每个方案的阶段表、时间线图、传输图）。

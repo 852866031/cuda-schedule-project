@@ -42,40 +42,40 @@ pauses. Against the lendable table in DESIGN §2: 0.5 QPS → cfg 1, 1–2 QPS �
 - MPS: the daemon exits silently when the pipe directory path is long (Unix socket limit);
   `/tmp/coloc_mps/pipe` works.
 
-**Prediction for the arms (DESIGN §4):** arm C keeps TPOT within 10 % of arm A in every phase
+**Prediction for the schemes (DESIGN §4):** scheme C keeps TPOT within 10 % of scheme A in every phase
 except the 10 s after each RPS rise; queue wait < 100 ms away from transitions; 0 failures;
-tenant cfg follows the lendable table; arm B (6.7 GiB static, tenant 6 GiB fixed) queues
-heavily at 3 and 4 QPS and leaves ~5 GiB idle at 0.5–1 QPS; arm D (no gate) costs decode
+tenant cfg follows the lendable table; scheme B (6.7 GiB static, tenant 6 GiB fixed) queues
+heavily at 3 and 4 QPS and leaves ~5 GiB idle at 0.5–1 QPS; scheme D (no gate) costs decode
 +30–60 % TPOT.
 
 ## D3. Pipeline test under MPS (21:26–21:31, `results/pipeline_test/`)
 
-Arm C with a 2-minute schedule (1 QPS → 3 QPS at 60 s): everything ran together (MPS daemon,
+Scheme C with a 2-minute schedule (1 QPS → 3 QPS at 60 s): everything ran together (MPS daemon,
 engine as MPS client with kvcached, router, sampler, gated tenant, load through the router).
 Phase 1 QPS: TPOT p50 16.3 ms, queue wait 119 ms, 128 tok/s delivered = offered, tenant cfg 2
 (k=4, 5 GiB, 8.4k tok/s, 69 % of its step time gated). Phase 3 QPS: limit 12 GiB, tenant paused
 within the first ticks, TPOT 19.1 ms, queue 196 ms, 0 failures, 0 preemptions. Connector loads
 (768 MiB each): median 55.7 ms with no concurrent tenant copy, 61.3 ms when one overlapped
-(n=15). The analysis's per-request ok flag was a list, fixed. Open question for the arms:
+(n=15). The analysis's per-request ok flag was a list, fixed. Open question for the schemes:
 decode TPOT at 1 QPS beside the tenant is 16.3 vs 13.3 ms solo (no MPS) — how much is MPS
-itself (arm A runs decode alone under MPS) and how much the tenant (arm D without the gate).
-Full arms launched 21:33: A decode_alone, B static_split, C adjust, D adjust_nogate, ~15 min each.
+itself (scheme A runs decode alone under MPS) and how much the tenant (scheme D without the gate).
+Full schemes launched 21:33: A decode_alone, B static_split, C adjust, D adjust_nogate, ~15 min each.
 
-## D4. First full arms (21:33–22:35)
+## D4. First full schemes (21:33–22:35)
 
-Arms A (decode alone) and B (static split: engine 6.69 GiB, tenant 6 GiB fixed, cfg 2) completed
-and are kept. Arms C/D: the tenant died at ~115 s (2 QPS phase) with a CUDA OOM *inside the pause
+Schemes A (decode alone) and B (static split: engine 6.69 GiB, tenant 6 GiB fixed, cfg 2) completed
+and are kept. Schemes C/D: the tenant died at ~115 s (2 QPS phase) with a CUDA OOM *inside the pause
 transition*: `to_cpu()` first re-bound the streamed layers to the GPU (`set_weight_offload(0)`)
 while the allocator cap had already been lowered to the ~0 budget, so the 2 MiB allocation for
 the bind failed and the process exited; decode ran alone for the remaining 9 minutes (which is
-why arms C/D equal arm A from 180 s on). Fix: pausing now moves streamed layers straight to
+why schemes C/D equal scheme A from 180 s on). Fix: pausing now moves streamed layers straight to
 their pinned host copies (no GPU allocation), tier climbs lift the cap transiently before
-re-binding, and any OOM during a transition falls back to pause instead of exiting. Arms C/D
+re-binding, and any OOM during a transition falls back to pause instead of exiting. Schemes C/D
 re-run after a pause/resume unit test on GPU 1.
 
 What the completed phases already say: at 1 QPS the gated tenant (cfg 2, 8.6k tok/s) costs
 decode +3.6 ms TPOT (16.5 vs 12.9), queue wait +26 ms, same throughput, 0 failures; the gate
-made no difference to TPOT (nogate 16.5) — the old study's TPOT floor again. Arm B at 3 and 4 QPS:
+made no difference to TPOT (nogate 16.5) — the old study's TPOT floor again. Scheme B at 3 and 4 QPS:
 queue wait 7.9 s and 13.5 s, delivered 317/325 tok/s against 402/517 offered, and the backlog
 still 26 s deep at the 0.5 QPS phase; its tenant trains at 12.7k tok/s throughout.
 
@@ -84,7 +84,7 @@ still 26 s deep at the 0.5 QPS phase; its tenant trains at 12.7k tok/s throughou
 Jiaxuan asked what "decode busy" was. It was the wall-clock bracket `execute_model →
 sample_tokens`, which on vLLM 0.30's Model Runner V2 returns before the GPU finishes (async
 scheduling); the tenant saw a 5 % duty and the gate was effectively never closed, which is why
-arms C and D were identical. Rebuilt: busy is raised at `execute_model` entry and cleared when a
+schemes C and D were identical. Rebuilt: busy is raised at `execute_model` entry and cleared when a
 CUDA event recorded after `sample_tokens` completes (a side thread waits on it), busy time as
 the union of overlapping steps. Measured with the rebuilt signal (8 sessions, 25-s loads):
 
@@ -100,12 +100,12 @@ back-to-back and overlap, and each one streams the 15 GiB of weights (~12 ms) wh
 holds 1 or 7 requests. The 30–50 % idle the vLLM 0.15 study saw was CPU time between steps that
 MRV2 removed. Consequence: the idle-window gate can only let the tenant run when the engine is
 empty (≈ 15 % of the time at 1 QPS, ~0 at ≥ 2 QPS); compute sharing here has to be spatial.
-Added arm `adjust_mps20` (tenant under `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=20`, no gate) as the
+Added scheme `adjust_mps20` (tenant under `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=20`, no gate) as the
 first spatial variant; green contexts and the CUPTI gate are noted for later. The tenant's
 "collision" rule (split when duty > 60 %) will now be permanently on while requests run.
-Arms E (adjust, no tenant), C, D, F launched 23:0x with the rebuilt signal.
+Schemes E (adjust, no tenant), C, D, F launched 23:0x with the rebuilt signal.
 
-## D6. Arms with the rebuilt busy signal (22:47–23:48) and mid-step preemption
+## D6. Schemes with the rebuilt busy signal (22:47–23:48) and mid-step preemption
 
 Results in `results/no_midstep_preempt/` (C, D, F) and `results/adjust_notenant_*` (E).
 - **E, controller without tenant = A exactly** (TPOT 12.9/15.2/21.2/12.5/26.0 … in both, queue
@@ -133,7 +133,7 @@ Results in `results/no_midstep_preempt/` (C, D, F) and `results/adjust_notenant_
 C, D, F re-run with mid-step preemption (prediction: C's decode returns to E's numbers with the
 tenant at ~0 progress; D/F lose their preemptions at 3–4 QPS and most of the 4-QPS queueing).
 
-## D7. Arms with mid-step preemption (23:50–00:35) and the green-context round
+## D7. Schemes with mid-step preemption (23:50–00:35) and the green-context round
 
 - **C (gate + mid-step preemption)**: decode now equals the no-tenant baseline in every phase
   (TPOT 13.1 vs 12.9 at 1 QPS, queue wait 107 vs 107 ms, 0 preemptions, 4 QPS queue 2.2 s vs
@@ -149,7 +149,7 @@ tenant at ~0 progress; D/F lose their preemptions at 3–4 QPS and most of the 4
 - Green contexts work from Python through ctypes on libcuda (cuGreenCtxCreate etc.; driver
   580): a matmul on 16/32/64/128 of the 170 SMs runs at 24/48/95/187 TFLOP/s vs 241 on the full
   device; the tenant at 32 SMs trains 11.8k tok/s (29.6k on the full device at cfg 2).
-- Arms launched 00:40: F re-run, `green32` (tenant on 32 SMs, no gate), `green_dyn` (tenant SM
+- Schemes launched 00:40: F re-run, `green32` (tenant on 32 SMs, no gate), `green_dyn` (tenant SM
   share from λ̂: 128 / 96 / 64 / 32 / 16 at 0 / 0.5 / 1 / 2 / ≥3 QPS), `engine_green` (engine's
   steps on a 128-SM green stream + dynamic tenant). Prediction: green32 ≈ F; green_dyn gives the
   tenant more at low RPS (64–128 SMs) for the same decode cost at high RPS; engine_green either
@@ -161,7 +161,7 @@ vLLM 0.30 + kvcached starts with its steps wrapped in a 128-SM green stream (CUD
 included), greedy outputs identical to plain on 8/8 prompts. Under a prefill-heavy load (2 QPS,
 6k-token prompts recomputed every time, engine overloaded: TTFT 6 s) the 128-SM engine was 19 %
 slower per token (TPOT 87.6 vs 73.6 ms) and TTFT 76 % longer — prefill is compute-bound, so
-fewer SMs hurt it; the decode-only question is left to the `engine_green` arm.
+fewer SMs hurt it; the decode-only question is left to the `engine_green` scheme.
 
 ## D8. Green-context round, first pass (00:40–01:45)
 
@@ -190,22 +190,22 @@ fewer SMs hurt it; the decode-only question is left to the `engine_green` arm.
 - **Dynamic switching of the tenant's green context is not robust in-process**: even with the
   requested-count compare, the 5-s rate limit and `empty_cache()`, reserved memory crept up
   across switches (7.7 GiB reserved for a 5 GiB configuration) and the tenant OOM-ed its way to
-  pause within the first phase in all three arms (green_dyn 15 OOMs, engine_green 9, green_opt 3;
+  pause within the first phase in all three schemes (green_dyn 15 OOMs, engine_green 9, green_opt 3;
   the decode side of those runs is therefore "tenant mostly absent"). Allocator blocks are bound
   to the stream they were allocated on; switching streams repeatedly fragments the pool.
-- Decision for the last arm: **no switching**. `green_split`: engine on the first 128 SMs, tenant
+- Decision for the last scheme: **no switching**. `green_split`: engine on the first 128 SMs, tenant
   on the *remaining* 42 (`cuDevSmResourceSplitByCount` remainder), exclusive by construction, the
   memory ladder unchanged. Prediction: decode = baseline in every phase (as engine_green); tenant
   ≈ 13k tok/s at 1 QPS (42 SMs; 32 gave 11.8k solo), cfg following the budget, 0 preemptions.
 
-## D10. Final arm, green_split (02:35–02:50) — and what the whole ladder says
+## D10. Final scheme, green_split (02:35–02:50) — and what the whole ladder says
 
 Engine on SMs 0–127, tenant on the other 42, no switching: tenant 10.5k / 4.7k / 0.15k / 12.8k /
 0 / 13.5k tok/s (≈ the un-capped co-run D), 0 engine preemptions, 21 tenant mid-step
 preemptions, 6 tenant OOM retries. **Decode paid the same as D**: TPOT 16.3 ms at 1 QPS (+26 %),
 18.3 at 2 QPS (+20 %), queue wait 123 / 145 ms, 4-QPS queue 4.0 s. Disjoint SMs did not remove
 the interference, so it is not SM contention: the decode step streams the 15 GiB of weights
-every ~13 ms and the tenant's GEMMs compete for the same DRAM bandwidth. Across the arms the
+every ~13 ms and the tenant's GEMMs compete for the same DRAM bandwidth. Across the schemes the
 decode cost tracks the tenant's throughput, not where it runs: 0 tok/s → 12.9 ms (C, E);
 6.3–6.7k → 14.4–14.6 ms (G, F); 10.5–11k → 16.3–16.4 ms (K, D) — about +2.5 % TPOT per 1k
 tenant tok/s at 1 QPS. Prediction (decode = baseline) was wrong; the earlier `engine_green`

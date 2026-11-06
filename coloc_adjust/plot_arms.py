@@ -4,7 +4,7 @@
   arms.png          decode TPOT, scheduler queue wait and fine-tune throughput against the
                     arrival rate (phases with the same rate are pooled: marker = mean,
                     error bar = min..max across the repeats).
-  arms_tradeoff.png decode slowdown vs fine-tune throughput, one point per arm and phase:
+  arms_tradeoff.png decode slowdown vs fine-tune throughput, one point per scheme and phase:
                     the cost of colocation scales with how fast the tenant runs, whatever
                     the compute-sharing mechanism.
 
@@ -15,7 +15,7 @@ import numpy as np, pandas as pd
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# arm id -> (legend label, color, marker). Order = legend order.
+# scheme id -> (legend label, color, marker). Order = legend order.
 ARMS = [
     ("adjust_notenant", "Inference alone, KV follows load (baseline)", "#444444", "o"),
     ("static_split",    "Static split: KV 6.7 GiB, FT 6 GiB",          "#d62728", "s"),
@@ -91,6 +91,6 @@ ax.plot(xx, k * xx, "k--", lw=1, alpha=0.6, label=f"adaptive arms, fit through o
 ax.axhline(0, color="k", lw=0.6)
 ax.set_xlabel("Fine-tune throughput in the phase (k tok/s)")
 ax.set_ylabel("Decode TPOT p50 vs baseline (%)")
-ax.set_title("Decode slowdown vs tenant progress, every arm and phase")
+ax.set_title("Decode slowdown vs tenant progress, every scheme and phase")
 ax.grid(True, alpha=0.3); ax.legend(fontsize=8, loc="upper left")
 fig.tight_layout(); fig.savefig(args.out + "_tradeoff.png", dpi=150); print("figure:", args.out + "_tradeoff.png")
