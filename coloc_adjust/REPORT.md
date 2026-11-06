@@ -86,6 +86,24 @@ configuration.
 
 Diagram `diagrams/04_compute_sharing.drawio` shows mechanisms A–E side by side.
 
+![arms](results/arms.png)
+
+*Figure 1 — decode latency (a), scheduler queue wait (b) and fine-tune throughput (c) against the
+arrival rate, pooling the phases that share a rate (marker = mean, bar = min..max across the
+repeats; `plot_arms.py`). The baseline is the engine alone with its KV limit following the load
+(arm E; arm A with a fixed 13 GiB limit is identical to it). Arms G–J are left out: `green32`
+coincides with the MPS 20 % cap, and the dynamic green-context arms lost their tenant in the
+first phase (table in 2.3). Reading: adaptive arms sit on the baseline in (a) and (b) at 3–4 QPS,
+where the tenant is paused, and pay a tenant-speed-dependent premium at 0.5–2 QPS; the static split
+pays 20–80 % everywhere and queues seconds once the load passes 2 QPS.*
+
+![tradeoff](results/arms_tradeoff.png)
+
+*Figure 2 — the same runs, one point per arm and phase: decode slowdown over the baseline against
+the tenant's throughput in that phase. The adaptive arms fall on one line regardless of mechanism
+(MPS, MPS cap, disjoint green partition): about +2.3 % TPOT per 1 000 tenant tokens/s. The static
+split's points are off that line because its cost is KV starvation, not the tenant's speed.*
+
 ### 2.2 Decode under each arm (TPOT p50 in ms; scheduler queue wait in ms)
 
 | phase | A alone | E adjust, no tenant | B static | C gate | D no gate | F MPS 20 % | G green 32 |
@@ -180,7 +198,7 @@ structure (bursts of 15 GiB/s at every admission); their 20-ms sampling overstat
 ## 4. What this shows
 
 Figure-centred summary (the diagrams are in `diagrams/*.drawio`; the measured curves in
-`results/arms.png`, `results/<arm>_timeline.png`, `results/<arm>_xfer.png`):
+Figures 1–2 above, `results/<arm>_timeline.png`, `results/<arm>_xfer.png`):
 
 1. **The memory half of the problem is solved** (diagrams 01, 02, 03). A router in front of vLLM
    knows the exact KV demand of what is running and queued; the controller raises kvcached's

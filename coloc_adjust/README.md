@@ -17,7 +17,7 @@ kvcached main + peft).
 | `run_eval.sh <arm>` | one arm end to end (MPS, engine, router, sampler, tenant, load, teardown, analysis): decode_alone, adjust_notenant, static_split, adjust, adjust_nogate, adjust_mps20 |
 | `run_eval2.sh` / `run_eval3.sh` | the same plus the green-context arms (green32, green_dyn, engine_green) and the optimisation arm (green_opt); separate files only because a running bash script must not be edited |
 | `teardown.sh` | stop everything |
-| `analyze_coloc.py`, `compare_arms.py` | per-arm phase tables + timeline/transfer figures; cross-arm table + figure |
+| `analyze_coloc.py`, `compare_arms.py`, `plot_arms.py` | per-arm phase tables + timeline/transfer figures; cross-arm table (+ dense all-arms figure `arms_all.png`); the report's Figures 1–2 (`arms.png`, `arms_tradeoff.png`) |
 
 ```bash
 cd coloc_adjust
@@ -25,6 +25,7 @@ cd coloc_adjust
 for arm in decode_alone adjust_notenant static_split adjust adjust_nogate adjust_mps20; do bash run_eval.sh $arm; done
 for arm in green32 green_dyn engine_green green_opt; do bash run_eval3.sh $arm; done
 ../kvcached_validation/.venv-main/bin/python compare_arms.py --dir results --arms decode_alone adjust_notenant static_split adjust adjust_nogate adjust_mps20 green32 green_dyn engine_green green_opt --out results/arms
+../kvcached_validation/.venv-main/bin/python plot_arms.py --dir results --out results/arms
 ```
 Do not quote the process-name patterns used by the scripts (`vllm serve`, `ft_worker.py`, …) in
 the command line that launches them: `pkill -f` inside the scripts would match that shell.
