@@ -98,7 +98,7 @@ configuration.
 
 ![compute sharing](figures/04_compute_sharing.png)
 
-*Diagram 4 — the compute-sharing mechanisms tried (source `../diagrams/04_compute_sharing.drawio`); the memory loop is the same in all of them.*
+*Diagram 4 — the compute-sharing mechanisms tried (source `../diagrams/04_compute_sharing.drawio`); the memory loop is the same in all of them. The dot before each title is the colour of that scheme's line in Figure 1; a dashed circle marks the two schemes Figure 1 leaves out.*
 
 ![schemes](figures/arms.png)
 
