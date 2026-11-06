@@ -1,7 +1,7 @@
 # Colocation VRAM-adjust prototype
 
 Design: [DESIGN.md](DESIGN.md). Run log with predictions and outcomes: [DECISIONS.md](DECISIONS.md).
-Report: [REPORT.md](REPORT.md). Environment: `../kvcached_validation/.venv-main` (vLLM 0.30 +
+Report: [REPORT.md (English; Chinese plain-language version: REPORT_zh.md)](REPORT.md). Environment: `../kvcached_validation/.venv-main` (vLLM 0.30 +
 kvcached main + peft).
 
 | file | role |
