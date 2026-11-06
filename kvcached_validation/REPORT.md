@@ -12,7 +12,7 @@ Everything here was built from scratch in its own venv; predictions and outcomes
 | What happens to running requests at a shrink? | None is killed or stopped at the shrink instant. Memory falls at the rate requests complete. **But** once the resident set sits at the new cap, vLLM's ordinary full-cache preemption kicks in: growing decodes get preempted and recomputed (A2: 15 preemptions, stalls of 1.7–7 s, every request still completed with correct length). |
 | Time to release / re-acquire memory | Release: first movement 0.5 s after the limit is visible; fits under the limit after ~3 s (A1, short outputs) to ~21 s (A2, 512-token outputs: bounded by the lifetime of the resident requests). Re-acquire: bounded by prefill admission, 2.4 → 11.9 GiB in 5–6 s. |
 | Per-step overhead of kvcached at a static budget | **None measurable**: decode step p50 14.03 ms vs 14.03 ms, p90 16.17 vs 16.18 ms, TTFT identical, greedy outputs byte-identical (8/8 prompts). |
-| Fixed 2 QPS with DRAM offload, shrink the budget live (vram-limit study 1 redone with kvcached, §7) | **Flat down to the in-flight-KV knee.** 13 → 4 GiB: TTFT p50 51 → 155 ms, p95 < 0.8 s, ITL and tok/s unchanged, 0 preemptions, 0 failures, the DRAM tier absorbing the lost GPU hits (72 → 95 %); at 3 and 2 GiB the engine queues (TTFT 3 s / 18 s) but never preempts or stalls. Without offload the knee is at 8 GiB (TTFT p50 0.5 s) and 5 GiB costs 3.5 s. Needs kvcached main (page pinning for the native offload copies) and `KVCACHED_MAX_CACHED_TOKENS=-1`. |
+| Fixed 2 QPS with DRAM offload, shrink the budget live (vram-limit study 1 redone with kvcached, §7) | **Flat down to the in-flight-KV knee.** 13 → 4 GiB: TTFT p50 51 → 155 ms, p95 < 0.8 s, ITL and tok/s unchanged, 0 preemptions, 0 failures, the DRAM tier absorbing the lost GPU hits (72 → 95 %); at 3 and 2 GiB the engine queues (TTFT 3 s / 18 s) but never preempts or stalls. Without offload the knee is at 8 GiB (TTFT p50 0.5 s) and 5 GiB costs 3.5 s. Needs kvcached main (page pinning for the native offload copies) and `KVCACHED_MAX_CACHED_TOKENS=-1`. **Against a plain vLLM 0.30 engine restarted at each budget (the static control): no measurable difference above the knee (TPOT 13 ms both, queue wait 23–150 ms both), same knee, both queue below it.** A decode-only emulation (prefix caching off, every prefix in DRAM) gives the same picture: TPOT flat 13–14 ms from 13 to 4 GiB, live = static. |
 | kvcached + LMCache multi-process connector | **Does not work on these versions.** The default (`lmcache_driven`) and VMM-IPC modes cannot start: LMCache's server-side zero-copy path needs an exportable GPU handle and kvcached's VMM pages are created non-exportable (`requestedHandleTypes=0`). The `engine_driven` mode (worker-side copies) starts and serves, but under store traffic of a few thousand tokens per store the engine dies within 1.5–2.5 min with a CUDA illegal-memory-access in LMCache's asynchronous store gather (kernel `Xid 31` MMU read fault on an unmapped kvcached page), with or without any limit change; the plain engine with the same connector and load is unaffected. |
 
 ## 2. Environment
@@ -282,12 +282,80 @@ and the queue starts building at 5 GiB instead of 3 GiB. Side by side, TTFT p50 
 offload: 13 G 51 / 52 ms, 10 G 52 / 66, 8 G 91 / 505, 6 G 72 / 500, 5 G 146 / 3 488,
 4 G 155 / 7 053 ms. Decode (ITL) is unaffected in both runs.
 
-**Answer to the question asked:** at a fixed 2 QPS with DRAM offload, the KV budget of a running
+**Answer to the first question (shrink live with offload):** at a fixed 2 QPS with DRAM offload, the KV budget of a running
 engine can be shrunk live from 13 GiB to 4 GiB with no change in decode speed or throughput and
 TTFT p50 rising only from 51 to 155 ms (p95 under 0.8 s), zero preemptions and zero failures;
 the wall is the in-flight KV (between 4 and 3 GiB here), exactly where study 1 found it with
 restarts, and past it kvcached queues instead of spiralling. Without offload the same shrink
 costs recompute from 8 GiB downward.
+
+
+### Live shrink vs. the static budget, same vLLM 0.30 (`results/fig_live_vs_static_offload.png`)
+
+The proper control for "does resizing live cost anything" is the same engine class restarted at
+each budget. `scripts/run_static_sweep.sh` does that with a plain vLLM 0.30 engine (no kvcached),
+`--kv-cache-memory-bytes` = 13, 10, 8, 6, 5, 4, 3, 2 GiB, prefix caching on, the same 24 GiB
+offload tier and workload, 300 requests per budget. The live run was repeated (run 2) so that
+the scheduler queue-wait metric is in both arms; run 1 and run 2 agree to within 2 ms of TTFT.
+
+![live vs static, prefix caching on](results/fig_live_vs_static_offload.png)
+
+| GPU KV | live run 2: TTFT p50 / queue wait / TPOT / tok/s / preempt | static: TTFT p50 / queue wait / TPOT / tok/s / preempt |
+|---|---|---|
+| 13 GiB | 51 ms / 23 ms / 13.0 ms / 261 / 0 | 51 ms / 23 ms / 13.1 ms / 258 / 0 |
+| 10 | 54 / 28 / 13.1 / 265 / 0 | 55 / 33 / 13.1 / 258 / 0 |
+| 8 | 91 / 45 / 13.8 / 237 / 0 | 57 / 41 / 13.1 / 258 / 0 |
+| 6 | 71 / 48 / 13.1 / 240 / 0 | 68 / 65 / 13.1 / 258 / 0 |
+| 5 | 148 / 148 / 13.6 / 272 / 0 | 136 / 91 / 13.1 / 257 / 0 |
+| 4 | 156 / 136 / 13.4 / 272 / 0 | 155 / 153 / 13.1 / 257 / 2 |
+| 3 | 3 359 / 2 083 / 12.3 / 228 / 0 | 2 451 / 2 154 / 12.3 / 252 / 0 |
+| 2 | 18 208 / 11 180 / 11.8 / 177 / 0 | 32 134 / 22 996 / 11.8 / 179 / 0 |
+
+Above the knee the two arms are the same within run-to-run noise (TTFT p50 within 15 ms except
+the live 8 GiB point at 91 vs 57 ms, which is reproducible across the two live runs and is the
+window right after the biggest single eviction; TPOT identical; queue wait 23–150 ms in both).
+The knee is at the same place. Below it both queue; the live arm's queue is shorter only because
+its 60-s windows give the backlog less time to build than the static arm's 150 s. The one
+preemption event of the whole comparison is on the static side (2 at 4 GiB). Study 1's
+preempt-recompute spiral and 1.8 GiB stall did not recur on vLLM 0.30 even with a static budget:
+the newer scheduler queues.
+
+### Decode-only emulation (`results/fig_live_vs_static_decodeonly.png`)
+
+To look at the decode side alone without a second GPU, the same workload was run with **prefix
+caching off** and a **28 GiB** DRAM tier that holds every prefix: the GPU then holds only in-flight
+KV and every request's prefix arrives from the store (the decode-engine situation of the
+proposal, the store standing in for the prefill GPU; the remaining prefill is the 128 new tokens,
+~10 ms). vLLM's native offload does work with prefix caching off (DRAM hit 95–98 % of looked-up
+tokens). Judged on TPOT, scheduler queue wait, delivered throughput and failures; TTFT here is
+fetch + 128-token prefill, not a first-token latency.
+
+![live vs static, decode-only emulation](results/fig_live_vs_static_decodeonly.png)
+
+| GPU KV | live: TPOT / queue wait / tok/s / preempt | static: TPOT / queue wait / tok/s / preempt |
+|---|---|---|
+| 13 GiB | 13.2 ms / 111 ms / 261 / 0 | 13.3 ms / 114 ms / 258 / 0 |
+| 10 | 13.2 / 114 / 265 / 0 | 13.2 / 114 / 258 / 0 |
+| 8 | 14.1 / 149 / 237 / 0 | 13.2 / 116 / 258 / 0 |
+| 6 | 13.2 / 146 / 242 / 0 | 13.3 / 156 / 257 / 0 |
+| 5 | 14.0 / 575 / 272 / 0 | 13.4 / 218 / 257 / 0 |
+| 4 | 14.0 / 662 / 272 / 0 | 13.4 / 370 / 256 / 0 |
+| 3 | 12.2 / 4 141 / 216 / 1 | 12.3 / 10 543 / 225 / 0 |
+| 2 | 11.7 / 18 309 / 156 / 0 | 11.7 / 29 161 / 158 / 0 |
+
+Decode speed never sees the budget: TPOT is 13.2–14.1 ms from 13 GiB down to 4 GiB in both
+arms, and the GPU holds only ~3 GiB of in-flight KV at any budget (kvcached used 3.1 GiB at the
+13 G limit). The 110–150 ms "queue wait" of the wide region is the KV fetch itself (a request
+waits for its slot and its 0.77 GiB load). From 5 GiB the in-flight set's p95 (~5.4 GiB) starts
+to bump the limit and queueing grows (0.2–0.7 s); below 4 GiB the engine is capacity-bound and
+delivers 1.7 then 1.2 of the 2 req/s offered, with zero failures and at most one preemption.
+Live and static agree on every point above the knee and on where the knee is.
+
+**Answer to the second question (decode-only, live vs static):** no measurable difference. A
+decode engine whose KV comes from a store can have its budget cut live from 13 GiB to 6 GiB
+with nothing visible on TPOT, queueing or throughput, to 4 GiB with ~0.5 s of extra queueing per
+request, and is capacity-bound (queueing, not failing) below that — the same numbers a
+freshly started engine at each budget produces.
 
 ## 8. Caveats
 

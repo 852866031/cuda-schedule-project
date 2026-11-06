@@ -20,7 +20,7 @@ s = pd.read_csv(args.sampler); s["rel"] = s.t - args.t0
 reqs = [json.loads(l) for l in open(args.load)]
 reqs = [r for r in reqs if not r["rid"].startswith("w")]
 rs = [json.loads(l) for l in open(args.resize)]
-num = lambda c: pd.to_numeric(s[c], errors="coerce")
+num = lambda c: pd.to_numeric(s[c], errors="coerce") if c in s.columns else pd.Series(np.nan, index=s.index)
 kl = num("kvc_limit")
 # window boundaries: baseline from 0; then each limit's first visible instant
 bounds = [("start", 0.0)]
@@ -50,22 +50,32 @@ for k in range(len(bounds) - 1):
         v = num(c).loc[sw.index].dropna(); return (v.iloc[-1] - v.iloc[0]) if len(v) > 1 else float("nan")
     pcq, pch, exq, exh = delta("pc_queries"), delta("pc_hits"), delta("ext_queries"), delta("ext_hits")
     stalls = sum(1 for r in ok for x, y in zip(r["tok_t"], r["tok_t"][1:]) if y - x > 1.0)
+    tpot = np.array([(r["t_done"] - r["tok_t"][0]) / max(1, r["n_out"] - 1) for r in ok if r["n_out"] > 1])
+    e2e = np.array([r["t_done"] - r["t_send"] for r in ok])
+    qs, qc = delta("queue_sum"), delta("queue_count")
+    queue_mean = (qs / qc) if qc and qc == qc and qc > 0 else np.nan
+    done_reqs = [r for r in reqs if a + args.settle <= r["t_done"] - args.t0 < b and r["status"] == 200 and not r["error"]]
+    done_in = len(done_reqs); tok_done = sum(r["n_out"] for r in done_reqs)
     rows.append(dict(limit=label, t_from=a, t_to=b, n=len(win), ok=len(ok), failed=len(win) - len(ok),
         ttft50=np.median(ttft) * 1e3 if len(ttft) else np.nan, ttft95=np.percentile(ttft, 95) * 1e3 if len(ttft) else np.nan,
         itl50=np.median(itl) * 1e3 if len(itl) else np.nan, itl95=np.percentile(itl, 95) * 1e3 if len(itl) else np.nan,
         tok_s=toks / span, preempt=delta("preemptions"),
+        tpot50=np.median(tpot) * 1e3 if len(tpot) else np.nan, tpot95=np.percentile(tpot, 95) * 1e3 if len(tpot) else np.nan,
+        e2e50=np.median(e2e) if len(e2e) else np.nan, queue_mean_ms=queue_mean * 1e3, req_s_done=done_in / span, tok_s_done=tok_done / span,
+        waiting_mean=num("waiting").loc[sw.index].mean(),
         gpu_hit=pch / pcq if pcq else np.nan, dram_hit=exh / exq if exq else np.nan,
         kvc_used=num("kvc_used").loc[sw.index].median() / GiB, nvml=num("nvml_used").loc[sw.index].median() / GiB,
         running=num("running").loc[sw.index].median(), waiting=num("waiting").loc[sw.index].max(), stalls=stalls))
 df = pd.DataFrame(rows)
-hdr = ["limit", "window s", "req ok/fail", "TTFT p50 ms", "TTFT p95 ms", "ITL p50 ms", "ITL p95 ms", "tok/s", "preempt Δ",
-       "GPU prefix hit", "DRAM hit", "kvcached used GiB", "NVML GiB", "running med", "waiting max", "stalls>1s"]
+hdr = ["limit", "window s", "req ok/fail", "TTFT p50 ms", "TTFT p95 ms", "TPOT p50 ms", "TPOT p95 ms", "ITL p50 ms", "tok/s offered", "tok/s delivered",
+       "queue wait mean ms", "waiting mean/max", "e2e p50 s", "preempt Δ", "GPU prefix hit", "DRAM hit", "kvcached used GiB", "stalls>1s"]
 lines = [f"## {args.name}", "", "| " + " | ".join(hdr) + " |", "|" + "---|" * len(hdr)]
 for r in rows:
+    pct = lambda v: f"{v*100:.0f}%" if v == v else "n/a"
     lines.append(f"| {r['limit']} | {r['t_from']:.0f}–{r['t_to']:.0f} | {r['ok']}/{r['failed']} | {r['ttft50']:.0f} | {r['ttft95']:.0f} | "
-                 f"{r['itl50']:.1f} | {r['itl95']:.1f} | {r['tok_s']:.0f} | {r['preempt']:.0f} | "
-                 f"{r['gpu_hit']*100 if r['gpu_hit']==r['gpu_hit'] else float('nan'):.0f}% | {r['dram_hit']*100 if r['dram_hit']==r['dram_hit'] else float('nan'):.0f}% | "
-                 f"{r['kvc_used']:.2f} | {r['nvml']:.2f} | {r['running']:.0f} | {r['waiting']:.0f} | {r['stalls']} |")
+                 f"{r['tpot50']:.1f} | {r['tpot95']:.1f} | {r['itl50']:.1f} | {r['tok_s']:.0f} | {r['tok_s_done']:.0f} | "
+                 f"{r['queue_mean_ms']:.0f} | {r['waiting_mean']:.1f}/{r['waiting']:.0f} | {r['e2e50']:.2f} | {r['preempt']:.0f} | "
+                 f"{pct(r['gpu_hit'])} | {pct(r['dram_hit'])} | {r['kvc_used']:.2f} | {r['stalls']} |")
 print("\n".join(lines)); open(f"{args.figdir}/{args.name}_summary.md", "w").write("\n".join(lines) + "\n")
 df.to_csv(f"{args.figdir}/{args.name}_windows.csv", index=False)
 # figure
