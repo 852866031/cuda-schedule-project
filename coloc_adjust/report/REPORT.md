@@ -42,8 +42,9 @@ in the round-2 prefill schemes. Nothing is changed inside vLLM's scheduler:
 - **Prefill tenant** (`pf_tenant.py`, round 2): a second vLLM engine (Qwen2.5-3B, fp8, its own
   kvcached instance, KV streamed to a 3.5 GiB host-RAM tier, `max_tokens = 1`) behind an adapter
   that sets the engine's kvcached limit from the budget, holds new requests at the proxy when the
-  budget is below 0.25 GiB, and puts the engine to sleep (weights to host, 4.9 → 1.4 GiB on the
-  GPU) after 5 s idle; it wakes in 0.3 s when the budget returns.
+  budget is below 0.5 GiB, and puts the engine to sleep (weights to host, 4.5 → 1.4 GiB on the
+  GPU) after 3 s idle; it wakes in ≈ 0.3 s once the budget is back above 1.5 GiB. Own report:
+  [REPORT_pf.md](REPORT_pf.md).
 - **Transfer tracing**: every host↔GPU copy is recorded with its source — the engine's native
   offload transfers (bytes and CUDA-event time from vLLM's own transfer results, via an
   observation-only `sitecustomize`) and the tenant's activation/weight/snapshot copies — plus
@@ -278,39 +279,15 @@ copy-heavy shapes while their cost rises.*
 
 ### 2.5 The prefill tenant (round 2, plan P3)
 
-A different kind of tenant: a Qwen2.5-3B (fp8) vLLM engine that only prefills 3072-token prompts
-at 1 req/s (3.1k prompt tok/s offered) and streams the KV to a host-RAM tier, i.e. the "prefill
-node" of a disaggregated pair sharing the GPU with the decode node. Its footprint is 4.5 GiB fixed
-(weights, context, kvcached segment) plus KV; it has no ladder, only KV limit → hold → sleep
-(Diagram 6).
-
-![prefill tenant states](figures/06_pf_tiers.png)
-
-*Diagram 6 — the prefill tenant's three states (`pf_tenant.py`): run with its kvcached limit at the budget, hold new prompts under 0.5 GiB, sleep after 3 idle seconds, wake once the budget is back above 1.5 GiB. The red note is where the scheme binds.*
-
-![prefill schemes](figures/arms_pf.png)
-
-*Figure 6 — the three prefill-tenant schemes against their own baseline (`plot_arms.py --pf`): decode latency, queue wait and the tenant's delivered prompt tokens/s per arrival rate.*
-
-![prefill tenant timeline](figures/pf_mps_pf.png)
-
-*Figure 7 — the prefill tenant under MPS over the run (`analyze_pf.py`): its throughput in 5-s bins, the latency of each prompt (queueing at the adapter included), and its KV limit with the paused (light) and asleep (dark) spans.*
-
-<!-- pf-outcome-start -->
-**Outcome (D19).** The three schemes are indistinguishable: decode **+4–8 % at 0.5–1 req/s and 0 % at
-≥ 2 req/s**, the tenant delivering **6–9 k prompt tok/s at 0.5–1 req/s and nothing at ≥ 2 req/s**,
-where it is asleep for the whole phase (0 failed requests; `pf_base` equals the main baseline, so the
-smaller host tier costs nothing). The compute mechanism did not matter because compute never became
-the limit: the tenant's **4.5 GiB fixed footprint** leaves 9.4 GiB for the 8B's KV and its own, and
-the 8B's demand exceeds that from 2 req/s on, so the adapter holds requests and the engine sleeps.
-While it sleeps its real footprint is 1.4 GiB, but the scheduler's allowance stays at 4.5 GiB — 3 GiB
-idle in every ≥ 2 req/s phase. The prompt latencies in the sleeping phases (45–190 s median) are
-queueing at the adapter, not prefill time (71 ms for 3072 tokens when awake). Per prompt token the
-prefill tenant costs decode less than the fine-tune tenant (≈ 1 % per 1 k tok/s against 2.2 %): prefill
-reads the weights once per 8 k-token batch. In `pf_split` the budget returned briefly inside the
-4 req/s phase, the tenant woke and the engine's queue doubled (6.7 s): the wake margin must cover the
-3.5 GiB a wake costs.
-<!-- pf-outcome-end -->
+A different kind of tenant: a Qwen2.5-3B (fp8) vLLM engine that only prefills and streams its KV to
+host RAM, i.e. the prefill node of a disaggregated pair sharing the GPU with the decode node. It has
+its own report, **[REPORT_pf.md](REPORT_pf.md)**, with the architecture (Diagram A), the adapter's
+states (Diagram B), figures and tables. In short (D19): the three compute schemes (MPS, MPS 20 %,
+disjoint SMs) are indistinguishable at **+4–8 % decode at 0.5–1 req/s and 0 % from 2 req/s on**,
+because the tenant's **4.5 GiB fixed footprint** leaves only 9.4 GiB for both engines' KV and the 8B
+needs more than that from 2 req/s, so the tenant sleeps through those phases. Per prompt token it costs
+decode about half of what the fine-tune tenant costs. Two accounting gaps remain: the sleeping
+footprint (1.4 GiB) is still booked at 4.5 GiB, and the wake margin is below the wake cost.
 
 ## 3. Host↔GPU transfers
 

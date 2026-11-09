@@ -44,8 +44,8 @@ offload/权重流式的形态，每 1k tok/s 的代价越高（1.3% → 9%）。
   green context 一次建好，步间只切 stream。
 - **Prefill tenant**（`pf_tenant.py`，第二轮新增）：第二个 vLLM 引擎（Qwen2.5-3B fp8，自己的 kvcached
   实例，KV 流到 3.5 GiB 的 host RAM 层，只做 prefill），前面一个适配器按预算设它的 KV 上限、预算低于
-  0.25 GiB 时把新请求扣在门口、空闲 5 秒后让引擎睡眠（权重回 host，显存 4.9 → 1.4 GiB），预算回来
-  0.3 秒唤醒。
+  0.5 GiB 时把新请求扣在门口、空闲 3 秒后让引擎睡眠（权重回 host，显存 4.5 → 1.4 GiB），预算回到
+  1.5 GiB 以上约 0.3 秒唤醒。单独的报告：[REPORT_pf_zh.md](REPORT_pf_zh.md)。
 - **观察补丁**（`hp_patch/sitecustomize.py`）：只记录引擎的 offload 传输、可选地把引擎的 step 放到
   green context 上，不改调度。
 - **采样器**：每 100 ms 记 kvcached 用量、NVML 显存、PCIe 计数，第二轮加了功耗、SM 忙碌度和
@@ -195,31 +195,14 @@ green context）**在 0.5–1 req/s 时都给训练 7–12k tok/s，解码代价
 训练吞吐；训练所处的档位。到达率涨 → 红线立刻上抬、黄色被压缩、档位往下掉；4 req/s 阶段训练整个
 暂停，TPOT 和 baseline 重合；负载回落 5 秒后红线下调、黄色回来、档位爬回 k=2/k=4。
 
-### 图 6、图 7：prefill 引擎当 tenant
+### prefill 引擎当 tenant：单独一份报告
 
-![pf](figures/arms_pf.png)
-
-![pf timeline](figures/pf_mps_pf.png)
-
-Qwen2.5-3B fp8 只做 3072-token prompt 的 prefill（1 req/s，约 3.1k prompt tok/s），KV 流到 host RAM，
-相当于 PD 分离里的 prefill 节点和 decode 节点共卡。它固定占 4.5 GiB（权重、context、kvcached 段），
-没有阶梯，只有"KV 上限 → 扣请求 → 睡眠"三档（图 F）。
-
-![06_pf_tiers](figures/06_pf_tiers.png)
-
-*图 F：prefill tenant 的三个状态：预算够就把自己的 kvcached 上限设成预算；低于 0.5 GiB 扣住新 prompt；空闲 3 秒后 sleep（显存 4.5 → 1.4 GiB，来回各约 260 ms）；预算回到 1.5 GiB 以上才唤醒。红框是它卡住的地方。*
-
-<!-- pf-outcome-start -->
-**结果（D19）**：三种算力机制没有差别：decode **0.5–1 req/s 时 +4–8%，≥ 2 req/s 时 0%**；tenant 在
-0.5–1 req/s 交付 **6–9k prompt tok/s**，≥ 2 req/s 整个阶段都在睡（0 个失败请求；`pf_base` 和主 baseline
-一样，host 层变小没有代价）。机制不重要是因为算力从来不是限制：tenant **固定占 4.5 GiB**，留给 8B 的 KV
-和它自己的 KV 只有 9.4 GiB，8B 从 2 req/s 起的需求就超过这个数，于是适配器扣请求、引擎睡眠。睡着时它
-实际只占 1.4 GiB，但调度器的固定份额仍按 4.5 算——每个 ≥ 2 req/s 阶段有 3 GiB 闲着。睡眠阶段的
-prompt 延迟（中位 45–190 秒）是在适配器排队，不是 prefill 本身（醒着时 3072 token 71 ms）。按每个
-prompt token 算，prefill tenant 对 decode 的代价比训练 tenant 低（每 1k tok/s 约 1% 对 2.2%）：prefill
-每 8k token 一批只读一遍权重。`pf_split` 里预算在 4 req/s 阶段中途短暂回来，tenant 醒了一下，引擎排队
-翻倍到 6.7 秒：唤醒余量必须盖住唤醒要的 3.5 GiB。
-<!-- pf-outcome-end -->
+Qwen2.5-3B fp8 只做 prefill、KV 流到 host RAM，相当于 PD 分离里的 prefill 节点和 decode 节点共卡。
+这个变种单独写在 **[REPORT_pf_zh.md](REPORT_pf_zh.md)** 里，有它自己的架构图、状态图、图表和数字。
+一句话（D19）：三种算力机制没有区别，decode **0.5–1 req/s 时 +4–8%，≥ 2 req/s 时 0%**，因为 tenant
+**固定占 4.5 GiB**，两个引擎的 KV 只剩 9.4 GiB，8B 从 2 req/s 起就要得更多，tenant 整段睡着。按 prompt
+token 算它的 decode 代价约为训练 tenant 的一半。记账还有两个缺口：睡着时 1.4 GiB 仍按 4.5 记，唤醒余量
+小于唤醒成本。
 
 ### 数字表
 
