@@ -196,11 +196,7 @@ Round-1 (600 W) tables for the same schemes are in the git history of this file 
 
 ![dynamic green context](figures/05_green_dyn.png)
 
-*Diagram 5 — the SM-share loop of the prebuilt dynamic green-context scheme (`green_dyn2`, source
-`../diagrams/05_green_dyn.drawio`). Left: the VRAM scheduler turns the recent arrival rate into a
-tenant SM count by table and publishes it beside the memory budget. Right: the tenant built one
-green context per SM count at start and, between steps, only switches its stream to the nearest
-one. The memory ladder (Diagram 3) runs unchanged alongside.*
+*Diagram 5 — the SM-share loop of `green_dyn2`: the scheduler maps the arrival rate to an SM count and publishes it with the budget; the tenant switches between contexts it built once at start. The memory ladder (Diagram 3) runs unchanged alongside.*
 
 | scheme | decode at 1 / 2 req/s (TPOT, queue) | tenant at 1 / 0.5 req/s | note |
 |---|---|---|---|
@@ -290,12 +286,7 @@ node" of a disaggregated pair sharing the GPU with the decode node. Its footprin
 
 ![prefill tenant states](figures/06_pf_tiers.png)
 
-*Diagram 6 — the prefill tenant's three states and what moves it (`pf_tenant.py`, source
-`../diagrams/06_pf_tiers.drawio`): the adapter sets the engine's own kvcached limit to the budget,
-holds new prompts when the budget falls under 0.5 GiB, puts the engine to sleep after 3 idle
-seconds (≈ 260 ms each way) and wakes it once the budget is back with 1 GiB of margin. The red note
-is where the scheme binds: the fixed footprint, and the 3 GiB the scheduler does not yet credit back
-while the engine sleeps.*
+*Diagram 6 — the prefill tenant's three states (`pf_tenant.py`): run with its kvcached limit at the budget, hold new prompts under 0.5 GiB, sleep after 3 idle seconds, wake once the budget is back above 1.5 GiB. The red note is where the scheme binds.*
 
 ![prefill schemes](figures/arms_pf.png)
 
