@@ -8,6 +8,9 @@
                     the cost of colocation scales with how fast the tenant runs, whatever
                     the compute-sharing mechanism.
 
+  arms_best.png     the same panels for the baseline and the three schemes that give the best
+                    trade-off (plot_arms.py --only adjust_notenant,adjust_mps20,tpot_slo15,green_dyn2).
+
   plot_arms.py --dir results --out results/arms
 """
 import argparse, os
@@ -21,8 +24,11 @@ from arm_names import ARMS, PF_ARMS, BASE, PF_BASE  # noqa: E402
 ap = argparse.ArgumentParser()
 ap.add_argument("--dir", default="results"); ap.add_argument("--out", default="results/arms")
 ap.add_argument("--pf", action="store_true", help="the prefill-tenant schemes instead of the training-tenant ones")
+ap.add_argument("--only", default="", help="comma-separated scheme ids: draw only these (figure 1 only, no trade-off figure)")
 args = ap.parse_args()
 if args.pf: ARMS, BASE = PF_ARMS, PF_BASE
+if args.only:
+    keep = args.only.split(","); ARMS = [t for t in ARMS if t[0] in keep]
 P = {}
 for a, *_ in ARMS:
     f = os.path.join(args.dir, f"{a}_phases.csv")
@@ -40,7 +46,7 @@ def pooled(d, key):
 
 
 # ---- figure 1: metrics vs arrival rate ------------------------------------------------
-fig, ax = plt.subplots(1, 3, figsize=(14, 8.0))
+fig, ax = plt.subplots(1, 3, figsize=(14, 6.0 if args.only else 8.0))
 for a, label, color, marker in arms:
     d = P[a]
     for k, (key, scale) in enumerate((("tpot50", 1.0), ("queue_ms", 1.0), ("ft_tok_s", 1e-3))):
@@ -56,10 +62,12 @@ for a_ in ax:
     a_.set_xlabel("Arrival rate (req/s)"); a_.set_xticks(rates); a_.grid(True, alpha=0.3)
 ax[2].set_ylim(bottom=0)
 handles, labels = ax[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=9, frameon=False,
+fig.legend(handles, labels, loc="lower center", ncol=2 if args.only else 3, fontsize=9, frameon=False,
            bbox_to_anchor=(0.5, -0.02))
-fig.tight_layout(rect=(0, 0.09, 1, 1))
+fig.tight_layout(rect=(0, 0.12 if args.only else 0.09, 1, 1))
 fig.savefig(args.out + ".png", dpi=150, bbox_inches="tight"); print("figure:", args.out + ".png")
+if args.only:
+    raise SystemExit(0)
 
 # ---- figure 2: slowdown vs tenant throughput ------------------------------------------
 fig, ax = plt.subplots(figsize=(7, 4.6))

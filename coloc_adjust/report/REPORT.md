@@ -138,6 +138,15 @@ mechanisms that move the trade-off are the prebuilt dynamic green context (cyan:
 MPS co-running for half its latency cost) and the 15 % latency-SLO cap (pink: the decode cost
 held where it was asked to be).*
 
+![best schemes](figures/arms_best.png)
+
+*Figure 1b — the same panels for the baseline and the three schemes with the best latency/throughput
+trade-off (`plot_arms.py --only …`). The 20 % MPS cap (green) and the prebuilt dynamic green context
+(cyan) both deliver 7–12k tok/s at 0.5–1 req/s; the green context costs about the same decode latency
+(+10–15 %) for 40–70 % more tenant throughput and falls to the baseline by 2 req/s. The 15 % SLO cap
+(pink) is the choice when the decode budget is fixed: it stays within the target at every rate and
+hands the tenant whatever that leaves (1–5k tok/s).*
+
 ![tradeoff](figures/arms_tradeoff.png)
 
 *Figure 2 — the same runs, one point per scheme and phase: decode slowdown over the baseline against
