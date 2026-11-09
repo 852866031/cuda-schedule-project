@@ -40,7 +40,7 @@ def pooled(d, key):
 
 
 # ---- figure 1: metrics vs arrival rate ------------------------------------------------
-fig, ax = plt.subplots(1, 3, figsize=(14, 4.4))
+fig, ax = plt.subplots(1, 3, figsize=(14, 8.0))
 for a, label, color, marker in arms:
     d = P[a]
     for k, (key, scale) in enumerate((("tpot50", 1.0), ("queue_ms", 1.0), ("ft_tok_s", 1e-3))):
@@ -58,7 +58,7 @@ ax[2].set_ylim(bottom=0)
 handles, labels = ax[0].get_legend_handles_labels()
 fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=9, frameon=False,
            bbox_to_anchor=(0.5, -0.02))
-fig.tight_layout(rect=(0, 0.14, 1, 1))
+fig.tight_layout(rect=(0, 0.09, 1, 1))
 fig.savefig(args.out + ".png", dpi=150, bbox_inches="tight"); print("figure:", args.out + ".png")
 
 # ---- figure 2: slowdown vs tenant throughput ------------------------------------------
