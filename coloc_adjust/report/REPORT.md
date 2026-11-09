@@ -197,6 +197,16 @@ Green-context schemes (`green_ctx.py`, ctypes on libcuda; details in DECISIONS D
 Every host↔GPU copy was recorded with its source (figure `../results/<scheme>_xfer.png`; records in
 `../results/<scheme>_xfer_{inf,ft}.csv`; NVML PCIe counters in the sampler CSV).
 
+![transfers](figures/adjust_nogate_xfer.png)
+
+*Figure 3 — every host↔GPU copy in the MPS scheme and what caused it. Top two rows are the causes:
+each admitted request (blue tick) triggers one 768 MiB prefix load and, when it finishes, one
+16 MiB store; each move of the tenant's shape triggers the tenant's copies (activations out and
+back on the way through the activation-offload shape, weights out on pause and back on resume), and
+a snapshot goes out every 10 steps. The middle row shows the copies themselves as spans, the fourth
+the bytes moved per second by source, the last NVML's PCIe counters. The same figure exists for
+every scheme in `../results/<scheme>_xfer.png`.*
+
 | | per copy | per 11-minute run |
 |---|---|---|
 | inference loads (DRAM → GPU, one per admitted request) | 768 MiB in 55.7 ms = **13.5 GiB/s** (≈ 93 % of the 14.5 GB/s the link delivers) | 1 176 loads, 880 GiB, 1.36 GiB/s average |

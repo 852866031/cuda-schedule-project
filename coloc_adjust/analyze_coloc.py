@@ -152,25 +152,54 @@ ax[5].set_xlabel("time since end of warm-up (s)"); ax[5].set_xlim(-35, end + 5)
 fig.subplots_adjust(top=0.965, bottom=0.045, left=0.09, right=0.98)
 fig.suptitle(arm_name(args.arm), fontsize=13, y=0.99); fig.savefig(P("timeline.png"), dpi=130)
 
-# ---- transfer figure
-fig, ax = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
-def bars(ax_, df, color, label):
-    if df is None or not len(df): return
-    d = df.copy(); d["a"] = d.ts_start - t0; d["b"] = d.ts_end - t0
-    d = d[(d.b > 0) & (d.a < end)]
-    ax_.barh([label] * len(d), d.b - d.a, left=d.a, height=0.6, color=color, alpha=0.6)
-    return d
-bars(ax[0], xi, "C0", "inf offload (h2d/d2h)"); bars(ax[0], xf, "C3", "ft copies"); ax[0].set_ylabel("transfers")
-for df, c, lab in ((xi, "C0", "inf bytes/s"), (xf, "C3", "ft bytes/s")):
+# ---- transfer figure: what caused each host<->GPU copy, the copies, their rate, and the NVML view
+fig, ax = plt.subplots(5, 1, figsize=(12, 12), sharex=True,
+                       gridspec_kw=dict(height_ratios=[0.8, 0.8, 1.6, 1.2, 1.0], hspace=0.1))
+# (1) requests: offered rate and every admission (each admission = one prefix load, each completion = one store)
+ax[0].fill_between(tt, 0, rps_line, step="post", color="#cccccc", label="offered rate")
+ax[0].vlines(R.t_send, 0, 0.35, color="#1f77b4", lw=0.5, alpha=0.7, label="request admitted (→ one 768 MiB KV load)")
+for (ta, rps), tb in zip(sched, bounds[1:]):
+    if tb - ta >= 25: ax[0].text((ta + tb) / 2, rps + 0.3, f"{rps:g}", ha="center", va="bottom", fontsize=8)
+ax[0].set_ylim(0, 5.5); ax[0].set_yticks([0, 2, 4]); ax[0].set_ylabel("req/s"); ax[0].legend(fontsize=7.5, loc="upper left", ncol=2, frameon=False)
+# (2) tenant shape: every move is a copy (activations out/in, weights out on pause, back on resume) + snapshots every 10 steps
+if ft is not None:
+    ax[1].step(ft.rel, num(ft, "cfg"), where="post", color="#bc6c25", lw=1.2)
+    ax[1].set_yticks(range(len(CFG_LABELS))); ax[1].set_yticklabels(CFG_LABELS, fontsize=6.5); ax[1].set_ylim(len(CFG_LABELS) - 0.5, -0.5)
+else:
+    ax[1].text(0.5, 0.5, "no fine-tune tenant in this scheme", transform=ax[1].transAxes, ha="center", color="#666666"); ax[1].set_yticks([])
+ax[1].set_ylabel("FT shape")
+# (3) every copy as a span, one lane per kind
+lanes = [("inf", "h2d", "offload", "inference: prefix KV load (host → GPU)", "#1f77b4"),
+         ("inf", "d2h", "offload", "inference: KV store after finish (GPU → host)", "#7fb3d5"),
+         ("ft", None, ("act_out", "act_in"), "tenant: activations out / back", "#d62728"),
+         ("ft", None, ("pause", "resume"), "tenant: weights out (pause) / back (resume)", "#ff7f0e"),
+         ("ft", None, ("snapshot",), "tenant: training-state snapshot", "#bc6c25")]
+ylabels = []
+for k, (src, d, tags, label, color) in enumerate(lanes):
+    df = xi if src == "inf" else xf
+    ylabels.append(label)
     if df is None or not len(df): continue
-    d = df.copy(); d["b"] = d.ts_end - t0
-    binned = d.groupby(np.floor(d.b)).bytes.sum() / 2**30
-    ax[1].bar(binned.index, binned.values, width=1.0, color=c, alpha=0.6, label=lab)
-ax[1].set_ylabel("GiB/s (by completion second)"); ax[1].legend(fontsize=8)
+    sel = df[(df.dir == d)] if d else df[df.tag.isin(tags)]
+    a_ = sel.ts_start - t0; b_ = sel.ts_end - t0; m = (b_ > -40) & (a_ < end)
+    ax[2].barh([k] * int(m.sum()), np.maximum((b_ - a_)[m], 0.4), left=a_[m], height=0.6, color=color, alpha=0.75, linewidth=0)
+ax[2].set_yticks(range(len(lanes))); ax[2].set_yticklabels(ylabels, fontsize=7.5); ax[2].set_ylim(len(lanes) - 0.5, -0.5); ax[2].set_ylabel("copies")
+# (4) bytes moved per second, by source
+for df, color, lab in ((xi, "#1f77b4", "inference"), (xf, "#d62728", "tenant")):
+    if df is None or not len(df): continue
+    binned = df.groupby(np.floor(df.ts_end - t0)).bytes.sum() / 2**30
+    ax[3].bar(binned.index, binned.values, width=1.0, color=color, alpha=0.6, label=lab, linewidth=0)
+ax[3].set_ylabel("GiB/s moved"); ax[3].legend(fontsize=8, loc="upper left", frameon=False)
+# (5) NVML PCIe counters, 1-s mean
 if "pcie_tx_kbs" in samp:
-    ax[2].plot(samp.rel, num(samp, "pcie_rx_kbs") / 2**20, lw=0.6, label="NVML PCIe RX (host→GPU) GiB/s")
-    ax[2].plot(samp.rel, num(samp, "pcie_tx_kbs") / 2**20, lw=0.6, label="NVML PCIe TX (GPU→host) GiB/s"); ax[2].legend(fontsize=8)
-ax[2].set_xlabel("time since end of warm-up (s)"); ax[2].set_xlim(-45, end + 5); fig.suptitle(f"{args.arm}: host<->GPU transfers"); fig.tight_layout(); fig.savefig(P("xfer.png"), dpi=120)
+    ax[4].plot(samp.rel, (num(samp, "pcie_rx_kbs") / 2**20).rolling(10, min_periods=1).mean(), lw=0.7, color="#1f77b4", label="PCIe host → GPU")
+    ax[4].plot(samp.rel, (num(samp, "pcie_tx_kbs") / 2**20).rolling(10, min_periods=1).mean(), lw=0.7, color="#ff7f0e", label="PCIe GPU → host")
+    ax[4].legend(fontsize=8, loc="upper left", frameon=False)
+ax[4].set_ylabel("GiB/s (NVML, 1-s mean)"); ax[4].set_xlabel("time since end of warm-up (s)"); ax[4].set_xlim(-35, end + 5)
+for a_ in ax:
+    a_.grid(True, axis="y", alpha=0.25)
+    for t, _ in sched[1:]: a_.axvline(t, color="k", ls=":", lw=0.6, alpha=0.6)
+fig.subplots_adjust(top=0.96, bottom=0.05, left=0.24, right=0.98)
+fig.suptitle(f"{arm_name(args.arm)}: host ↔ GPU copies and what caused them", fontsize=13, y=0.99); fig.savefig(P("xfer.png"), dpi=130)
 # contention: inf load duration vs concurrent ft bytes
 if xi is not None and len(xi):
     d = xi.copy(); d["gpu_ms"] = pd.to_numeric(d.gpu_ms, errors="coerce")

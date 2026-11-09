@@ -160,7 +160,11 @@ decode TPOT（蓝 = 本方案，灰 = baseline 同一时间线）；调度排队
 
 ## 7. 传输路径不是瓶颈
 
-每一次 host↔GPU 拷贝都记了下来（`../results/<arm>_xfer.png`，原始记录在 `xfer_*.csv`）。
+每一次 host↔GPU 拷贝都记了下来（`../results/<方案>_xfer.png`，原始记录在 `xfer_*.csv`）。
+
+![transfers](figures/adjust_nogate_xfer.png)
+
+*图 3：MPS 方案里的每一次 host↔GPU 拷贝，以及它为什么发生。上面两行是原因：每个请求进入（蓝色刻度）触发一次 768 MiB 的前缀 KV 加载，结束时触发一次 16 MiB 的回存；训练任务每换一次形态就触发它的拷贝（经过"激活 offload"档时激活出去再回来，暂停时权重出去、恢复时回来），另外每 10 步一次快照。中间一行是拷贝本身（按种类分行，每段的长度是拷贝时长），第四行是每秒搬运的字节数（按来源），最后一行是 NVML 的 PCIe 计数。每个方案都有同样的一张图，在 `../results/<方案>_xfer.png`。*
 推理的 KV load 走 13.5 GiB/s 左右，训练的激活 offload 和权重流式有并发时 load 时长中位数
 没有可测的变化。训练的快照（约 1 GiB）每 10 步一次，在 PCIe 上是短脉冲。所以上面的
 decode 代价不是 PCIe 争用，是 GPU 内部的 DRAM 带宽。
