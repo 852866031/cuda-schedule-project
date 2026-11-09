@@ -30,7 +30,7 @@ nv_used() { nvidia-smi --query-gpu=memory.used -i 0 --format=csv,noheader,nounit
 # --- 8B decode engine (GPU 0)
 export PYTHONPATH=$C/hp_patch COLOC_HP_SIGNAL=1 COLOC_XFER_TRACE=1
 [[ $ARM == pf_split ]] && export COLOC_ENGINE_SMS=128
-"$KV/scripts/serve.sh" "coloc_$ARM" kvcached --offload 28 > /dev/null
+"$KV/scripts/serve.sh" "coloc_$ARM" kvcached --offload "${MAIN_OFFLOAD:-25.5}" > /dev/null
 if ! "$KV/scripts/wait_ready.sh" "coloc_$ARM" 600 > "$L/${ARM}_engine_start.txt" 2>&1; then echo "engine failed"; tail -5 "$L/${ARM}_engine_start.txt"; exit 3; fi
 unset PYTHONPATH COLOC_HP_SIGNAL COLOC_XFER_TRACE COLOC_ENGINE_SMS
 sleep 3; U0=$(nv_used)
@@ -38,10 +38,11 @@ sleep 3; U0=$(nv_used)
 PF_ENV=(MODEL="$PF_MODEL" VLLM_PORT=8200 KV_IPC=vllm_c)
 PF_ARGS=(--quantization fp8 --max-model-len 4608 --max-num-seqs 8 --max-num-batched-tokens 8192)
 [[ ${PF_SLEEP:-0} == 1 ]] && PF_ARGS+=(--enable-sleep-mode)
+[[ ${PF_SLEEP:-0} == 1 ]] && export VLLM_SERVER_DEV_MODE=1   # the /sleep, /wake_up, /is_sleeping routes are dev-mode only
 case $ARM in
-  pf_mps20) env "${PF_ENV[@]}" CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${MPS_PCT:-20} "$KV/scripts/serve.sh" "coloc_${ARM}_pf" kvcached --offload 8 -- "${PF_ARGS[@]}" > /dev/null;;
-  pf_split) env "${PF_ENV[@]}" PYTHONPATH=$C/hp_patch COLOC_ENGINE_SMS=128 COLOC_ENGINE_SMS_REMAINING=1 "$KV/scripts/serve.sh" "coloc_${ARM}_pf" kvcached --offload 8 -- "${PF_ARGS[@]}" > /dev/null;;
-  *)        env "${PF_ENV[@]}" "$KV/scripts/serve.sh" "coloc_${ARM}_pf" kvcached --offload 8 -- "${PF_ARGS[@]}" > /dev/null;;
+  pf_mps20) env "${PF_ENV[@]}" CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${MPS_PCT:-20} "$KV/scripts/serve.sh" "coloc_${ARM}_pf" kvcached --offload "${PF_OFFLOAD:-3.5}" -- "${PF_ARGS[@]}" > /dev/null;;
+  pf_split) env "${PF_ENV[@]}" PYTHONPATH=$C/hp_patch COLOC_ENGINE_SMS=128 COLOC_ENGINE_SMS_REMAINING=1 "$KV/scripts/serve.sh" "coloc_${ARM}_pf" kvcached --offload "${PF_OFFLOAD:-3.5}" -- "${PF_ARGS[@]}" > /dev/null;;
+  *)        env "${PF_ENV[@]}" "$KV/scripts/serve.sh" "coloc_${ARM}_pf" kvcached --offload "${PF_OFFLOAD:-3.5}" -- "${PF_ARGS[@]}" > /dev/null;;
 esac
 if ! VLLM_PORT=8200 "$KV/scripts/wait_ready.sh" "coloc_${ARM}_pf" 600 > "$L/${ARM}_pf_engine_start.txt" 2>&1; then echo "tenant engine failed"; tail -5 "$L/${ARM}_pf_engine_start.txt"; stop_own; exit 3; fi
 sleep 3; U1=$(nv_used); TF=$(python -c "print(max(1.0, ($U1 - $U0) / 1024))"); echo "tenant engine fixed footprint ${TF} GiB (NVML ${U0} -> ${U1} MiB)" | tee "$L/${ARM}_pf_fixed.txt"

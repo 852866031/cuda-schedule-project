@@ -4,6 +4,7 @@ NAMES = {
     "decode_alone":    "Inference alone, fixed 13 GiB KV",
     "adjust_notenant": "Inference alone, KV follows load (baseline)",
     "static_split":    "Static split: KV 6.7 GiB, FT 6 GiB",
+    "static_split_gate": "Static split with the idle gate (tenant starves)",
     "adjust":          "Adaptive KV + FT waits for idle GPU (gate)",
     "adjust_nogate":   "Adaptive KV + FT shares GPU via MPS",
     "adjust_mps20":    "Adaptive KV + FT capped at 20 % of SMs (MPS)",
@@ -15,6 +16,7 @@ NAMES = {
     "tpot_slo5":       "Adaptive KV + FT throttled to a 5 % decode-latency SLO",
     "tpot_slo15":      "Adaptive KV + FT throttled to a 15 % decode-latency SLO",
     "green_dyn2":      "Adaptive KV + FT SM count from load (prebuilt green contexts)",
+    "pf_base":         "Inference alone, KV follows load, 25.5 GiB host tier (prefill-scheme baseline)",
     "pf_mps":          "Adaptive KV + 3B prefill tenant, shared SMs (MPS)",
     "pf_mps20":        "Adaptive KV + 3B prefill tenant capped at 20 % of SMs (MPS)",
     "pf_split":        "Adaptive KV + 3B prefill tenant on disjoint SMs: engine 128, tenant 42",
@@ -41,9 +43,10 @@ ARMS = [
 ]
 # the prefill-tenant schemes get their own figure (plot_arms.py --pf): different tenant, different throughput unit
 PF_ARMS = [
-    ("adjust_notenant", "Inference alone, KV follows load (baseline)",  "#444444", "o"),
+    ("pf_base",         "Inference alone, KV follows load, 25.5 GiB host tier (baseline)", "#444444", "o"),
     ("pf_mps",          "3B prefill tenant, shared SMs (MPS)",           "#1f77b4", "v"),
     ("pf_mps20",        "3B prefill tenant capped at 20 % of SMs (MPS)", "#2ca02c", "D"),
     ("pf_split",        "3B prefill tenant on disjoint SMs (42 of 170)", "#ff7f0e", "P"),
 ]
 BASE = "adjust_notenant"
+PF_BASE = "pf_base"

@@ -282,6 +282,13 @@ async def control_loop(app):
         while need_hist and need_hist[0][0] < now - max(args.shrink_window, 0.1): need_hist.popleft()
         need_for_shrink = max(n for _, n in need_hist) if args.shrink_window > 0 else need
         if not args.no_adjust and HAVE_KVC:
+            if need <= limit and want_limit is not None and want_limit > limit:
+                # D16: the demand fell back under the granted limit while a grow was still pending (the tenant had not
+                # released, or the cap held it). Nothing is left to wait for: drop the stale request, and give the tenant
+                # back the budget of the limit actually granted once kvcached's mapped bytes are under it.
+                want_limit = limit; below_since = None
+                if budget_for(limit) > budget: pending_budget_up = budget_for(limit)
+                action = "grow_abandoned"
             if need > limit or (want_limit is not None and want_limit > limit):
                 if need > limit: want_limit = need; below_since = None
                 budget_new = budget_for(want_limit)

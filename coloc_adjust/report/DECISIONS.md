@@ -261,3 +261,72 @@ Output check (same 8 fixed prompts, greedy): the new kvcached-main + LMCache eng
 matches the no-connector plain engine and the no-connector kvcached engine **8/8** (cold and warm
 identical). On 0.1.6 + the same LMCache, the connector changed 4/8 outputs (D7); that difference is
 gone in this environment as well — the earlier connector runs agree with the new one on only 4/8.
+**10-minute run (`p4_ed_long`, 01:42–01:53, 2 G / 12 G resize every 15 s):** 341/341 requests ok,
+329 stores / 233 retrieves, engine alive, 0 Xid, outputs 8/8 identical to the plain engine; the only
+kvcached warnings are scheduling misses and "shrink refused (in-use pages above target)" at the 2 G
+cap, both expected. **Conclusion for P4: on kvcached main, LMCache 0.5.6's `engine_driven` MP
+connector works with kvcached under heavy store traffic and live resizing; the 0.1.6 fault is gone
+and the outputs are now correct. The pin layer was not needed. The server-side zero-copy modes
+remain blocked by LMCache's one-handle-per-tensor import.** Time used: 25 min of the 3-h box.
+
+## D14. P3 bring-up — the prefill tenant and /dev/shm (01:54)
+
+First attempt (Qwen2.5-3B fp8, kvcached instance `vllm_c`, native host-RAM KV tier of 8 GiB) died at
+start: `Insufficient space in /dev/shm: 8192 MiB required, 2283 MiB free`. vLLM's native offload
+tier lives in /dev/shm (31 GiB on this box) and the 8B's 28 GiB tier is already there. Decision: in the
+prefill-tenant schemes the 8B's tier is 25.5 GiB (32 prefixes × 0.766 GiB = 24.5 GiB still fit) and
+the 3B's is 3.5 GiB (≈ 30 prompts of 3072 tokens; LRU beyond that — it is a sink for streamed KV,
+not a cache the tenant reads back). Because the 8B's tier changes, a `pf_base` reference (8B alone,
+25.5 GiB tier) is added before the three prefill schemes. **Prediction:** `pf_base` equals
+`adjust_notenant` within noise (no prefix is evicted at 25.5 GiB). The bring-up test on GPU 1 is
+repeated with a 2 GiB tier.
+**Bring-up outcome (01:56, GPU 1, 2 GiB tier):** the 3B fp8 engine comes up beside kvcached
+(`vllm_c`, 4.6 GiB on the GPU incl. its first 0.5 GiB of KV), serves prefill-only requests at
+71 ms median for 3072-token prompts (6.1k prompt tok/s in a 2 req/s burst, 19/19 ok), and takes
+kvcached limit changes (1 → 6 GiB) live. `/sleep`, `/wake_up`, `/is_sleeping` returned 404: they are
+vLLM dev-mode routes (`VLLM_SERVER_DEV_MODE=1`); re-testing with it set. The 3B's fixed footprint
+for the VRAM scheduler is measured by NVML at launch in the runner (expected ≈ 4.1 GiB + context).
+**Sleep re-test (01:58, `VLLM_SERVER_DEV_MODE=1`):** `/sleep?level=1` takes the 3B from 4945 to
+1377 MiB on the GPU (weights to host; what stays is the CUDA context and kvcached's segment),
+`/wake_up` returns in 0.30 s and the engine serves again. The prefill schemes therefore run with the
+sleep tier enabled (`PF_SLEEP=1`). **Predictions for `pf_mps` / `pf_mps20` / `pf_split` (plan P3):**
+decode +25–40 % at 1–2 req/s with shared SMs; under +10 % with the 20 % cap or the disjoint
+partition while the tenant keeps ≥ 60 % of its prefill throughput; the tenant sleeps in the 3 and
+4 req/s phases and wakes within a few seconds of the budget returning.
+
+## D15. `static_split` at 500 W ran with the idle gate on and the tenant starved (02:00)
+
+The round-1 runner starts the static-split tenant with `--gate`; in round 1 that gate happened not
+to bite (9.6–12.8k tok/s), in round 2 it does (0.1k tok/s, like the gated adaptive scheme), so the
+run measured "static split + gate", not a static partition with a working tenant. Kept as
+`static_split_gate`; `static_split` is re-run without the gate (MPS co-run, like `adjust_nogate`)
+at the head of chain 2. **Prediction:** tenant 9–12k tok/s in every phase; decode TPOT +20–30 % at
+0.5–2 req/s and seconds of queueing at 3–4 req/s (its 6.7 GiB cannot hold the in-flight set), i.e.
+the round-1 picture.
+
+## D16. Chain 1 at 500 W: the tenant stopped for good after two phases in every adaptive scheme (03:15)
+
+**Observation.** In `adjust_nogate`, `adjust_mps20`, `adjust`, `green_split`, `tpot_slo5` and
+`tpot_slo15` the tenant ran in the first two phases (9.8k / 1.1k tok/s in `adjust_nogate`) and then
+stayed paused (0 tok/s) for the remaining 480 s, while round 1 had it running in every 0.5–2 req/s
+phase. The VRAM-scheduler log shows why: 5285 of 6800 ticks are `grow_wait`. The demand model asked
+for 12.65 GiB at the 3 req/s peak; with the tenant already paused only ≈12.4 GiB could ever be
+mapped (kvcached mapped + NVML free − safety), so the grow stopped at 12.0 GiB. When the demand
+fell back to 2–4 GiB the requested limit (`want_limit`) stayed at 12.65 > 12.0, the grow branch kept
+winning (`grow_wait`), the shrink branch (guarded by `want_limit <= limit`) never ran, and the tenant
+budget published for the pending grow (0 GiB) was never revised. The reference run
+`adjust_notenant` is unaffected (no tenant, so the grow never had to wait: 146 grows, 29 shrinks).
+
+**Fix (controller.py).** A pending grow is abandoned as soon as demand is back under the granted
+limit: `want_limit` is reset to the limit, the tenant's budget for the granted limit is re-published
+once kvcached's mapped bytes are under it (action `grow_abandoned`). The round-1 scheduler had no
+`want_limit` and so no such state to get stuck in; the bug came with the free-memory cap (D11).
+
+**Decision.** The six adaptive runs are archived under `results/_round2a_sticky_want/` (phase,
+scheduler and tenant CSVs only) and re-run with the fix, then chain 2 as planned. Chain 2 had also
+not started: its waiter polled `pgrep -f logs/chain1.sh`, which matched the waiter's own command
+line. **Predictions for the re-run:** the tenant runs in every 0.5–2 req/s phase as in round 1
+(un-gated MPS 8–12k tok/s at 1 req/s, 3–5k at 2 req/s, ≈0 at 3–4 req/s); the gated `adjust` still
+starves; `tpot_slo5` holds decode within ≈ +5 % of the reference at 1–2 req/s with the tenant at
+1–3k tok/s, `tpot_slo15` within ≈ +15 % with the tenant at 3–6k tok/s; `grow_abandoned` appears
+after each peak and `grow_wait` runs are seconds, not minutes.

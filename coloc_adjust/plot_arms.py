@@ -16,13 +16,13 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import sys as _sys, os as _os; _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from arm_names import ARMS, PF_ARMS, BASE  # noqa: E402
+from arm_names import ARMS, PF_ARMS, BASE, PF_BASE  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--dir", default="results"); ap.add_argument("--out", default="results/arms")
 ap.add_argument("--pf", action="store_true", help="the prefill-tenant schemes instead of the training-tenant ones")
 args = ap.parse_args()
-if args.pf: ARMS = PF_ARMS
+if args.pf: ARMS, BASE = PF_ARMS, PF_BASE
 P = {}
 for a, *_ in ARMS:
     f = os.path.join(args.dir, f"{a}_phases.csv")
@@ -81,7 +81,7 @@ for a, label, color, marker in arms:
 xs, ys = np.array(xs), np.array(ys)
 k = (xs * ys).sum() / (xs * xs).sum()  # fit through the origin: no tenant, no cost
 xx = np.linspace(0, xs.max() * 1.05, 10)
-ax.plot(xx, k * xx, "k--", lw=1, alpha=0.6, label=f"adaptive arms, fit through origin: +{k:.1f} % per 1k FT tok/s")
+ax.plot(xx, k * xx, "k--", lw=1, alpha=0.6, label=f"adaptive schemes, fit through origin: +{k:.1f} % per 1k FT tok/s")
 ax.axhline(0, color="k", lw=0.6)
 ax.set_xlabel(("Prefill" if args.pf else "Fine-tune") + " throughput in the phase (k tok/s)")
 ax.set_ylabel("Decode TPOT p50 vs baseline (%)")

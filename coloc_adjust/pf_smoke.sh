@@ -10,7 +10,7 @@ source "$KV/scripts/env.sh"
 L=$C/logs; mkdir -p "$L"; OUT="$L/pf_smoke.txt"; : > "$OUT"
 ARGS=(--quantization fp8 --max-model-len 4608 --max-num-seqs 8 --max-num-batched-tokens 8192)
 [[ $SLEEP == --sleep ]] && ARGS+=(--enable-sleep-mode)
-"$KV/scripts/serve.sh" "pf_smoke" kvcached --gpu 1 --offload 8 -- "${ARGS[@]}" > /dev/null
+"$KV/scripts/serve.sh" "pf_smoke" kvcached --gpu 1 --offload "${PF_OFFLOAD:-2}" -- "${ARGS[@]}" > /dev/null
 PID=$(cat "$KV/logs/vllm_pf_smoke.pid")
 cleanup() { pkill -TERM -P "$PID" 2>/dev/null; kill -TERM "$PID" 2>/dev/null; sleep 4; pkill -KILL -P "$PID" 2>/dev/null; kill -KILL "$PID" 2>/dev/null; rm -f "$KV/logs/vllm_pf_smoke.pid"; }
 trap cleanup EXIT
