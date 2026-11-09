@@ -274,7 +274,9 @@ copy-heavy shapes while their cost rises.*
   where MPS co-running on all SMs pays +29 % for 12–14k, and the fixed 42-SM partition pays +28 %
   for 12–14k. With fewer SMs the tenant's kernels run longer and overlap decode's weight stream
   with fewer concurrent re-reads per token; the 42-SM partition did not show this because at
-  k = 2–4 the tenant on 42 SMs still runs flat out. The round-1 conclusion "placement does not
+  k = 2–4 the tenant on 42 SMs still runs flat out. This mechanism is a hypothesis: the knee
+  measurement in section 2.6 shows that 64–96 SMs do not cap the traffic of a decode-shaped load,
+  and the tenant's own curve was not measured. The round-1 conclusion "placement does not
   matter" was therefore too strong: *static* placement does not matter, a share that falls with
   the load does.
 - **A latency SLO can be enforced directly.** With the tokens/s cap driven by the measured decode
@@ -294,6 +296,88 @@ because the tenant's **4.5 GiB fixed footprint** leaves only 9.4 GiB for both en
 needs more than that from 2 req/s, so the tenant sleeps through those phases. Per prompt token it costs
 decode about half of what the fine-tune tenant costs. Two accounting gaps remain: the sleeping
 footprint (1.4 GiB) is still booked at 4.5 GiB, and the wake margin is below the wake cost.
+
+### 2.6 How many SMs a decode step needs: the bandwidth knee (Nov 9, GPU 1)
+
+Every green-context scheme rests on one assumption: the decode node can give up SMs without getting
+slower, because its steps wait for GPU memory and not for arithmetic. `knee_probe.py` measures how
+far that holds. It runs one **synthetic decode step with Llama-3-8B shapes** — 32 layers of merged
+qkv, o, merged gate/up and down projections, grouped-query attention over a per-request KV of 6272
+tokens, the lm_head on the last token; random bf16 weights, since timing does not depend on the
+values — so that each step reads the 15.0 GB of weights once plus 0.82 GB of KV per running request,
+as a real decode step does. The step runs **alone** on GPU 1 (500 W, no MPS, no tenant) inside green
+contexts of 8 to 160 SMs (the driver grants multiples of 8) and on the full device (170 SMs), for 1,
+4, 8 and 14 running requests, with a 2048-token prefill chunk as the contrast. Each point is the
+median of 5 timed groups.
+
+Is the step representative? On the full device it takes 11.8 / 13.6 / 15.7 / 19.4 ms for 1 / 4 / 8 /
+14 requests; the real engine's TPOT is 12.0–12.6 ms at 0.5–1 req/s and 26 ms at 4 req/s with 14–15
+requests running (section 2.2). The synthetic step has no sampling, scheduling or detokenisation, so
+it is a lower bound that gets looser as the batch grows. Launching one step costs the CPU 2–3 ms, so
+the timings are GPU-bound.
+
+![bandwidth knee](figures/knee_probe.png)
+
+*Figure 6 — one decode step alone on N SMs (`../knee_probe.py`, `../plot_knee.py`, data
+`../results/knee_probe.csv`). (a) Step time. (b) Effective GPU-memory read rate: the bytes one step
+must read (weights + KV) over the step time. (c) Speed relative to the full device; the circles mark
+the knee, the first SM count within 10 % of full-device speed; the grey dashed line is the prefill
+chunk and the dotted line is "proportional to SMs".*
+
+*Step time in ms (speed relative to the full device). Full table with 112, 144 and 160 SMs in the CSV.*
+
+| SMs | decode, 1 request | decode, 4 requests | decode, 8 requests | decode, 14 requests | prefill chunk, 2048 tokens |
+|---|---|---|---|---|---|
+| 8 | 61.4 ms (19 %) | 94.8 ms (14 %) | 118.7 ms (13 %) | 155.1 ms (13 %) | 3096 ms (6 %) |
+| 16 | 31.6 ms (37 %) | 48.5 ms (28 %) | 61.6 ms (25 %) | 79.8 ms (24 %) | 1558 ms (13 %) |
+| 24 | 22.3 ms (53 %) | 34.3 ms (40 %) | 43.5 ms (36 %) | 55.5 ms (35 %) | 1045 ms (19 %) |
+| 32 | 17.5 ms (68 %) | 26.0 ms (52 %) | 32.6 ms (48 %) | 41.3 ms (47 %) | 784 ms (25 %) |
+| 40 | 15.0 ms (79 %) | 22.0 ms (62 %) | 27.9 ms (56 %) | 34.9 ms (56 %) | 636 ms (31 %) |
+| 48 | 13.6 ms (87 %) | 19.2 ms (71 %) | 24.8 ms (63 %) | 30.8 ms (63 %) | 535 ms (37 %) |
+| 56 | 12.7 ms (93 %) | 17.5 ms (78 %) | 20.6 ms (76 %) | 25.3 ms (77 %) | 463 ms (43 %) |
+| 64 | 12.2 ms (97 %) | 15.5 ms (88 %) | 18.7 ms (84 %) | 23.6 ms (82 %) | 404 ms (49 %) |
+| 72 | 11.9 ms (99 %) | 14.6 ms (93 %) | 18.0 ms (87 %) | 22.7 ms (85 %) | 367 ms (54 %) |
+| 80 | 11.9 ms (99 %) | 14.3 ms (95 %) | 17.3 ms (91 %) | 20.7 ms (94 %) | 329 ms (60 %) |
+| 96 | 11.9 ms (100 %) | 13.5 ms (101 %) | 16.5 ms (95 %) | 20.1 ms (97 %) | 280 ms (71 %) |
+| 128 | 11.8 ms (100 %) | 13.3 ms (102 %) | 15.2 ms (103 %) | 18.7 ms (104 %) | 225 ms (88 %) |
+| 170 (full device) | 11.8 ms (100 %) | 13.6 ms (100 %) | 15.7 ms (100 %) | 19.4 ms (100 %) | 199 ms (100 %) |
+
+- **Two segments.** Below the knee the read rate grows almost in proportion to the SM count: up to
+  40 SMs each SM pulls 26–32 GB/s with 1 running request and 19–24 GB/s with 4–14. Past the knee
+  it is flat at **1.34–1.42 TB/s for all four loads**, about 75 % of the card's nominal 1.8 TB/s:
+  there the step is bound by GPU memory bandwidth and more SMs buy nothing.
+- **The knee is at 56 SMs for 1 running request, 72 for 4, and 80 for 8 and 14** (± one grid step of
+  8 SMs; run-to-run the medians move by at most 3 %). More running requests move it to the right,
+  probably because each byte read carries more arithmetic (attention over more KVs, more rows per
+  GEMM).
+- **A prefill chunk has no knee**: 49 % of full speed on 64 SMs, 88 % on 128. It is compute-bound,
+  as expected.
+- One oddity: at 112 SMs the 4- and 8-request steps are about 4 % slower than at 96 SMs and 5–13 %
+  slower than at 128. It reproduced in two reruns with 7 groups each and is unexplained.
+
+What follows for the schemes:
+
+- **The engine's SM floor is about 80, not a small number.** `engine_green` (engine on 128 SMs =
+  baseline) sits on the plateau, consistent with this curve. With disjoint partitions on this
+  170-SM card the tenant can have at most about 90 SMs before a loaded decode node loses more than
+  10 % from the SM shortage alone; a lightly loaded one (1 running request) can go down to 56.
+- **Being on the plateau does not protect decode from a co-runner; it is the reason a co-runner
+  hurts.** On the plateau the step is limited by the one resource that SM partitions do not divide.
+  Whatever GPU-memory traffic the tenant adds is taken out of the same 1.4 TB/s, and decode slows
+  accordingly. This is what `green_split` showed: engine on 128 SMs (plateau), tenant on the
+  other 42, +28 % TPOT, the same as MPS co-running.
+- **An SM cap limits the tenant's traffic only below the tenant's own knee, and 42 SMs is a weak
+  cap.** A decode-shaped kernel on 40 SMs already pulls 0.76–1.06 TB/s, more than half of the
+  plateau. The fine-tune tenant's kernels should do more arithmetic per byte and so pull less per
+  SM, but how much less was not measured.
+- **`green_dyn2`'s advantage is not explained by this curve.** At 0.5–1 req/s it gave the tenant
+  64–96 SMs, which for a decode-shaped load is at or above the knee. Whether those SM counts cap the
+  fine-tune tenant's traffic depends on the tenant's own SM → traffic curve, which this probe did
+  not measure; the explanation in section 2.4 stays a hypothesis.
+
+Limits: the step is synthetic and runs alone. The co-run version — the same decode step on N SMs
+with the tenant on M SMs — and the tenant's own curve are the measurements that would turn the last
+two points into numbers.
 
 ## 3. Host↔GPU transfers
 
@@ -330,7 +414,7 @@ memory system, not with each other for the link.
 
 ## 4. What this shows
 
-Figure-centred summary (diagrams 1–4, Figures 0–7, `../results/<scheme>_timeline.png`,
+Figure-centred summary (diagrams 1–5, Figures 0–6, `../results/<scheme>_timeline.png`,
 `../results/<scheme>_xfer.png`):
 
 1. **The memory half of the problem is solved, with honest accounting** (diagrams 1–3). A router in
@@ -350,7 +434,10 @@ Figure-centred summary (diagrams 1–4, Figures 0–7, `../results/<scheme>_time
    round-1 leak; (b) a tokens/s cap driven by the measured decode latency (`tpot_slo15`) enforces a
    stated SLO directly (+0–14 % for a 15 % target), while a 5 % target is below the measurement
    noise of a 10-s window. Time-sharing (idle-window gate) remains useless on this engine, and a
-   fixed SM partition alone does not help.
+   fixed SM partition alone does not help. The knee measurement (Figure 6) says why and sets the
+   limits: alone, a decode step reaches the GPU-memory-bandwidth plateau (1.34–1.42 TB/s) at 56 SMs
+   with 1 running request and at 72–80 SMs with 4–14, so the engine needs about 80 SMs, and on the
+   plateau every byte the tenant moves is taken from decode whichever SMs the tenant runs on.
 3. **A prefill engine as the tenant is memory-limited, not compute-limited.** With a 4.5 GiB fixed
    footprint it only fits beside the decode node at ≤ 1 req/s; there it adds +5–6 % decode TPOT and
    delivers 6–9k prompt tok/s in bursts, and at ≥ 2 req/s it sleeps. Sleep frees 3 GiB that the
@@ -371,4 +458,6 @@ moves only the token rate), with a target above the measurement noise (≥ 10 %)
 fits, never a streaming shape at high rate); (c) credit the sleeping prefill tenant's released
 memory to the KV pool (read the adapter's live footprint instead of a fixed allowance) and give it
 a 16–32-SM green context; (d) a tenant whose bytes are already resident (LoRA on the served model,
-DeltaServe-style) is still the way to a near-zero-cost tenant.
+DeltaServe-style) is still the way to a near-zero-cost tenant; (e) measure the co-run version of
+Figure 6 (decode step on N SMs, tenant on M SMs) and the tenant's own SM → traffic curve, and keep
+the engine at ≥ 80 SMs whenever the partitions are disjoint.
