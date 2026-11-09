@@ -15,6 +15,12 @@ kvcached main + peft).
 | `green_ctx.py` | CUDA green contexts from Python (ctypes on libcuda): carve N SMs, get a stream; `python green_ctx.py 16 32 64` benchmarks |
 | `diagrams/*.drawio`, `diagrams/export_png.py` | system architecture, tenant tiers, VRAM scheduler loop, compute-sharing mechanisms; the exporter renders them to `report/figures/` with headless Chrome |
 | `run_eval.sh <scheme>` | one scheme end to end (MPS, engine, router, sampler, tenant, load, teardown, analysis): decode_alone, adjust_notenant, static_split, adjust, adjust_nogate, adjust_mps20 |
+| `run_eval5.sh <scheme>` | round 2 (500 W, measured accounting): all schemes above plus `tpot_slo5` / `tpot_slo15` (tenant tokens/s throttled from the decode-TPOT error) and `green_dyn2` (prebuilt green contexts); stops only its own engine, so GPU-1 work can run alongside |
+| `run_eval_pf.sh <scheme>` | round 2, prefill tenant: `pf_mps`, `pf_mps20`, `pf_split` — a Qwen2.5-3B fp8 vLLM instance (own kvcached instance, KV offloaded to host RAM, `max_tokens=1`) driven by `pf_tenant.py`, which turns the published budget into the 3B's kvcached limit / admission pause / sleep |
+| `run_probe.sh`, `analyze_probe.py` | round 2 shape probe: each tenant shape alone at 1 req/s under the same tokens/s cap → decode slowdown per 1k tenant tok/s |
+| `plot_dram.py` | DRAM-controller busy vs tenant throughput and vs decode slowdown (the direct bandwidth test) |
+| `../kvcached_validation/scripts/p4_lmcache.sh` | kvcached + LMCache MP connector tests on GPU 1 in `.venv-lmc` (patched kvcached: `KVCACHED_EXPORTABLE`, `KVCACHED_LMCACHE_PINS`) |
+| `results_600w/` | round-1 results (600 W power limit, design-constant accounting); `results/` holds round 2 |
 | `run_eval2.sh` / `run_eval3.sh` | the same plus the green-context schemes (green32, green_dyn, engine_green) and the optimisation scheme (green_opt); separate files only because a running bash script must not be edited |
 | `teardown.sh` | stop everything |
 | `analyze_coloc.py`, `compare_arms.py`, `plot_arms.py`, `plot_workload.py` | per-arm phase tables + timeline/transfer figures; cross-arm table (+ dense all-arms figure `arms_all.png`); the report's Figures 1–2 (`arms.png`, `arms_tradeoff.png`); the workload-trace figure |

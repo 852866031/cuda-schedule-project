@@ -2,14 +2,31 @@
 
 Pre-registration document (plans are never rewritten after the fact; outcomes go to
 `report/DECISIONS.md` D11+ with a prediction written before each run). Written 2026-11-09 after
-the first prototype round (`report/REPORT.md`). Hardware: GPU 1 is the experiment GPU, GPU 0 is
-free for the kvcached/LMCache work (both idle at planning time, 53 GiB host RAM free).
+the first prototype round (`report/REPORT.md`). Hardware: both GPUs idle at planning time, 53 GiB host RAM free (GPU roles: see P0.0).
 
 Priorities, in the order they run: inference latency first, tenant progress second, everything
 else third. Every run reuses the 11-minute reference trace (Figure 0 of the report) unless said
 otherwise, so results are comparable with the existing tables.
 
-## P0. Must-fix (GPU 1, ~1.5 h)
+## P0.0 Amendment at start (2026-11-09 22:00): 500 W cap and a full re-run of the reference set
+
+Both GPUs are now capped at 500 W (`nvidia-smi -pl 500`, persistence on; default was 600 W).
+Every number in the existing tables was measured at 600 W, so **the reference schemes are re-run
+at 500 W with the fixed accounting of P0.1**, and the figures/tables are rebuilt from the new set:
+`adjust_notenant` (baseline), `static_split`, `adjust` (gate), `adjust_nogate` (MPS), `adjust_mps20`,
+`green_split`. `decode_alone` is dropped (identical to the baseline). The 600 W results stay in
+`results_600w/` and are not mixed with the new ones. The runner (`run_eval4.sh`) refuses to start
+if GPU 0's limit is above 500 W; the sampler records power, SM/DRAM utilisation and SM clock.
+**Prediction:** decode alone is bandwidth-bound and draws well under 500 W, so the baseline TPOT
+changes by < 3 %; the tenant's solo throughput drops 5–10 % (training is compute-heavy and will
+hit the cap); the colocated runs hit the cap at 1–2 QPS, which lowers the tenant's throughput and
+therefore the decode penalty a little, but the slope of Figure 2 (slowdown per tenant tok/s) stays
+within 2.0–2.6 %/k.
+
+GPU roles, corrected: the engine, tenant and MPS daemon run on **GPU 0** (`CUDA_VISIBLE_DEVICES=0`
+in the runner); the kvcached + LMCache work of P4 therefore runs on **GPU 1**.
+
+## P0. Must-fix (GPU 0, ~1.5 h)
 
 ### P0.1 VRAM-scheduler accounting
 
@@ -31,7 +48,7 @@ Change (`controller.py`):
   budget, so the limit can only be promised against memory the tenant has actually released;
   growth beyond that waits for the tenant (it releases within 50 ms mid-step, ~0.3 s for a pause).
 
-Run: MPS no-cap scheme (`adjust_nogate`) once more as `adjust_nogate_v2`.
+Run: part of the P0.0 re-run set (all six reference schemes use the fixed accounting).
 **Prediction:** max limit ≈ 11.0 GiB instead of 12.65; queue wait at 4 QPS rises from ~3.3 s to
 4–5 s (less KV for the spike); every other phase within noise of the old run; "tenant holds more
 than its budget" episodes shrink from 193 s to < 10 s total and never exceed the release lag.
@@ -134,7 +151,7 @@ Risk register: fp8 on sm_120 under vLLM 0.30 (the prio study did it on 0.15; fal
 kvcached, fixed `--gpu-memory-utilization`, pause by sleep only), sleep mode vs kvcached (fallback
 above).
 
-## P4. kvcached + LMCache MP connector (GPU 0, in parallel, time-boxed 3 h)
+## P4. kvcached + LMCache MP connector (GPU 1, in parallel, time-boxed 3 h)
 
 Two independent defects were recorded in `kvcached_validation/REPORT.md` §4–5:
 
@@ -174,12 +191,12 @@ overrunning), which the pins cannot fix; record and stop.
 
 | when | what | GPU |
 |---|---|---|
-| 22:00–23:30 | P0.1 code + `adjust_nogate_v2`; P0.2 figures and DRAM sampling | 1 |
-| 22:00–01:00 | P4 (a) then (b), time-boxed | 0 |
-| 23:30–01:30 | P1.1 code, `tpot_slo5`, `tpot_slo15`; P1.2 shape probe | 1 |
-| 01:30–03:00 | P2 fix + `green_dyn2` | 1 |
-| 03:00–06:00 | P3 bring-up, `pf_mps`, `pf_mps20`, `pf_split` | 1 |
-| 06:00–07:00 | P5 | – |
+| 22:00–23:30 | P0.0/P0.1 code, smoke test, DRAM/power sampling; start the six reference re-runs (~80 min) | 0 |
+| 22:00–01:00 | P4 (a) then (b), time-boxed | 1 |
+| 00:50–02:30 | P1.1 code, `tpot_slo5`, `tpot_slo15`; P1.2 shape probe | 0 |
+| 02:30–04:00 | P2 fix + `green_dyn2` | 0 |
+| 04:00–07:00 | P3 bring-up, `pf_mps`, `pf_mps20`, `pf_split` | 0 |
+| 07:00–08:00 | P5 | – |
 
 Rules carried over: never edit a running bash script; never quote process-name patterns on the
 launching command line; keep pinned host memory to a few GiB; one engine stack per GPU; commit

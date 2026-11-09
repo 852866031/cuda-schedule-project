@@ -214,3 +214,50 @@ tenant's *rate* (SM cap or green-context size), and it is a linear trade: pick t
 get the tenant throughput. Dynamic in-process green-context switching was not made robust
 tonight (allocator pool bound to streams); a static partition plus the memory ladder is the
 working configuration.
+
+## D11. Overnight round 2 — start (2026-11-09 01:20): 500 W cap, accounting fix, reference re-run
+
+Both GPUs capped at 500 W (persistence on) before anything ran. The VRAM scheduler now measures the
+engine's non-KV footprint from NVML at start (16.97 GiB with the MPS daemon; the design constant
+was 17.7), carries a separate tenant-fixed term (2.0 GiB: CUDA context + paused allocator floor), a
+0.5 GiB safety term, and may raise the KV limit only up to what is physically free right now
+(kvcached mapped + NVML free − safety); a wanted limit above that is reached in steps as the tenant
+releases (`grow_partial` / `grow_wait` actions). The tenant hands cached-but-free blocks back as
+soon as its budget shrinks. Smoke test (2 min, 1 → 3 req/s): grows 26, partial 6, waits 581 ticks,
+KV in use never within reach of the tenant, 0 physical oversubscription.
+**Prediction for the re-run set** (`adjust_notenant`, `static_split`, `adjust`, `adjust_nogate`,
+`adjust_mps20`, `green_split`, then `tpot_slo5`, `tpot_slo15`): baseline TPOT within 3 % of the 600 W
+run; tenant solo throughput −5–10 %; Figure-2 slope 2.0–2.6 %/k; "tenant holds more than its
+budget" episodes < 10 s per run; at 4 req/s the queue wait rises (max limit ≈ 11.9 instead of 12.65
+GiB). `tpot_slo5` / `tpot_slo15`: decode at baseline + SLO ± 3 points at 0.5–2 req/s, tenant ≈ 2k /
+≈ 6.5k tok/s, points on the Figure-2 line.
+
+## D12. P4 (a) — exportable kvcached pages for LMCache's VMM IPC (01:32, GPU 1, `.venv-lmc`)
+
+kvcached main rebuilt with `prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR`
+behind `KVCACHED_EXPORTABLE=1`; LMCache 0.5.6 `lmcache_driven` + `use_vmm_api`, per-layer layout.
+**Outcome: as predicted, one check further and no further.** The exportability check passes; the
+connector then raises `tensor bytes [0, 428933120) exceed the 2097152-byte physical chunk at
+0x1f0000000000: the tensor spans more than one cuMemCreate physical chunk … one exported handle maps
+exactly one chunk` (`results/p4_vmm_exportable_startup.txt`, `logs/p4_vmm_exportable_vllm.log` in
+`kvcached_validation`). kvcached backs each KV tensor with 2 MiB pages; LMCache's importer needs one
+handle per tensor. Fixing this is on LMCache's side (import a page table, not a chunk). Stopped here.
+
+## D13. P4 (b) — `engine_driven` under the stress load that crashed kvcached 0.1.6 (01:35–01:45, GPU 1)
+
+Same load as kvcached_validation D7's stress variant (6 sessions, 6000-token first turns, +512 per
+turn, think 2 s, 64 output tokens) plus a 2 G / 12 G resize every 15 s, 5 minutes, but on **kvcached
+main (9106e0f) in `.venv-lmc`** instead of 0.1.6. Prediction (plan P4b): the fault reproduces within
+1.5–2.5 min. **Outcome: it did not.** 180/180 requests ok, 166 stores / 123 retrieves, engine alive
+at the end, no Xid in the kernel log, the only kvcached messages are the expected "pool exhausted →
+scheduling miss" at the 2 G cap. Reading: the fault seen on 0.1.6 looks fixed upstream between
+0.1.6 and main — main orders page unmaps behind the GPU's progress (`_kvcached_install_ordered_unmap`,
+`physical_release_barrier`), which is exactly the window an asynchronous gather of a freed block
+needs. The pin layer written for this step (`kvcached/integration/vllm/lmcache_pins.py`, env
+`KVCACHED_LMCACHE_PINS=1`) is therefore kept optional and not required for the next test.
+Next: a 10-minute run with resizes (`p4_ed_long`) to make the negative solid, then the output
+check against the earlier plain-engine + connector outputs.
+Output check (same 8 fixed prompts, greedy): the new kvcached-main + LMCache engine_driven engine
+matches the no-connector plain engine and the no-connector kvcached engine **8/8** (cold and warm
+identical). On 0.1.6 + the same LMCache, the connector changed 4/8 outputs (D7); that difference is
+gone in this environment as well — the earlier connector runs agree with the new one on only 4/8.

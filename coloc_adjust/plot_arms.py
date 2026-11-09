@@ -15,20 +15,14 @@ import numpy as np, pandas as pd
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# scheme id -> (legend label, color, marker). Order = legend order.
-ARMS = [
-    ("adjust_notenant", "Inference alone, KV follows load (baseline)", "#444444", "o"),
-    ("static_split",    "Static split: KV 6.7 GiB, FT 6 GiB",          "#d62728", "s"),
-    ("adjust",          "Adaptive KV + FT waits for idle GPU (gate)",   "#9467bd", "^"),
-    ("adjust_nogate",   "Adaptive KV + FT shares GPU via MPS",          "#1f77b4", "v"),
-    ("adjust_mps20",    "Adaptive KV + FT capped at 20 % of SMs (MPS)", "#2ca02c", "D"),
-    ("green_split",     "Adaptive KV + disjoint SMs: engine 128, FT 42", "#ff7f0e", "P"),
-]
-BASE = "adjust_notenant"
+import sys as _sys, os as _os; _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from arm_names import ARMS, PF_ARMS, BASE  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--dir", default="results"); ap.add_argument("--out", default="results/arms")
+ap.add_argument("--pf", action="store_true", help="the prefill-tenant schemes instead of the training-tenant ones")
 args = ap.parse_args()
+if args.pf: ARMS = PF_ARMS
 P = {}
 for a, *_ in ARMS:
     f = os.path.join(args.dir, f"{a}_phases.csv")
@@ -57,7 +51,7 @@ for a, label, color, marker in arms:
                        lw=1.8, capsize=3, label=label)
 ax[0].set_ylabel("Decode TPOT p50 (ms)"); ax[0].set_title("(a) per-token latency")
 ax[1].set_ylabel("Scheduler queue wait (ms, log)"); ax[1].set_yscale("log"); ax[1].set_title("(b) queueing")
-ax[2].set_ylabel("Fine-tune throughput (k tok/s)"); ax[2].set_title("(c) tenant progress")
+ax[2].set_ylabel("Prefill throughput (k prompt tok/s)" if args.pf else "Fine-tune throughput (k tok/s)"); ax[2].set_title("(c) tenant progress")
 for a_ in ax:
     a_.set_xlabel("Arrival rate (req/s)"); a_.set_xticks(rates); a_.grid(True, alpha=0.3)
 ax[2].set_ylim(bottom=0)
@@ -89,7 +83,7 @@ k = (xs * ys).sum() / (xs * xs).sum()  # fit through the origin: no tenant, no c
 xx = np.linspace(0, xs.max() * 1.05, 10)
 ax.plot(xx, k * xx, "k--", lw=1, alpha=0.6, label=f"adaptive arms, fit through origin: +{k:.1f} % per 1k FT tok/s")
 ax.axhline(0, color="k", lw=0.6)
-ax.set_xlabel("Fine-tune throughput in the phase (k tok/s)")
+ax.set_xlabel(("Prefill" if args.pf else "Fine-tune") + " throughput in the phase (k tok/s)")
 ax.set_ylabel("Decode TPOT p50 vs baseline (%)")
 ax.set_title("Decode slowdown vs tenant progress, every scheme and phase")
 ax.grid(True, alpha=0.3); ax.legend(fontsize=8, loc="upper left")

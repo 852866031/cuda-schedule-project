@@ -69,7 +69,7 @@ signal.signal(signal.SIGINT, lambda *a: stop.set())
 with open(args.out, "w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["t", "nvml_used", "nvml_free", "kvc_limit", "kvc_used", "kvc_prealloc",
-                "running", "waiting", "kv_usage", "preemptions", "pc_queries", "pc_hits", "ext_queries", "ext_hits", "queue_sum", "queue_count", "success", "pcie_tx_kbs", "pcie_rx_kbs"])
+                "running", "waiting", "kv_usage", "preemptions", "pc_queries", "pc_hits", "ext_queries", "ext_hits", "queue_sum", "queue_count", "success", "pcie_tx_kbs", "pcie_rx_kbs", "power_w", "util_gpu", "util_mem", "sm_mhz"])
     t_end = time.time() + args.duration
     nxt = time.time()
     while not stop.is_set() and time.time() < t_end:
@@ -85,7 +85,12 @@ with open(args.out, "w", newline="") as f:
                 pass
         with metrics_lock:
             m = [metrics[k] for k in WANT]
-        w.writerow([f"{t:.3f}", mem.used, mem.free, lim, used, pre, *m, pcie["tx"], pcie["rx"]])
+        try:
+            pw = pynvml.nvmlDeviceGetPowerUsage(h) / 1000.0; ur = pynvml.nvmlDeviceGetUtilizationRates(h)
+            ug, um = ur.gpu, ur.memory; clk = pynvml.nvmlDeviceGetClockInfo(h, pynvml.NVML_CLOCK_SM)
+        except Exception:
+            pw = ug = um = clk = ""
+        w.writerow([f"{t:.3f}", mem.used, mem.free, lim, used, pre, *m, pcie["tx"], pcie["rx"], pw, ug, um, clk])
         f.flush()
         nxt += args.interval
         d = nxt - time.time()

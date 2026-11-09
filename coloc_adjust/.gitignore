@@ -6,5 +6,6 @@ results/no_midstep_preempt/
 results/mps20_broken_controller/
 results/green_leak/
 results/pipeline_test/
-results/*_load.jsonl
-results/*_load.jsonl.t0
+results*/*_load.jsonl
+results*/*_load.jsonl.t0
+results_600w/*/

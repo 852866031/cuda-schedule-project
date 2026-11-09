@@ -57,8 +57,8 @@ if os.environ.get("COLOC_ENGINE_SMS"):
         state = {"g": None}
         def _stream(self):
             if state["g"] is None:
-                state["g"] = GreenCtx(n, device=0)
-                print(f"[coloc hp_patch] engine steps on a green context of {state['g'].sm_count} SMs", file=sys.stderr)
+                state["g"] = GreenCtx(n, device=0, remaining=bool(os.environ.get("COLOC_ENGINE_SMS_REMAINING")))   # REMAINING: the SMs left after an n-SM split (a second engine disjoint from one on the first n)
+                print(f"[coloc hp_patch] engine steps on a green context of {state['g'].sm_count} SMs{' (remaining partition)' if os.environ.get('COLOC_ENGINE_SMS_REMAINING') else ''}", file=sys.stderr)
             return state["g"].torch_stream()
         for name in ("execute_model", "sample_tokens"):
             orig = getattr(R, name)

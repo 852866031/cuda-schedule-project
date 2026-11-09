@@ -61,7 +61,9 @@ for (ta, rps), tb in zip(sched, bounds[1:]):
               offered_tok_s=rps * 128, queue_ms=(qs / qc * 1e3) if qc and qc == qc and qc > 0 else np.nan,
               preempt=delta("preemptions"), nvml_gib=num(sw, "nvml_used").median() / GiB,
               kvc_used_gib=num(sw, "kvc_used").median() / GiB if num(sw, "kvc_used") is not None else np.nan,
-              running=num(sw, "running").mean(), waiting_max=num(sw, "waiting").max())
+              running=num(sw, "running").mean(), waiting_max=num(sw, "waiting").max(),
+              dram_busy=(num(sw, "util_mem").mean() if "util_mem" in sw else np.nan), sm_busy=(num(sw, "util_gpu").mean() if "util_gpu" in sw else np.nan),
+              power_w=(num(sw, "power_w").mean() if "power_w" in sw else np.nan), sm_mhz=(num(sw, "sm_mhz").mean() if "sm_mhz" in sw else np.nan))
     if ctl is not None:
         cw = ctl[(ctl.rel >= a) & (ctl.rel < b)]
         ph.update(limit_gib=num(cw, "limit_gib").median(), need_gib=num(cw, "need_gib").median(), ft_budget_gib=num(cw, "ft_budget_gib").median())
@@ -83,8 +85,19 @@ open(P("phases.md"), "w").write("\n".join(md) + "\n"); print("\n".join(md))
 from matplotlib.ticker import FuncFormatter
 from arm_names import name as arm_name, CFG_LABELS
 plain = FuncFormatter(lambda v, _: f"{v:g}")
-fig, ax = plt.subplots(6, 1, figsize=(12, 13), sharex=True,
-                       gridspec_kw=dict(height_ratios=[0.55, 2.0, 1.5, 1.2, 1.4, 0.8], hspace=0.08))
+HAVE_UTIL = "util_mem" in samp and num(samp, "util_mem").notna().any()
+fig, ax = plt.subplots(7 if HAVE_UTIL else 6, 1, figsize=(12, 14.5 if HAVE_UTIL else 13), sharex=True,
+                       gridspec_kw=dict(height_ratios=([0.55, 2.0, 1.0, 1.5, 1.2, 1.4, 0.8] if HAVE_UTIL else [0.55, 2.0, 1.5, 1.2, 1.4, 0.8]), hspace=0.08))
+if HAVE_UTIL:
+    axu = ax[2]; ax = np.delete(ax, 2)
+    axu.plot(samp.rel, num(samp, "util_mem").rolling(10, min_periods=1).mean(), color="#6a4c93", lw=1.0, label="DRAM controller busy % (NVML, 1-s mean)")
+    axu.plot(samp.rel, num(samp, "util_gpu").rolling(10, min_periods=1).mean(), color="#999999", lw=0.8, label="SM busy %")
+    axu.set_ylim(0, 105); axu.set_ylabel("%")
+    axp = axu.twinx(); axp.plot(samp.rel, num(samp, "power_w").rolling(10, min_periods=1).mean(), color="#c1121f", lw=0.8, label="power (W)")
+    axp.set_ylim(0, 620); axp.set_ylabel("W"); axp.axhline(500, color="#c1121f", lw=0.5, ls=":")
+    h1, l1 = axu.get_legend_handles_labels(); h2, l2 = axp.get_legend_handles_labels(); axu.legend(h1 + h2, l1 + l2, fontsize=7.5, loc="upper left", ncol=3, frameon=False)
+    axu.grid(True, axis="y", alpha=0.25)
+    for t, _ in sched[1:]: axu.axvline(t, color="k", ls=":", lw=0.6, alpha=0.6)
 tt = np.arange(0, end, 1.0)
 rps_line = np.array([rps_at(t) for t in tt])
 # (1) offered load, with the rate written in each phase
@@ -95,18 +108,21 @@ for (ta, rps), tb in zip(sched, bounds[1:]):
 ax[0].set_ylim(0, 5.5); ax[0].set_ylabel("req/s"); ax[0].set_yticks([0, 2, 4])
 # (2) memory map above the engine's fixed footprint
 fixed = args.engine_fixed_gib
+if ctl is not None and "engine_fixed_gib" in ctl and num(ctl, "engine_fixed_gib").notna().any():
+    fixed = float(num(ctl, "engine_fixed_gib").dropna().iloc[0])   # measured by the VRAM scheduler at start (round 2)
 kv_used = (num(samp, "kvc_used") / GiB).rolling(5, min_periods=1).mean()
 ax[1].fill_between(samp.rel, fixed, fixed + kv_used, color="#2a9d8f", label="KV in use (kvcached)")
 if ctl is not None:
     lim = np.interp(samp.rel, ctl.rel, num(ctl, "limit_gib"))
     ax[1].step(samp.rel, fixed + lim, color="#c1121f", lw=1.2, label="KV limit set by the VRAM scheduler")
 if ft is not None:
-    res = np.interp(samp.rel, ft.rel, num(ft, "reserved_gib").ffill().fillna(0))
+    _rv = num(ft, "reserved_gib").ffill().fillna(0).values
+    res = _rv[np.clip(np.searchsorted(ft.rel.values, samp.rel.values, side="right") - 1, 0, len(_rv) - 1)]   # last reported value (no interpolation across pauses)
     ax[1].fill_between(samp.rel, args.total_gib - res, args.total_gib, color="#e9c46a", label="fine-tune tenant")
 ax[1].plot(samp.rel, (num(samp, "nvml_used") / GiB).rolling(30, min_periods=1).mean(), color="k", lw=0.6, alpha=0.7,
            label="whole GPU in use (NVML, 3-s mean)")
 ax[1].axhline(fixed, color="k", lw=0.5, ls=":")
-ax[1].text(-33, fixed + 0.2, f"engine weights + runtime below {fixed} GiB", fontsize=7, va="bottom")
+ax[1].text(-33, fixed + 0.2, f"engine weights + runtime below {fixed:.1f} GiB", fontsize=7, va="bottom")
 ax[1].set_ylim(fixed - 0.5, args.total_gib + 3.2); ax[1].set_ylabel("GPU memory (GiB)"); ax[1].set_yticks(range(18, 32, 2))
 ax[1].legend(fontsize=7.5, loc="upper center", ncol=4, frameon=False)
 # (3) decode latency: this scheme vs the baseline run on the same timeline

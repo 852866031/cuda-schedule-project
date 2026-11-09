@@ -50,6 +50,9 @@ ap.add_argument("--margin-gib", type=float, default=0.3, help="headroom kept bet
 ap.add_argument("--up-hold", type=float, default=3.0, help="seconds a larger budget must persist before climbing a tier")
 ap.add_argument("--green-sms", type=int, default=0, help="run all tenant kernels on a CUDA green context of this many SMs (0 = full device)")
 ap.add_argument("--green-remaining-of", type=int, default=0, help="run on the SMs left after an N-SM split (disjoint from an engine on the first N)")
+ap.add_argument("--tok-s-cap", type=float, default=0.0, help="fixed tokens/s cap (probe runs); 0 = follow the budget file's tok_s_cap if present")
+ap.add_argument("--green-prebuilt", action="store_true", help="P2: create every green context of --green-set once at start and only switch streams between steps (no create/destroy per switch)")
+ap.add_argument("--green-set", default="128,96,64,32,16", help="SM counts to prebuild with --green-prebuilt")
 ap.add_argument("--green-dynamic", action="store_true", help="take the SM count from the budget file's 'sms' field (VRAM-scheduler-driven); --green-sms is the fallback")
 args = ap.parse_args()
 
@@ -234,14 +237,32 @@ def restore():
     print(f"ft_worker: resumed from snapshot at step {st['step']}", flush=True); return st["step"]
 
 # ---------------------------------------------------------------- green context (SM partition)
-green = {"ctx": None, "sms": 0, "req": 0, "t": 0.0}
+green = {"ctx": None, "sms": 0, "req": 0, "t": 0.0, "pool": {}}
+def prebuild_green():
+    """P2: one context per SM count, built before any training allocation; switching later only changes the stream."""
+    for n in sorted({int(x) for x in args.green_set.split(",") if x}, reverse=True):
+        try:
+            g = GreenCtx(n, device=0); green["pool"][n] = g
+            print(f"ft_worker: prebuilt green context {n} -> {g.sm_count} SMs", flush=True)
+        except Exception as e:
+            print(f"ft_worker: green context {n} failed: {e}", flush=True)
 def set_green(sms):
     """Switch the tenant's compute stream to a green context of `sms` SMs (0 = full device).
     Compares against the *requested* count (the driver rounds), switches at most every 5 s, and
     returns the caching allocator's blocks of the old stream (they cannot serve the new one)."""
-    if sms == green["req"] or time.time() - green["t"] < 5.0: return
+    if sms == green["req"] or time.time() - green["t"] < (1.0 if args.green_prebuilt else 5.0): return
     torch.cuda.synchronize()
     old = green["ctx"]
+    if args.green_prebuilt:
+        if sms > 0:
+            key = min(green["pool"], key=lambda k: abs(k - sms)) if green["pool"] else None
+            if key is None: return
+            g = green["pool"][key]; green["ctx"] = g; green["sms"] = g.sm_count; torch.cuda.set_stream(g.torch_stream())
+        else:
+            green["ctx"] = None; green["sms"] = 0; torch.cuda.set_stream(torch.cuda.default_stream())
+        green["req"] = sms; green["t"] = time.time(); fence["ev"] = None; torch.cuda.empty_cache()
+        trace.record("green_switch", "none", 0, time.time(), time.time(), None, f"sms={green['sms']} reserved={torch.cuda.memory_reserved(dev)/GiB:.2f}")
+        return
     if sms > 0:
         g = GreenCtx(sms, device=0, remaining=(args.green_remaining_of > 0)); green["ctx"] = g; green["sms"] = g.sm_count
         torch.cuda.set_stream(g.torch_stream())
@@ -256,11 +277,14 @@ def set_green(sms):
 peaks = {}
 if os.path.exists(args.tiers_json):
     peaks = {int(k): float(v) for k, v in json.load(open(args.tiers_json)).items()}
-budget_extra = {"sms": None}
+budget_extra = {"sms": None, "cap": None}
 def read_budget():
-    if args.fixed_budget_gib is not None: return args.fixed_budget_gib * GiB, 0
+    if args.fixed_budget_gib is not None:
+        if args.tok_s_cap: budget_extra["cap"] = args.tok_s_cap
+        return args.fixed_budget_gib * GiB, 0
     try:
-        j = json.load(open(args.budget_file)); budget_extra["sms"] = j.get("sms"); return float(j["bytes"]), int(j.get("seq", 0))
+        j = json.load(open(args.budget_file)); budget_extra["sms"] = j.get("sms"); budget_extra["cap"] = args.tok_s_cap or j.get("tok_s_cap")
+        return float(j["bytes"]), int(j.get("seq", 0))
     except Exception:
         return TOTAL_GIB * GiB, 0
 def choose(budget, duty):
@@ -306,8 +330,19 @@ def main():
     out = open(args.out, "w", newline="") if args.out else None
     w = csv.writer(out) if out else None
     if w: w.writerow(["ts", "step", "cfg", "tier", "k", "off", "act", "dt_ms", "tok_s", "loss", "peak_gib", "reserved_gib",
-                      "gated_ms", "budget_gib", "duty", "act_out_mb", "act_in_mb", "snapshot_ms", "event", "sms"])
+                      "gated_ms", "budget_gib", "duty", "act_out_mb", "act_in_mb", "snapshot_ms", "event", "sms", "cap_tok_s", "sleep_ms"])
     to_gpu(); cur = None; seq_seen = -1; t_start = time.time(); last_snap = step; up_since = {"cfg": None, "t": 0.0}
+    last_budget = {"v": TOTAL_GIB * GiB}
+    if args.green_prebuilt:
+        # materialise AdamW state on the default stream (zero grads, no weight decay for this one step) so no later
+        # stream's allocator pool has to grow around long-lived state, then build the contexts
+        wd = [g.get("weight_decay", 0.0) for g in opt.param_groups]
+        for g in opt.param_groups: g["weight_decay"] = 0.0
+        for p in model.parameters():
+            if p.requires_grad: p.grad = torch.zeros_like(p)
+        opt.step(); opt.zero_grad(set_to_none=True)
+        for g, v in zip(opt.param_groups, wd): g["weight_decay"] = v
+        torch.cuda.synchronize(); prebuild_green()
     if args.green_remaining_of: set_green(args.green_remaining_of)
     elif args.green_sms and not args.green_dynamic: set_green(args.green_sms)
     if args.calibrate:
@@ -356,7 +391,9 @@ def main():
                 cur = PAUSE; publish_state(seq, PAUSE, "paused-oom"); time.sleep(0.2); continue
             publish_state(seq, i, event)
         elif seq != seq_seen:
+            if budget < last_budget["v"]: torch.cuda.empty_cache()   # a smaller budget: hand cached-but-free blocks back at once
             apply_cap(budget); publish_state(seq, i); seq_seen = seq
+        last_budget["v"] = budget
         cfg = TIERS[i]
         ids = torch.randint(0, vocab, (args.batch, args.seq), generator=gen).to(dev)
         g0 = gate_ns["v"]; torch.cuda.reset_peak_memory_stats(dev); t0 = time.time(); preempt_state["cur"] = i
@@ -377,6 +414,14 @@ def main():
             cur = None; continue
         preempt_state["cur"] = None
         dt = time.time() - t0; step += 1
+        # P1.1: throughput cap from the VRAM scheduler -- idle after the step so tokens/s (incl. the idle) stays under the cap
+        cap = budget_extra["cap"]; sleep_ms = 0.0
+        if cap and tokens / dt > cap:
+            pause_s = tokens / cap - dt; t_sl = time.time()
+            while time.time() - t_sl < pause_s and not stop["flag"]:
+                time.sleep(min(0.05, pause_s - (time.time() - t_sl)))
+                poll_budget_midstep()   # keep releasing memory promptly while idling
+            sleep_ms = (time.time() - t_sl) * 1e3; dt = time.time() - t0
         if act_stats["out_b"]: trace.record("act_out", "d2h", act_stats["out_b"], t0, time.time(), act_stats["out_ms"], f"step={step}")
         if act_stats["in_b"]: trace.record("act_in", "h2d", act_stats["in_b"], t0, time.time(), None, f"step={step}")
         if offload["mgr"] is not None and offload["mgr"].fetches:
@@ -388,7 +433,8 @@ def main():
         if w:
             w.writerow([f"{time.time():.3f}", step, i, cfg["tier"], cfg["k"], cfg["off"], int(cfg["act"]), f"{dt*1e3:.0f}", f"{tokens/dt:.0f}",
                         f"{loss:.4f}", f"{torch.cuda.max_memory_allocated(dev)/GiB:.2f}", f"{torch.cuda.memory_reserved(dev)/GiB:.2f}",
-                        f"{(gate_ns['v']-g0)/1e6:.0f}", f"{budget/GiB:.2f}", f"{duty:.2f}", f"{act_stats['out_b']/2**20:.0f}", f"{act_stats['in_b']/2**20:.0f}", snap_ms, event, green["sms"]])
+                        f"{(gate_ns['v']-g0)/1e6:.0f}", f"{budget/GiB:.2f}", f"{duty:.2f}", f"{act_stats['out_b']/2**20:.0f}", f"{act_stats['in_b']/2**20:.0f}", snap_ms, event, green["sms"],
+                        "" if not cap else f"{cap:.0f}", f"{sleep_ms:.0f}"])
             out.flush()
         if step % 20 == 0:
             print(f"  step {step} cfg {i} (tier {cfg['tier']} k={cfg['k']} off={cfg['off']}): {dt*1e3:.0f} ms, {tokens/dt:.0f} tok/s, "
