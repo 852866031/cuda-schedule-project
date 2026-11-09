@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stream a transformer layer's weights from pinned DRAM, correctly through backward.
+"""Stream a transformer layer's weights from pinned host RAM, correctly through backward.
 
 Why this exists: accelerate's `device_map={"model.layers.N": "cpu"}` is built for inference.
 It leaves parameters on the `meta` device and materialises them per forward, which breaks the

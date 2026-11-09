@@ -90,7 +90,7 @@ fig, ax = plt.subplots(7 if HAVE_UTIL else 6, 1, figsize=(12, 14.5 if HAVE_UTIL 
                        gridspec_kw=dict(height_ratios=([0.55, 2.0, 1.0, 1.5, 1.2, 1.4, 0.8] if HAVE_UTIL else [0.55, 2.0, 1.5, 1.2, 1.4, 0.8]), hspace=0.08))
 if HAVE_UTIL:
     axu = ax[2]; ax = np.delete(ax, 2)
-    axu.plot(samp.rel, num(samp, "util_mem").rolling(10, min_periods=1).mean(), color="#6a4c93", lw=1.0, label="DRAM controller busy % (NVML, 1-s mean)")
+    axu.plot(samp.rel, num(samp, "util_mem").rolling(10, min_periods=1).mean(), color="#6a4c93", lw=1.0, label="GPU memory-controller busy % (NVML, 1-s mean)")
     axu.plot(samp.rel, num(samp, "util_gpu").rolling(10, min_periods=1).mean(), color="#999999", lw=0.8, label="SM busy %")
     axu.set_ylim(0, 105); axu.set_ylabel("%")
     axp = axu.twinx(); axp.plot(samp.rel, num(samp, "power_w").rolling(10, min_periods=1).mean(), color="#c1121f", lw=0.8, label="power (W)")

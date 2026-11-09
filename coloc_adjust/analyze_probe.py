@@ -34,7 +34,7 @@ T = pd.DataFrame(rows); base = T[T["shape"] < 0].tpot50.iloc[0]
 T["slow_pct"] = (T.tpot50 / base - 1) * 100
 T["pct_per_k"] = T.slow_pct / (T.ft_tok_s / 1e3)
 T.to_csv(P("probe.csv"), index=False)
-md = ["| shape | tenant tok/s | decode TPOT (ms) | slowdown | % per 1k tok/s | DRAM busy % | power W |", "|---|---|---|---|---|---|---|"]
+md = ["| shape | tenant tok/s | decode TPOT (ms) | slowdown | % per 1k tok/s | GPU-mem busy % | power W |", "|---|---|---|---|---|---|---|"]
 for _, r in T.iterrows():
     md.append(f"| {r.label} | {'' if pd.isna(r.get('ft_tok_s')) else f'{r.ft_tok_s:.0f}'} | {r.tpot50:.1f} | {r.slow_pct:+.1f} % | "
               f"{'' if pd.isna(r.get('pct_per_k')) else f'{r.pct_per_k:.2f}'} | {r.get('util_mem', float('nan')):.0f} | {r.get('power_w', float('nan')):.0f} |")
@@ -43,6 +43,6 @@ Tn = T[T["shape"] >= 0]
 fig, ax = plt.subplots(1, 2, figsize=(11, 4))
 ax[0].bar(Tn.label, Tn.pct_per_k, color="#2a9d8f"); ax[0].set_ylabel("decode slowdown per 1k tenant tok/s (%)"); ax[0].set_title("(a) cost per unit of tenant throughput, by shape")
 ax[1].bar(Tn.label, Tn.get("util_mem", pd.Series([0] * len(Tn))), color="#6a4c93"); ax[1].axhline(T[T["shape"] < 0].get("util_mem", pd.Series([np.nan])).iloc[0], color="k", ls=":", label="no tenant")
-ax[1].set_ylabel("DRAM controller busy (%)"); ax[1].set_title("(b) memory-bandwidth use, by shape"); ax[1].legend(fontsize=8)
+ax[1].set_ylabel("GPU memory-controller busy (%, NVML)"); ax[1].set_title("(b) memory-bandwidth use, by shape"); ax[1].legend(fontsize=8)
 for a_ in ax: a_.tick_params(axis="x", labelrotation=20); a_.grid(True, axis="y", alpha=0.3)
 fig.suptitle(f"Shape probe at 1 req/s, tenant capped at the same tokens/s", fontsize=12); fig.tight_layout(); fig.savefig(P("probe.png"), dpi=140); print("figure:", P("probe.png"))

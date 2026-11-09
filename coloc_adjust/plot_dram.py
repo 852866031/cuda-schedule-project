@@ -27,9 +27,9 @@ for a, label, color, marker in ARMS:
     ax[0].scatter(x, d.loc[common, "dram_busy"].values, color=color, marker=marker, s=50, label=label, zorder=3)
     slow = (d.loc[common, "tpot50"].values / base.loc[common, "tpot50"].values - 1) * 100
     ax[1].scatter(d.loc[common, "dram_busy"].values, slow, color=color, marker=marker, s=50, label=label, zorder=3)
-ax[0].set_xlabel("tenant throughput in the phase (k tok/s)"); ax[0].set_ylabel("DRAM controller busy (%, NVML, phase mean)")
+ax[0].set_xlabel("tenant throughput in the phase (k tok/s)"); ax[0].set_ylabel("GPU memory-controller busy (%, NVML, phase mean)")
 ax[0].set_title("(a) memory-bandwidth use vs tenant throughput"); ax[0].set_ylim(0, 100)
-ax[1].set_xlabel("DRAM controller busy (%)"); ax[1].set_ylabel("decode TPOT p50 vs baseline (%)"); ax[1].set_title("(b) decode slowdown vs memory-bandwidth use")
+ax[1].set_xlabel("GPU memory-controller busy (%)"); ax[1].set_ylabel("decode TPOT p50 vs baseline (%)"); ax[1].set_title("(b) decode slowdown vs memory-bandwidth use")
 ax[1].axhline(0, color="k", lw=0.6)
 for a_ in ax: a_.grid(True, alpha=0.3)
 h, l = ax[0].get_legend_handles_labels(); fig.legend(h, l, loc="lower center", ncol=3, fontsize=8.5, frameon=False, bbox_to_anchor=(0.5, -0.02))

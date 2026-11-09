@@ -7,9 +7,15 @@ stated; round 1 is referred to where it differs. Branch `kvcached-validation`, d
 [PLAN_overnight2.md](../PLAN_overnight2.md), run-by-run predictions and outcomes in
 [DECISIONS.md](DECISIONS.md) (D1–D10 round 1, D11–D19 round 2).
 
+**Terminology.** Two memories appear in this report and are kept apart by name. **GPU memory** is
+the 5090's 31.35 GiB of GDDR7: "GPU memory bandwidth" is the SM ↔ GPU-memory path (≈ 1.8 TB/s) and
+"GPU-memory-controller busy" is NVML's reading of it. **Host RAM** is the machine's 60 GiB of DDR: the
+KV tiers, the tenant's offloaded activations, streamed weights and snapshots live there and move over
+PCIe (≈ 14 GB/s). The word DRAM is not used for either.
+
 ## 1. What was built
 
-One RTX 5090 serves a Llama-3-8B decode node (vLLM 0.30 + kvcached main, native DRAM offload
+One RTX 5090 serves a Llama-3-8B decode node (vLLM 0.30 + kvcached main, native host-RAM offload
 with a 28 GiB tier in /dev/shm, prefix caching off, so the GPU holds only in-flight KV) and, beside
 it, a tenant: a Qwen2.5-0.5B LoRA fine-tune in most schemes, a Qwen2.5-3B fp8 prefill-only engine
 in the round-2 prefill schemes. Nothing is changed inside vLLM's scheduler:
@@ -31,9 +37,9 @@ in the round-2 prefill schemes. Nothing is changed inside vLLM's scheduler:
   (multiplicative update every 2 s).
 - **Fine-tune tenant** (`ft_worker.py`): before each optimizer step reads the budget and picks the
   highest configuration whose calibrated need fits (drop at once, climb after 3 s): full batch
-  → micro-batches k = 2/4/8 → + activation offload to pinned DRAM → + frozen base weights of
-  12/20 layers streamed from DRAM → pause (snapshot, everything to host). LoRA weights, optimizer,
-  scheduler, step and RNG are snapshotted to DRAM every 10 steps and before every tier change; a
+  → micro-batches k = 2/4/8 → + activation offload to pinned host RAM → + frozen base weights of
+  12/20 layers streamed from host RAM → pause (snapshot, everything to host). LoRA weights, optimizer,
+  scheduler, step and RNG are snapshotted to host RAM every 10 steps and before every tier change; a
   budget poll inside the step (every 50 ms, from the per-block hooks) preempts a step that no
   longer fits; the torch allocator cap follows the budget so a mis-estimate OOMs the tenant, never
   the engine. Round 2: it honours the published tokens/s cap by sleeping after each step, and
@@ -48,7 +54,7 @@ in the round-2 prefill schemes. Nothing is changed inside vLLM's scheduler:
 - **Transfer tracing**: every host↔GPU copy is recorded with its source — the engine's native
   offload transfers (bytes and CUDA-event time from vLLM's own transfer results, via an
   observation-only `sitecustomize`) and the tenant's activation/weight/snapshot copies — plus
-  NVML's PCIe counters, and in round 2 NVML's power, SM-busy and **DRAM-controller-busy** readings
+  NVML's PCIe counters, and in round 2 NVML's power, SM-busy and **GPU-memory-controller-busy** readings (the SM ↔ GPU-memory path)
   every 100 ms.
 
 Compute sharing: MPS daemon (user-space), engine and tenant as MPS clients; green contexts via
@@ -64,7 +70,7 @@ ctypes on libcuda (`green_ctx.py`).
 
 ![tiers](figures/02_tenant_tiers.png)
 
-*Diagram 3 — the tenant's ladder and the triggers that move it: budget polls inside the step, OOM as a signal, 3-s hold before climbing, DRAM snapshots around every move.*
+*Diagram 3 — the tenant's ladder and the triggers that move it: budget polls inside the step, OOM as a signal, 3-s hold before climbing, host-RAM snapshots around every move.*
 
 ### Tenant configurations (calibrated solo on GPU 1, `tiers.json`)
 
@@ -209,9 +215,9 @@ Round-1 (600 W) tables for the same schemes are in the git history of this file 
 
 ### 2.4 Reading the results (per-second view in `../results/<scheme>_timeline.png`)
 
-![DRAM busy](figures/dram_busy.png)
+![GPU memory busy](figures/dram_busy.png)
 
-*Figure 4 — the direct test of the bandwidth reading (`plot_dram.py`, NVML memory-controller busy,
+*Figure 4 — the direct test of the bandwidth reading (`plot_dram.py`, NVML GPU-memory-controller busy,
 phase means). (a) The counter against the tenant's throughput: it sits at 55–75 % whether the
 tenant runs at 0 or 14 k tok/s, because decode alone already keeps the controller that busy and
 the counter cannot separate the two users. (b) The decode slowdown against the counter: no
@@ -259,7 +265,7 @@ copy-heavy shapes while their cost rises.*
   (Figures 4 and 5). Decode streams the 15 GiB of weights every ~13 ms; a tenant token costs decode
   in proportion to the bytes it moves: 1.3 % per 1 k tok/s with k = 4 micro-batches, 2.6 % with
   k = 8 (the weights are re-read twice as often per token), 5.9 % with activation offload and
-  8–9 % with weight streaming (the copies compete too). NVML's DRAM-controller-busy counter does
+  8–9 % with weight streaming (the copies compete too). NVML's GPU-memory-controller-busy counter does
   not separate the two users — it reads 49–73 % with the engine alone and does not rise with the
   tenant's throughput (Figure 4a) — so it is not a usable feedback signal; the tenant's token rate
   and shape are.
@@ -306,8 +312,8 @@ every scheme in `../results/<scheme>_xfer.png`.*
 
 | | per copy | per 11-minute run |
 |---|---|---|
-| inference loads (DRAM → GPU, one per admitted request) | 768 MiB in 55.7 ms = **13.5 GiB/s** (≈ 93 % of the 14.5 GB/s the link delivers) | 1 176 loads, 880 GiB, 1.36 GiB/s average |
-| inference stores (GPU → DRAM, one per finished request) | 16 MiB in 1.2 ms | 1 219 stores, 51 GiB |
+| inference loads (host RAM → GPU, one per admitted request) | 768 MiB in 55.7 ms = **13.5 GiB/s** (≈ 93 % of the 14.5 GB/s the link delivers) | 1 176 loads, 880 GiB, 1.36 GiB/s average |
+| inference stores (GPU → host RAM, one per finished request) | 16 MiB in 1.2 ms | 1 219 stores, 51 GiB |
 | tenant activation offload (tier 2) | 4.7 GB out and 4.7 GB back per step, 354 ms out | 6 steps in the MPS scheme, 56 GiB |
 | tenant pause / resume | ~1 GB in 195 / 98 ms | 8 / 9 times in the MPS scheme |
 | tenant snapshots | 8 MB, < 50 ms | 176 in the MPS scheme |
@@ -331,7 +337,7 @@ Figure-centred summary (diagrams 1–4, Figures 0–7, `../results/<scheme>_time
    front of vLLM knows the exact KV demand of what is running and queued; the VRAM scheduler raises
    kvcached's limit the moment demand exceeds it — and only as far as memory is actually free —
    and lowers it with hysteresis; the tenant climbs and drops a ladder of configurations with a
-   50-ms preemption poll inside its steps and DRAM snapshots. Over an 11-minute schedule from 0.5
+   50-ms preemption poll inside its steps and host-RAM snapshots. Over an 11-minute schedule from 0.5
    to 4 req/s the engine never failed and never preempted, the GPU was never oversubscribed, and
    resizing itself costs nothing. Static partitioning lost on both sides: 5–26 s of queueing at and
    after 3–4 req/s, +30 % decode latency at low load, idle VRAM at low load.

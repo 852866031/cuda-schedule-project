@@ -6,13 +6,13 @@ optimizer step it reads the tenant budget published by the VRAM scheduler and pi
 tier whose calibrated peak fits:
 
   tier 0  full batch                               tier 1  micro-batches k=2/4/8 (grad accumulation)
-  tier 2  + activation offload to pinned DRAM       tier 3  + frozen base weights of n layers streamed from DRAM
+  tier 2  + activation offload to pinned host RAM       tier 3  + frozen base weights of n layers streamed from host RAM
   tier 4  pause: snapshot, free the GPU, wait
 
 The torch allocator cap follows the budget, so a mis-estimate OOMs this process, never the
 engine; an OOM drops one tier. A "collision" rule forces k >= 4 when the engine's busy duty
 cycle over the last second exceeds --collision-duty. Snapshots (LoRA weights, optimizer,
-scheduler, step, RNG) go to pinned DRAM / /dev/shm every --snapshot-every steps, before every
+scheduler, step, RNG) go to pinned host RAM / /dev/shm every --snapshot-every steps, before every
 tier change and on SIGTERM; the worker resumes from the snapshot on start. All host<->GPU
 copies it makes are recorded through xfer_trace (src=ft).
 

@@ -4,7 +4,7 @@
 #     green32        tenant on a fixed 32-SM green context (no gate, MPS on)
 #     green_dyn      tenant SM share set by the VRAM scheduler from the arrival rate (SM_TABLE), no gate
 #     engine_green   engine confined to ENGINE_SMS (default 128) SMs + tenant on the rest-ish (green_dyn table)
-# Starts: MPS daemon, decode-only engine (kvcached main, 28 GiB DRAM tier, prefix caching off,
+# Starts: MPS daemon, decode-only engine (kvcached main, 28 GiB host-RAM tier, prefix caching off,
 # busy-window patch + transfer tracer), router + VRAM scheduler on :8001, sampler, FT worker (per scheme),
 # then the reference prefix workload with the RPS schedule through the router; tears everything
 # down and runs analyze_coloc.py. Logs in coloc_adjust/logs, results in coloc_adjust/results.

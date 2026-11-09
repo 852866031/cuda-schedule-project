@@ -4,7 +4,7 @@
   2. decode per scheme (TPOT p50 / queue wait) and tenant per scheme (tok/s)
   3. accounting metrics per scheme from the VRAM scheduler log: time the tenant held more than its budget,
      physical oversubscription, grow_wait time, max limit, engine fixed
-  4. DRAM busy / power per scheme at 1 and 2 req/s
+  4. GPU-memory busy / power per scheme at 1 and 2 req/s
 """
 import argparse, os
 import numpy as np, pandas as pd
@@ -26,7 +26,7 @@ lab = lambda r: f"{r.rps:g} req/s ({r.t_from:.0f} s)"
 # 1. baseline old vs new
 o, n = P("adjust_notenant", args.old), P("adjust_notenant")
 if o is not None and n is not None:
-    L += ["### Baseline (inference alone, KV follows load): 600 W round 1 vs 500 W round 2", "", "| phase | TPOT p50 600 W | 500 W | queue 600 W | 500 W | DRAM busy % | power W |", "|---|---|---|---|---|---|---|"]
+    L += ["### Baseline (inference alone, KV follows load): 600 W round 1 vs 500 W round 2", "", "| phase | TPOT p50 600 W | 500 W | queue 600 W | 500 W | GPU-memory busy % | power W |", "|---|---|---|---|---|---|---|"]
     for i in range(min(len(o), len(n))):
         L.append(f"| {lab(n.iloc[i])} | {o.tpot50.iloc[i]:.1f} | {n.tpot50.iloc[i]:.1f} | {o.queue_ms.iloc[i]:.0f} | {n.queue_ms.iloc[i]:.0f} | "
                  f"{n.get('dram_busy', pd.Series([np.nan]*len(n))).iloc[i]:.0f} | {n.get('power_w', pd.Series([np.nan]*len(n))).iloc[i]:.0f} |")
@@ -65,8 +65,8 @@ for a in schemes:
         f = pd.read_csv(fcsv); steps = f"{pd.to_numeric(f.tok_s, errors='coerce').notna().sum()} ({f.event.astype(str).str.contains('preempted').sum()})"
     L.append(f"| {NAMES.get(a, a)} | {fixed:.2f} | {c.limit_gib.max():.2f} | {over:.1f} | {phys:.1f} | {gw:.1f} | {gp} | {sh} | {steps} |")
 L.append("")
-# 4. DRAM / power at 1 and 2 req/s
-L += ["### DRAM-controller busy and power at 1 and 2 req/s (phase means)", "", "| scheme | DRAM busy % @1 | @2 | power W @1 | @2 | tenant tok/s @1 | @2 |", "|---|---|---|---|---|---|---|"]
+# 4. GPU-memory busy / power at 1 and 2 req/s
+L += ["### GPU-memory-controller busy and power at 1 and 2 req/s (phase means)", "", "| scheme | GPU-memory busy % @1 | @2 | power W @1 | @2 | tenant tok/s @1 | @2 |", "|---|---|---|---|---|---|---|"]
 for a in schemes:
     d = P(a)
     if d is None or "dram_busy" not in d: continue

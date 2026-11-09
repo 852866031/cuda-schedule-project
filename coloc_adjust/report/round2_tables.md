@@ -1,6 +1,6 @@
 ### Baseline (inference alone, KV follows load): 600 W round 1 vs 500 W round 2
 
-| phase | TPOT p50 600 W | 500 W | queue 600 W | 500 W | DRAM busy % | power W |
+| phase | TPOT p50 600 W | 500 W | queue 600 W | 500 W | GPU-memory busy % | power W |
 |---|---|---|---|---|---|---|
 | 1 req/s (0 s) | 12.9 | 12.9 | 107 | 108 | 65 | 335 |
 | 2 req/s (90 s) | 15.2 | 15.2 | 124 | 124 | 73 | 375 |
@@ -65,9 +65,9 @@
 | Adaptive KV + 3B prefill tenant capped at 20 % of SMs (MPS) | 21.02 | 12.50 | 629.7 | 88.6 | 92.1 | 9 | 27 |  |
 | Adaptive KV + 3B prefill tenant on disjoint SMs: engine 128, tenant 42 | 21.50 | 12.00 | 633.3 | 103.5 | 101.8 | 7 | 27 |  |
 
-### DRAM-controller busy and power at 1 and 2 req/s (phase means)
+### GPU-memory-controller busy and power at 1 and 2 req/s (phase means)
 
-| scheme | DRAM busy % @1 | @2 | power W @1 | @2 | tenant tok/s @1 | @2 |
+| scheme | GPU-memory busy % @1 | @2 | power W @1 | @2 | tenant tok/s @1 | @2 |
 |---|---|---|---|---|---|---|
 | Inference alone, KV follows load (baseline) | 65 | 73 | 335 | 375 |  |  |
 | Static split: KV 6.7 GiB, FT 6 GiB | 71 | 72 | 424 | 440 | 12235 | 12800 |

@@ -1,4 +1,4 @@
-| shape | tenant tok/s | decode TPOT (ms) | slowdown | % per 1k tok/s | DRAM busy % | power W |
+| shape | tenant tok/s | decode TPOT (ms) | slowdown | % per 1k tok/s | GPU-mem busy % | power W |
 |---|---|---|---|---|---|---|
 | no tenant |  | 12.7 | +0.0 % |  | 74 | 347 |
 | k=4 | 3988 | 13.4 | +5.2 % | 1.29 | 67 | 361 |
