@@ -136,6 +136,15 @@ prompt token/s）。每个阶段去掉前 10 秒。**Baseline**：引擎单独�
 D 在低负载给 64–96 个 SM，训练吞吐略低，但每个 token 同时在读权重的 kernel 更少，和 decode 的权重
 流争得更少。第一轮"放哪里都一样"的结论说得太满了：**固定放哪里一样，随负载变的份额不一样**。
 
+![05_green_dyn](figures/05_green_dyn.png)
+
+*图 E：方案 D（预建动态 green context）的 SM 份额环路。左边是 VRAM scheduler：最近 5 秒的到达率查表
+得到训练任务该用多少 SM（0 req/s 给 128，0.5 给 96，1 给 64，2 给 32，3 以上给 16），和显存预算写在同一个
+文件里，每秒最多发布一次。右边是训练进程：启动时把 128/96/64/32/16 五个 green context 一次建好，每个
+step 之间只是把当前 stream 换到最接近的那个，不建不销毁。显存阶梯（图 C）照常运行。下面灰框解释为什么
+高负载时给更少的 SM 有用：训练的代价由每 token 搬的字节决定，SM 少了同时在读权重的 kernel 就少，
+正好在引擎自己流量最大的时候把训练的流量摊薄。*
+
 ## 6. 看图
 
 ### 图 1：各方案的指标对到达率
@@ -199,7 +208,15 @@ green context）**在 0.5–1 req/s 时都给训练 7–12k tok/s，解码代价
 
 Qwen2.5-3B fp8 只做 3072-token prompt 的 prefill（1 req/s，约 3.1k prompt tok/s），KV 流到 host RAM，
 相当于 PD 分离里的 prefill 节点和 decode 节点共卡。它固定占 4.5 GiB（权重、context、kvcached 段），
-没有阶梯，只有"KV 上限 → 扣请求 → 睡眠"三档。
+没有阶梯，只有"KV 上限 → 扣请求 → 睡眠"三档（图 F）。
+
+![06_pf_tiers](figures/06_pf_tiers.png)
+
+*图 F：prefill tenant 的三个状态和切换条件。适配器每 100 ms 读预算：预算够就把这台引擎自己的 kvcached
+上限设成预算（256 MiB 步进，最多 8 GiB）；预算低于 0.5 GiB 就在适配器处扣住新 prompt，在途的跑完；扣住
+3 秒且没有在途请求就调 vLLM 的 sleep level 1（权重进 host RAM、KV 丢弃，来回各约 260 ms，显存从 4.5 降到
+1.4 GiB）；预算回到 1.5 GiB 以上才唤醒。和训练阶梯不同，引擎没有"形态"可缩，只能少接请求、然后让出 GPU。
+红框是它卡住的地方：固定占用，以及睡着时调度器仍按 4.5 GiB 记账、3 GiB 没还给 KV 池。*
 
 <!-- pf-outcome-start -->
 **结果（D19）**：三种算力机制没有差别：decode **0.5–1 req/s 时 +4–8%，≥ 2 req/s 时 0%**；tenant 在

@@ -194,6 +194,14 @@ Round-1 (600 W) tables for the same schemes are in the git history of this file 
 
 `green_ctx.py`, ctypes on libcuda; round 1 details in DECISIONS D8–D10, round 2 in D18.
 
+![dynamic green context](figures/05_green_dyn.png)
+
+*Diagram 5 — the SM-share loop of the prebuilt dynamic green-context scheme (`green_dyn2`, source
+`../diagrams/05_green_dyn.drawio`). Left: the VRAM scheduler turns the recent arrival rate into a
+tenant SM count by table and publishes it beside the memory budget. Right: the tenant built one
+green context per SM count at start and, between steps, only switches its stream to the nearest
+one. The memory ladder (Diagram 3) runs unchanged alongside.*
+
 | scheme | decode at 1 / 2 req/s (TPOT, queue) | tenant at 1 / 0.5 req/s | note |
 |---|---|---|---|
 | `green32` (tenant on 32 SMs, round 1) | 14.4 / 16.6 ms, 119 / 132 ms | 6.3k / 7.3k tok/s | same trade as the MPS 20 % cap |
@@ -277,7 +285,17 @@ copy-heavy shapes while their cost rises.*
 A different kind of tenant: a Qwen2.5-3B (fp8) vLLM engine that only prefills 3072-token prompts
 at 1 req/s (3.1k prompt tok/s offered) and streams the KV to a host-RAM tier, i.e. the "prefill
 node" of a disaggregated pair sharing the GPU with the decode node. Its footprint is 4.5 GiB fixed
-(weights, context, kvcached segment) plus KV; it has no ladder, only KV limit → hold → sleep.
+(weights, context, kvcached segment) plus KV; it has no ladder, only KV limit → hold → sleep
+(Diagram 6).
+
+![prefill tenant states](figures/06_pf_tiers.png)
+
+*Diagram 6 — the prefill tenant's three states and what moves it (`pf_tenant.py`, source
+`../diagrams/06_pf_tiers.drawio`): the adapter sets the engine's own kvcached limit to the budget,
+holds new prompts when the budget falls under 0.5 GiB, puts the engine to sleep after 3 idle
+seconds (≈ 260 ms each way) and wakes it once the budget is back with 1 GiB of margin. The red note
+is where the scheme binds: the fixed footprint, and the 3 GiB the scheduler does not yet credit back
+while the engine sleeps.*
 
 ![prefill schemes](figures/arms_pf.png)
 
