@@ -1,0 +1,32 @@
+ts,step,cfg,tier,k,off,act,dt_ms,tok_s,loss,peak_gib,reserved_gib,gated_ms,budget_gib,duty,act_out_mb,act_in_mb,snapshot_ms,event,sms,cap_tok_s,sleep_ms
+1794213595.901,0,7,4,0,0,0,,,,,0.00,,0.00,1.00,,,,tier None->7
+1794213645.788,1,2,1,4,0,0,45965,89,13.5814,4.34,4.95,45603,7.38,0.00,0,0,,tier 7->2,0,,0
+1794213725.850,1,2,1,4,0,0,,,,,2.31,79566,8.38,1.00,,,,preempted mid-step (budget 4.88 GiB < need of cfg 2) after 80061 ms
+1794213737.368,1,3,1,8,0,0,,,,,1.67,10519,4.88,0.98,,,,preempted mid-step (budget 2.88 GiB < need of cfg 3) after 11485 ms
+1794213737.468,1,4,2,8,0,1,,,,,1.63,0,2.88,1.00,,,,preempted mid-step (budget 1.88 GiB < need of cfg 4) after 52 ms
+1794213737.742,1,7,4,0,0,0,,,,,0.61,,1.88,0.00,,,,tier 4->7
+1794213755.048,1,2,1,4,0,0,,,,,1.59,7081,5.88,0.00,,,,preempted mid-step (budget 4.88 GiB < need of cfg 2) after 7773 ms
+1794213762.067,1,3,1,8,0,0,,,,,1.45,6627,4.88,0.95,,,,preempted mid-step (budget 2.88 GiB < need of cfg 3) after 6980 ms
+1794213762.267,1,4,2,8,0,1,,,,,1.04,0,2.88,1.00,,,,preempted mid-step (budget 1.88 GiB < need of cfg 4) after 166 ms
+1794213762.464,1,7,4,0,0,0,,,,,0.61,,1.88,0.00,,,,tier 4->7
+1794213784.985,1,3,1,8,0,0,,,,,1.45,9095,3.88,0.00,,,,preempted mid-step (budget 2.88 GiB < need of cfg 3) after 9779 ms
+1794213813.399,1,4,2,8,0,1,,,,,1.36,26881,2.88,1.00,,,,preempted mid-step (budget 1.88 GiB < need of cfg 4) after 28346 ms
+1794213813.636,1,7,4,0,0,0,,,,,0.61,,1.88,0.98,,,,tier 4->7
+1794213907.146,1,1,1,2,0,0,,,,,1.06,1222,9.38,0.00,,,,preempted mid-step (budget 8.88 GiB < need of cfg 1) after 3711 ms
+1794213987.229,1,2,1,4,0,0,,,,,2.50,79392,8.88,1.00,,,,preempted mid-step (budget 4.38 GiB < need of cfg 2) after 80030 ms
+1794213987.660,1,3,1,8,0,0,,,,,1.04,0,4.38,1.00,,,,preempted mid-step (budget 1.38 GiB < need of cfg 3) after 351 ms
+1794213987.885,1,7,4,0,0,0,,,,,0.61,,1.38,0.00,,,,tier 3->7
+1794214067.145,1,1,1,2,0,0,,,,,1.06,7755,9.88,0.00,,,,preempted mid-step (budget 8.88 GiB < need of cfg 1) after 10281 ms
+1794214119.146,1,2,1,4,0,0,,,,,1.93,51302,8.88,0.00,,,,preempted mid-step (budget 4.88 GiB < need of cfg 2) after 51951 ms
+1794214119.633,1,3,1,8,0,0,,,,,1.04,0,4.88,1.00,,,,preempted mid-step (budget 3.38 GiB < need of cfg 3) after 451 ms
+1794214136.882,1,4,2,8,0,1,,,,,1.19,16139,3.38,0.00,,,,preempted mid-step (budget 2.38 GiB < need of cfg 4) after 17214 ms
+1794214137.766,1,6,3,8,20,1,,,,,0.70,160,2.38,1.00,,,,preempted mid-step (budget 1.88 GiB < need of cfg 6) after 654 ms
+1794214137.886,1,7,4,0,0,0,,,,,0.61,,1.88,1.00,,,,tier 6->7
+1794214154.119,1,3,1,8,0,0,,,,,1.13,1832,4.38,0.19,,,,preempted mid-step (budget 2.88 GiB < need of cfg 3) after 2308 ms
+1794214154.219,1,4,2,8,0,1,,,,,1.04,0,2.88,0.88,,,,preempted mid-step (budget 1.88 GiB < need of cfg 4) after 61 ms
+1794214154.398,1,7,4,0,0,0,,,,,0.61,,1.88,0.00,,,,tier 4->7
+1794214177.592,1,3,1,8,0,0,,,,,1.06,754,3.88,1.00,,,,preempted mid-step (budget 3.38 GiB < need of cfg 3) after 2056 ms
+1794214179.046,1,4,2,8,0,1,,,,,1.04,1136,3.38,0.44,,,,preempted mid-step (budget 1.88 GiB < need of cfg 4) after 1415 ms
+1794214179.206,1,7,4,0,0,0,,,,,0.61,,1.88,1.00,,,,tier 4->7
+1794214195.901,1,2,1,4,0,0,,,,,1.16,1464,6.88,0.00,,,,preempted mid-step (budget 4.88 GiB < need of cfg 2) after 2158 ms
+1794214292.113,2,3,1,8,0,0,96170,43,13.5085,2.67,3.01,95824,4.88,1.00,0,0,,tier 2->3,0,,0

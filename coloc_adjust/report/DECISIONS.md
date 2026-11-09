@@ -330,3 +330,73 @@ line. **Predictions for the re-run:** the tenant runs in every 0.5–2 req/s pha
 starves; `tpot_slo5` holds decode within ≈ +5 % of the reference at 1–2 req/s with the tenant at
 1–3k tok/s, `tpot_slo15` within ≈ +15 % with the tenant at 3–6k tok/s; `grow_abandoned` appears
 after each peak and `grow_wait` runs are seconds, not minutes.
+
+**Outcome (03:27, `adjust_nogate` re-run):** as predicted. Tenant 9.8k / 3.4k / 0 / 12.6k / 0 /
+14.5k / 4.3k / 0.4k / 1.2k / 11.5k / 12.8k tok/s across the eleven phases (round 1 at 600 W: 11.0k /
+4.9k / 0.2k / 12.7k / 0 / 16.3k / 8.4k / 0.4k / 1.8k / 11.9k / 14.9k); decode TPOT p50 within 0.3 ms of
+round 1 in every phase. Scheduler log: 27 `grow_abandoned`, `grow_wait` runs of 2–7 s except one
+of 60 s, which is the whole 4 req/s phase (demand 12.65 GiB above the ≈12.4 GiB that can be
+mapped with the tenant paused: a true capacity limit, not the bug). Chain continues.
+
+## D17. P1.1 outcome — throughput-feedback schemes `tpot_slo5` / `tpot_slo15` (04:30)
+
+D11 predicted that a tokens/s cap driven by the decode-TPOT error would hold the slowdown at the
+target with the tenant at the throughput Figure 2's line implies (≈ 2 k tok/s for 5 %, ≈ 6 k for 15 %).
+**Outcome.** `tpot_slo15`: decode +0–14 % vs the reference in every phase (+5/+6/+10/+5/+10/+14/+14 %
+in the 0.5–2 req/s phases), tenant 1.3–5.3 k tok/s there, cap median 1.1 k, interquartile 0.5–3.3 k;
+on the Figure-2 line (5 k tok/s ↔ +12 %). The SLO is met and the tenant keeps a third to a half of
+the un-gated throughput. `tpot_slo5`: decode +2–7 %, tenant 0.4–3.8 k tok/s but mostly at the
+500 tok/s floor (cap at the floor for most ticks, sleep 2.8 s per step): a 5 % target is inside the
+noise of a 10-s TPOT window (the reference itself moves ±4 % between repeats of the same phase),
+so the loop sees a violation most of the time and throttles. Lesson for the design: the feedback
+target must sit above the TPOT measurement noise, or the window must be longer (then the loop is
+slower than the 30–60 s phases). Figures: `tpot_slo*_timeline.png`.
+
+## D18. P1.2 shape probe and P2 `green_dyn2` outcomes (05:05)
+
+**Probe** (engine at a static 3 GiB KV limit, tenant at a fixed 7.5 GiB budget and a 4 k tok/s cap,
+one 60-s window per tenant shape; `results/probe_probe.md/.png`): decode slowdown per 1 k tenant
+tok/s is **1.3 % for k=4, 2.6 % for k=8, 5.9 % with activation offload, 8–9 % with 12–20 streamed
+layers**. Smaller micro-batches re-read the weights more often per token, and the offload shapes
+add host↔GPU copies: the cost of a tenant token is set by the memory traffic it causes, not by the
+token itself. NVML's DRAM-busy figure drops for the offload shapes (52–60 % vs 67–79 %) while
+their slowdown rises, so the busy counter alone is not the predictor; traffic per token is. This
+is the quantitative basis for the "bandwidth-aware tenant shape" proposal (plan P1.2): under a
+tokens/s cap the tenant should run its largest-batch shape that fits the budget, never a streaming
+shape at high rate.
+
+**`green_dyn2`** (prebuilt green contexts of 128/96/64/32/16 SMs, SM count from the arrival rate,
+stream switch only): **the tenant survived the whole run** (898 steps, 174 context switches,
+reserved memory ≤ 8.7 GiB under a ≤ 9.9 GiB budget — none of the round-1 allocator leak), tenant
+8.3 / 2.8 / 0 / 9.7 / 0 / 11.9 / 3.3 / 0.4 / 0.8 / 8.8 / 10.3 k tok/s, decode **+10–15 %** in the
+0.5–2 req/s phases against +26–31 % for the un-gated MPS scheme at similar throughput, and +15–28 %
+for the fixed 42-SM split at similar throughput. Fewer SMs for the tenant at a given tokens/s
+means fewer concurrent weight re-reads: the same mechanism as the probe. Prediction in the plan was
+"survives; slowdown like `green_split`"; the outcome is better than that on the decode side.
+Un-gated **`static_split`** (no gate, 6.7 GiB KV): tenant 11–13 k tok/s throughout, decode +30–40 %
+at 0.5–2 req/s and queues of 8–26 s at 3–4 req/s and after (the round-1 picture, as D15 predicted).
+
+## D19. P3 outcome — the prefill tenant (`pf_base`, `pf_mps`, `pf_mps20`, `pf_split`, 05:03–05:56)
+
+**Predictions (D14):** `pf_base` = `adjust_notenant` within noise; decode +25–40 % at 1–2 req/s
+with shared SMs, under +10 % with the 20 % cap or the partition while the tenant keeps ≥ 60 % of
+its prefill throughput; the tenant asleep in the 3–4 req/s phases, awake within seconds after.
+**Outcome.** `pf_base` matches the main baseline (TPOT within 0.2 ms except 4 req/s: 27.5 vs 26.1 ms,
+queue identical) — the smaller host tier costs nothing. The three prefill schemes are
+indistinguishable from each other: decode **+4–8 % at 0.5–1 req/s, 0 % at ≥ 2 req/s**, the tenant
+delivering **6–9 k prompt tok/s at 0.5–1 req/s and nothing at ≥ 2 req/s**, asleep 100 % of those
+phases, 0 failed requests. The compute mechanism did not matter because compute never became the
+limit: the tenant's **4.5 GiB fixed footprint** (fp8 weights, CUDA context, kvcached segment,
+measured by NVML at launch) leaves a pool of 9.4 GiB for KV + tenant KV, and the 8B's demand
+exceeds that from 2 req/s on, so the adapter holds requests and the engine sleeps. While it
+sleeps its real footprint is 1.4 GiB, but the scheduler's fixed allowance stays at 4.5 GiB: 3 GiB
+are idle in every ≥ 2 req/s phase. The adapter-side latency numbers (median 45–190 s in the
+sleeping phases) are queueing at the proxy, not prefill time (71 ms for 3072 tokens when awake).
+One artefact: in `pf_split` the budget came back briefly inside the 4 req/s phase, the tenant woke
+(2 k tok/s) and the engine's queue doubled (6.7 s vs 3.4 s) — the wake margin (0.5 GiB) is too
+small for a tenant whose wake costs 3.5 GiB. **Conclusions:** a prefill engine is a workable
+tenant only when its weights fit in what the decode node leaves at low load; its decode cost per
+prompt token (+6 % for 6–7 k tok/s ≈ 1 % per 1 k) is below the fine-tune tenant's (2.2 % per 1 k),
+consistent with prefill being compute-bound (weights read once per 8 k-token batch). Next steps
+recorded in the report: credit the sleeping footprint to the pool, wake margin ≥ the wake cost,
+a 16–32-SM green context for the prefill engine.

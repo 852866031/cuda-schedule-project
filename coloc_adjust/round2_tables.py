@@ -12,7 +12,7 @@ import sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from arm_names import NAMES
 
 ap = argparse.ArgumentParser(); ap.add_argument("--dir", default="results"); ap.add_argument("--old", default="results_600w")
-ap.add_argument("--schemes", nargs="+", default=["adjust_notenant", "static_split", "adjust", "adjust_nogate", "adjust_mps20", "green_split", "tpot_slo5", "tpot_slo15", "green_dyn2", "pf_mps", "pf_mps20", "pf_split"])
+ap.add_argument("--schemes", nargs="+", default=["adjust_notenant", "static_split", "static_split_gate", "adjust", "adjust_nogate", "adjust_mps20", "green_split", "tpot_slo5", "tpot_slo15", "green_dyn2", "pf_base", "pf_mps", "pf_mps20", "pf_split"])
 ap.add_argument("--out", default="report/round2_tables.md")
 args = ap.parse_args()
 TOTAL, FIXED_OLD = 31.3536, 17.7
@@ -75,3 +75,36 @@ for a in schemes:
     L.append(f"| {NAMES.get(a, a)} | {g(r1,'dram_busy')} | {g(r2,'dram_busy')} | {g(r1,'power_w')} | {g(r2,'power_w')} | {g(r1,'ft_tok_s')} | {g(r2,'ft_tok_s')} |")
 L.append("")
 txt = "\n".join(L); open(args.out, "w").write(txt); print(txt)
+
+# 5. compact per-rate tables, spliced into the reports between markers
+SHORT = {"adjust_notenant": "Inference alone (baseline)", "pf_base": "Inference alone, 25.5 GiB tier (prefill baseline)",
+         "static_split": "Static split", "static_split_gate": "Static split + idle gate", "adjust": "Adaptive KV + gate",
+         "adjust_nogate": "Adaptive KV + MPS", "adjust_mps20": "Adaptive KV + MPS 20 %", "green_split": "Adaptive KV + disjoint SMs 128/42",
+         "tpot_slo5": "Adaptive KV + 5 % latency SLO", "tpot_slo15": "Adaptive KV + 15 % latency SLO", "green_dyn2": "Adaptive KV + dynamic green ctx (prebuilt)",
+         "pf_mps": "3B prefill tenant, MPS", "pf_mps20": "3B prefill tenant, MPS 20 %", "pf_split": "3B prefill tenant, disjoint SMs"}
+RATES = [0.5, 1.0, 2.0, 3.0, 4.0]
+def rate_means(d, col):
+    return [d[d.rps == r][col].mean() if (d.rps == r).any() and col in d else np.nan for r in RATES]
+def compact(family, base):
+    b = P(base); out = ["| scheme | " + " | ".join(f"{r:g}" for r in RATES) + " | queue @3 / @4 (ms) | tenant k tok/s @0.5 / 1 / 2 |", "|---|" + "---|" * (len(RATES) + 2)]
+    bm = rate_means(b, "tpot50")
+    for a in family:
+        d = P(a)
+        if d is None: continue
+        tm = rate_means(d, "tpot50"); qm = rate_means(d, "queue_ms"); fm = rate_means(d, "ft_tok_s")
+        cells = [f"{t:.1f}" if a == base else f"{t:.1f} ({(t/bb-1)*100:+.0f} %)" for t, bb in zip(tm, bm)]
+        ft = "" if a == base else " / ".join("–" if pd.isna(v) else f"{v/1e3:.1f}" for v in fm[:3])
+        out.append(f"| {SHORT.get(a, a)} | " + " | ".join(cells) + f" | {qm[3]:.0f} / {qm[4]:.0f} | {ft} |")
+    return out
+train = [a for a in ["adjust_notenant", "static_split", "static_split_gate", "adjust", "adjust_nogate", "adjust_mps20", "green_split", "tpot_slo5", "tpot_slo15", "green_dyn2"] if P(a) is not None]
+pf = [a for a in ["pf_base", "pf_mps", "pf_mps20", "pf_split"] if P(a) is not None]
+C1 = ["*Decode TPOT p50 in ms at each arrival rate (mean over the phases that share the rate; in brackets the change against the baseline), the scheduler queue wait at 3 and 4 req/s, and the tenant's throughput at 0.5 / 1 / 2 req/s (k tok/s; for the prefill tenant, k prompt tok/s). Round 2, 500 W, GPU 0. Full per-phase tables: [round2_tables.md](round2_tables.md).*", ""]
+C1 += ["**Fine-tune tenant family**", ""] + compact(train, "adjust_notenant") + [""]
+if len(pf) > 1: C1 += ["**Prefill tenant family** (the 8B's host tier is 25.5 GiB here instead of 28, hence its own baseline)", ""] + compact(pf, "pf_base") + [""]
+ctext = "\n".join(C1)
+for rp in ("report/REPORT.md", "report/REPORT_zh.md"):
+    if os.path.exists(rp):
+        s = open(rp).read(); a, b = "<!-- round2-compact-start -->", "<!-- round2-compact-end -->"
+        if a in s and b in s:
+            s = s[:s.index(a) + len(a)] + "\n" + ctext + "\n" + s[s.index(b):]; open(rp, "w").write(s); print("spliced into", rp)
+print(ctext)

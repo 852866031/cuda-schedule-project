@@ -1,5 +1,7 @@
 # Overnight plan 2 — fix the accounting, close the compute half, try the hard parts
 
+> **Status (2026-11-09 06:15): executed.** Outcomes per section in [report/DECISIONS.md](report/DECISIONS.md) D11–D19; results in [report/REPORT.md](report/REPORT.md) / [REPORT_zh.md](report/REPORT_zh.md). Deviations: a scheduler bug (stale pending grow, D16) forced a re-run of the six adaptive schemes; chain 2 was started by hand (its waiter matched its own command line); `static_split` was re-run without the gate (D15).
+
 Pre-registration document (plans are never rewritten after the fact; outcomes go to
 `report/DECISIONS.md` D11+ with a prediction written before each run). Written 2026-11-09 after
 the first prototype round (`report/REPORT.md`). Hardware: both GPUs idle at planning time, 53 GiB host RAM free (GPU roles: see P0.0).

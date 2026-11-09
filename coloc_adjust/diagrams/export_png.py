@@ -7,7 +7,7 @@ from PIL import Image, ImageChops
 
 here = os.path.dirname(os.path.abspath(__file__))
 out_dir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "..", "report", "figures")
-W, H = 1400, 1100  # generous canvas; the result is auto-cropped
+W, H = 1400, 1400  # generous canvas; the result is auto-cropped
 for f in sorted(glob.glob(os.path.join(here, "*.drawio"))):
     cfg = {"nav": False, "resize": False, "toolbar": "", "edit": "", "border": 20, "xml": open(f).read()}
     page = ('<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#fff}</style></head><body>'

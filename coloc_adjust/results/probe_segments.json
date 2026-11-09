@@ -1,0 +1,8 @@
+[
+{"shape": -1, "label": "no tenant", "t_from": 1.4, "t_to": 61.4},
+{"shape": 2, "t_from": 73.5, "t_to": 121.5},
+{"shape": 3, "t_from": 159.6, "t_to": 207.6},
+{"shape": 4, "t_from": 245.5, "t_to": 293.5},
+{"shape": 5, "t_from": 332.2, "t_to": 380.2},
+{"shape": 6, "t_from": 419.2, "t_to": 467.2}
+]
