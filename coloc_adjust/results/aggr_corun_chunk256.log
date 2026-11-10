@@ -1,0 +1,38 @@
+decode context after a 16-SM split: 154 of 170 SMs
+decode context after a 96-SM split: 74 of 170 SMs
+GPM counters from GPU-092b263f-e5f9-5679-b28d-d840879780f1
+alone       aggr SMs None target       decode SMs 170 B=1  step   11.70 ms  decode  1353 GB/s  aggr    nan GB/s  bw  75.46 %  sm_util  81.11
+alone       aggr SMs None target       decode SMs 170 B=8  step   15.82 ms  decode  1364 GB/s  aggr    nan GB/s  bw  77.06 %  sm_util  87.08
+alone       aggr SMs None target       decode SMs 154 B=1  step   11.88 ms  decode  1333 GB/s  aggr    nan GB/s  bw  74.61 %  sm_util  72.77
+alone       aggr SMs None target       decode SMs 154 B=8  step   15.56 ms  decode  1387 GB/s  aggr    nan GB/s  bw  78.34 %  sm_util  79.99
+alone       aggr SMs None target       decode SMs  74 B=1  step   11.93 ms  decode  1327 GB/s  aggr    nan GB/s  bw  74.05 %  sm_util  36.63
+alone       aggr SMs None target       decode SMs  74 B=8  step   17.95 ms  decode  1203 GB/s  aggr    nan GB/s  bw  67.98 %  sm_util  38.15
+aggr_alone  aggr SMs   96 target  max  aggr   1578 GB/s    5879 calls/s  bw  88.01 %  sm_util  52.90
+aggr_alone  aggr SMs   96 target  200  aggr    200 GB/s     745 calls/s  bw  11.16 %  sm_util   6.49
+aggr_alone  aggr SMs   96 target  400  aggr    400 GB/s    1490 calls/s  bw  22.31 %  sm_util  13.22
+aggr_alone  aggr SMs   16 target  max  aggr   1090 GB/s    4061 calls/s  bw  60.83 %  sm_util   9.06
+aggr_alone  aggr SMs   16 target  200  aggr    200 GB/s     745 calls/s  bw  11.16 %  sm_util   1.66
+aggr_alone  aggr SMs   16 target  400  aggr    400 GB/s    1490 calls/s  bw  22.32 %  sm_util   3.34
+corun       aggr SMs   96 target    0  decode SMs  74 B=1  step   11.96 ms  decode  1324 GB/s  aggr      0 GB/s  bw  73.86 %  sm_util  36.54
+corun       aggr SMs   96 target    0  decode SMs  74 B=8  step   17.90 ms  decode  1206 GB/s  aggr      0 GB/s  bw  68.17 %  sm_util  38.18
+corun       aggr SMs   96 target  200  decode SMs  74 B=1  step   13.43 ms  decode  1179 GB/s  aggr    200 GB/s  bw  76.92 %  sm_util  44.61
+corun       aggr SMs   96 target  200  decode SMs  74 B=8  step   20.35 ms  decode  1061 GB/s  aggr    200 GB/s  bw  71.11 %  sm_util  45.78
+corun       aggr SMs   96 target  400  decode SMs  74 B=1  step   15.21 ms  decode  1041 GB/s  aggr    400 GB/s  bw  80.36 %  sm_util  51.56
+corun       aggr SMs   96 target  400  decode SMs  74 B=8  step   23.00 ms  decode   939 GB/s  aggr    400 GB/s  bw  75.38 %  sm_util  52.88
+corun       aggr SMs   96 target  max  decode SMs  74 B=1  step   37.38 ms  decode   424 GB/s  aggr   1231 GB/s  bw  92.21 %  sm_util  88.75
+corun       aggr SMs   96 target  max  decode SMs  74 B=8  step   62.43 ms  decode   346 GB/s  aggr   1307 GB/s  bw  92.42 %  sm_util  90.24
+corun       aggr SMs   16 target    0  decode SMs 154 B=1  step   11.84 ms  decode  1337 GB/s  aggr      0 GB/s  bw  74.77 %  sm_util  72.94
+corun       aggr SMs   16 target    0  decode SMs 154 B=8  step   15.56 ms  decode  1387 GB/s  aggr      0 GB/s  bw  78.35 %  sm_util  80.04
+corun       aggr SMs   16 target  200  decode SMs 154 B=1  step   12.74 ms  decode  1243 GB/s  aggr    200 GB/s  bw  80.46 %  sm_util  76.89
+corun       aggr SMs   16 target  200  decode SMs 154 B=8  step   17.38 ms  decode  1242 GB/s  aggr    200 GB/s  bw  81.34 %  sm_util  82.43
+corun       aggr SMs   16 target  400  decode SMs 154 B=1  step   13.69 ms  decode  1156 GB/s  aggr    400 GB/s  bw  86.78 %  sm_util  81.17
+corun       aggr SMs   16 target  400  decode SMs 154 B=8  step   19.24 ms  decode  1122 GB/s  aggr    400 GB/s  bw  85.71 %  sm_util  86.08
+corun       aggr SMs   16 target  max  decode SMs 154 B=1  step   13.87 ms  decode  1141 GB/s  aggr    435 GB/s  bw  87.91 %  sm_util  82.12
+corun       aggr SMs   16 target  max  decode SMs 154 B=8  step   21.34 ms  decode  1011 GB/s  aggr    585 GB/s  bw  89.81 %  sm_util  89.46
+alone_end   aggr SMs None target       decode SMs 170 B=1  step   11.70 ms  decode  1353 GB/s  aggr    nan GB/s  bw  78.19 %  sm_util  81.12
+alone_end   aggr SMs None target       decode SMs 170 B=8  step   15.84 ms  decode  1363 GB/s  aggr    nan GB/s  bw  76.97 %  sm_util  87.00
+alone_end   aggr SMs None target       decode SMs 154 B=1  step   11.89 ms  decode  1332 GB/s  aggr    nan GB/s  bw  74.28 %  sm_util  72.48
+alone_end   aggr SMs None target       decode SMs 154 B=8  step   15.84 ms  decode  1363 GB/s  aggr    nan GB/s  bw  76.99 %  sm_util  78.80
+alone_end   aggr SMs None target       decode SMs  74 B=1  step   11.93 ms  decode  1327 GB/s  aggr    nan GB/s  bw  74.02 %  sm_util  36.61
+alone_end   aggr SMs None target       decode SMs  74 B=8  step   18.16 ms  decode  1188 GB/s  aggr    nan GB/s  bw  67.16 %  sm_util  37.74
+wrote results/aggr_corun_chunk256.csv

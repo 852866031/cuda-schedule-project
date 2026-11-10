@@ -1,0 +1,63 @@
+Loading weights:   0%|          | 0/290 [00:00<?, ?it/s]Loading weights: 100%|██████████| 290/290 [00:00<00:00, 24784.99it/s]
+ft_worker: prebuilt green context 128 -> 128 SMs
+ft_worker: prebuilt green context 96 -> 96 SMs
+ft_worker: prebuilt green context 64 -> 64 SMs
+ft_worker: prebuilt green context 32 -> 32 SMs
+ft_worker: prebuilt green context 16 -> 16 SMs
+  step 20 cfg 2 (tier 1 k=4 off=0): 626 ms, 6546 tok/s, peak 4.36 GiB, budget 9.50, gated 0 ms
+  step 40 cfg 2 (tier 1 k=4 off=0): 351 ms, 11681 tok/s, peak 4.42 GiB, budget 9.50, gated 0 ms
+  step 60 cfg 2 (tier 1 k=4 off=0): 230 ms, 17806 tok/s, peak 4.48 GiB, budget 9.50, gated 0 ms
+  step 80 cfg 2 (tier 1 k=4 off=0): 230 ms, 17833 tok/s, peak 4.48 GiB, budget 9.50, gated 0 ms
+  step 100 cfg 2 (tier 1 k=4 off=0): 226 ms, 18142 tok/s, peak 4.48 GiB, budget 9.50, gated 0 ms
+  step 120 cfg 2 (tier 1 k=4 off=0): 182 ms, 22528 tok/s, peak 4.54 GiB, budget 9.50, gated 0 ms
+  step 140 cfg 2 (tier 1 k=4 off=0): 182 ms, 22509 tok/s, peak 4.54 GiB, budget 9.50, gated 0 ms
+  step 160 cfg 2 (tier 1 k=4 off=0): 172 ms, 23883 tok/s, peak 4.61 GiB, budget 9.50, gated 0 ms
+  step 180 cfg 2 (tier 1 k=4 off=0): 172 ms, 23881 tok/s, peak 4.61 GiB, budget 9.50, gated 0 ms
+  step 200 cfg 2 (tier 1 k=4 off=0): 168 ms, 24425 tok/s, peak 4.61 GiB, budget 9.50, gated 0 ms
+  step 220 cfg 2 (tier 1 k=4 off=0): 157 ms, 26146 tok/s, peak 4.67 GiB, budget 9.50, gated 0 ms
+  step 240 cfg 2 (tier 1 k=4 off=0): 149 ms, 27431 tok/s, peak 4.67 GiB, budget 9.50, gated 0 ms
+  step 260 cfg 2 (tier 1 k=4 off=0): 144 ms, 28466 tok/s, peak 4.67 GiB, budget 9.50, gated 0 ms
+  step 280 cfg 2 (tier 1 k=4 off=0): 145 ms, 28278 tok/s, peak 4.67 GiB, budget 9.50, gated 0 ms
+  step 300 cfg 2 (tier 1 k=4 off=0): 1135 ms, 3609 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 320 cfg 2 (tier 1 k=4 off=0): 912 ms, 4493 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 340 cfg 2 (tier 1 k=4 off=0): 605 ms, 6769 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 360 cfg 2 (tier 1 k=4 off=0): 545 ms, 7510 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 380 cfg 2 (tier 1 k=4 off=0): 530 ms, 7726 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 400 cfg 2 (tier 1 k=4 off=0): 428 ms, 9575 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 420 cfg 2 (tier 1 k=4 off=0): 408 ms, 10041 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 440 cfg 2 (tier 1 k=4 off=0): 390 ms, 10499 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 460 cfg 2 (tier 1 k=4 off=0): 454 ms, 9029 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 480 cfg 2 (tier 1 k=4 off=0): 346 ms, 11829 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 500 cfg 2 (tier 1 k=4 off=0): 344 ms, 11903 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 520 cfg 2 (tier 1 k=4 off=0): 320 ms, 12784 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 540 cfg 2 (tier 1 k=4 off=0): 433 ms, 9450 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 560 cfg 2 (tier 1 k=4 off=0): 339 ms, 12092 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 580 cfg 2 (tier 1 k=4 off=0): 340 ms, 12053 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 600 cfg 2 (tier 1 k=4 off=0): 307 ms, 13345 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 620 cfg 2 (tier 1 k=4 off=0): 305 ms, 13434 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 640 cfg 2 (tier 1 k=4 off=0): 413 ms, 9910 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 660 cfg 2 (tier 1 k=4 off=0): 310 ms, 13210 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 680 cfg 2 (tier 1 k=4 off=0): 310 ms, 13198 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 700 cfg 2 (tier 1 k=4 off=0): 273 ms, 15013 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 720 cfg 2 (tier 1 k=4 off=0): 234 ms, 17473 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 740 cfg 2 (tier 1 k=4 off=0): 223 ms, 18379 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 760 cfg 2 (tier 1 k=4 off=0): 223 ms, 18356 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 780 cfg 2 (tier 1 k=4 off=0): 214 ms, 19161 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 800 cfg 2 (tier 1 k=4 off=0): 213 ms, 19270 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 820 cfg 2 (tier 1 k=4 off=0): 213 ms, 19237 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 840 cfg 2 (tier 1 k=4 off=0): 213 ms, 19201 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 860 cfg 2 (tier 1 k=4 off=0): 214 ms, 19127 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 880 cfg 2 (tier 1 k=4 off=0): 306 ms, 13367 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 900 cfg 2 (tier 1 k=4 off=0): 307 ms, 13340 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 920 cfg 2 (tier 1 k=4 off=0): 272 ms, 15057 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 940 cfg 2 (tier 1 k=4 off=0): 270 ms, 15156 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 960 cfg 2 (tier 1 k=4 off=0): 268 ms, 15282 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 980 cfg 2 (tier 1 k=4 off=0): 478 ms, 8572 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 1000 cfg 2 (tier 1 k=4 off=0): 455 ms, 8997 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 1020 cfg 2 (tier 1 k=4 off=0): 446 ms, 9192 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 1040 cfg 2 (tier 1 k=4 off=0): 436 ms, 9392 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 1060 cfg 2 (tier 1 k=4 off=0): 835 ms, 4904 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+  step 1080 cfg 2 (tier 1 k=4 off=0): 765 ms, 5354 tok/s, peak 4.65 GiB, budget 9.50, gated 0 ms
+/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv-main/lib/python3.12/site-packages/peft/utils/save_and_load.py:313: UserWarning: Could not find a config file in Qwen/Qwen2.5-0.5B - will assume that the vocabulary was not modified.
+  warnings.warn(
+ft_worker: stopped at step 1086

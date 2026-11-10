@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Render each diagrams/*.drawio to PNG with the diagrams.net viewer in headless Chrome.
-  python3 diagrams/export_png.py [out_dir]      (default: ../report/figures)
+  python3 diagrams/export_png.py [out_dir [name ...]]      (default: ../report/figures; names = only these, e.g. 08_shared_memory_path)
 Needs google-chrome, Pillow and network access (viewer-static.min.js)."""
 import glob, html, json, os, subprocess, sys, tempfile
 from PIL import Image, ImageChops
@@ -8,7 +8,9 @@ from PIL import Image, ImageChops
 here = os.path.dirname(os.path.abspath(__file__))
 out_dir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "..", "report", "figures")
 W, H = 1400, 1400  # generous canvas; the result is auto-cropped
+only = set(sys.argv[2:])
 for f in sorted(glob.glob(os.path.join(here, "*.drawio"))):
+    if only and os.path.basename(f)[:-7] not in only: continue
     cfg = {"nav": False, "resize": False, "toolbar": "", "edit": "", "border": 20, "xml": open(f).read()}
     page = ('<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#fff}</style></head><body>'
             f'<div class="mxgraph" style="border:0;width:{W}px;height:{H}px;overflow:visible" data-mxgraph="{html.escape(json.dumps(cfg), quote=True)}"></div>'

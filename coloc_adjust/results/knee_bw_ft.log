@@ -1,0 +1,17 @@
+Loading weights:   0%|          | 0/290 [00:00<?, ?it/s]Loading weights: 100%|██████████| 290/290 [00:00<00:00, 24328.91it/s]
+ft_worker: prebuilt green context 128 -> 128 SMs
+ft_worker: prebuilt green context 96 -> 96 SMs
+ft_worker: prebuilt green context 64 -> 64 SMs
+ft_worker: prebuilt green context 32 -> 32 SMs
+ft_worker: prebuilt green context 16 -> 16 SMs
+  step 20 cfg 2 (tier 1 k=4 off=0): 141 ms, 29138 tok/s, peak 4.36 GiB, budget 9.50, gated 0 ms
+  step 40 cfg 2 (tier 1 k=4 off=0): 141 ms, 29143 tok/s, peak 4.36 GiB, budget 9.50, gated 0 ms
+  step 60 cfg 2 (tier 1 k=4 off=0): 141 ms, 29130 tok/s, peak 4.36 GiB, budget 9.50, gated 0 ms
+  step 80 cfg 2 (tier 1 k=4 off=0): 172 ms, 23838 tok/s, peak 4.42 GiB, budget 9.50, gated 0 ms
+  step 100 cfg 2 (tier 1 k=4 off=0): 166 ms, 24696 tok/s, peak 4.42 GiB, budget 9.50, gated 0 ms
+  step 120 cfg 2 (tier 1 k=4 off=0): 166 ms, 24703 tok/s, peak 4.42 GiB, budget 9.50, gated 0 ms
+  step 140 cfg 2 (tier 1 k=4 off=0): 182 ms, 22560 tok/s, peak 4.48 GiB, budget 9.50, gated 0 ms
+  step 160 cfg 2 (tier 1 k=4 off=0): 182 ms, 22542 tok/s, peak 4.48 GiB, budget 9.50, gated 0 ms
+/home/jiaxuan/Documents/Projects/kvcache-vram_size/kvcached_validation/.venv-main/lib/python3.12/site-packages/peft/utils/save_and_load.py:313: UserWarning: Could not find a config file in Qwen/Qwen2.5-0.5B - will assume that the vocabulary was not modified.
+  warnings.warn(
+ft_worker: stopped at step 171

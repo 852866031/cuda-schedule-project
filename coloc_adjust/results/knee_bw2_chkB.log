@@ -1,0 +1,56 @@
+decode context after a 16-SM split: 154 of 170 SMs
+decode context after a 32-SM split: 138 of 170 SMs
+decode context after a 64-SM split: 106 of 170 SMs
+decode context after a 96-SM split: 74 of 170 SMs
+GPM counters from GPU-092b263f-e5f9-5679-b28d-d840879780f1
+alone        tenant SMs None  decode SMs 170  B=1  step   11.68 ms   1355 GB/s  tenant     nan tok/s (0 steps)  bw  75.56 %  sm_util  80.98  sm_occ  14.92
+alone        tenant SMs None  decode SMs 170  B=4  step   13.39 ms   1366 GB/s  tenant     nan tok/s (0 steps)  bw  76.85 %  sm_util  84.15  sm_occ   9.54
+alone        tenant SMs None  decode SMs 170  B=8  step   15.81 ms   1366 GB/s  tenant     nan tok/s (0 steps)  bw  77.15 %  sm_util  87.21  sm_occ  12.11
+alone        tenant SMs None  decode SMs 154  B=1  step   11.87 ms   1334 GB/s  tenant     nan tok/s (0 steps)  bw  74.38 %  sm_util  72.45  sm_occ  13.28
+alone        tenant SMs None  decode SMs 154  B=4  step   13.46 ms   1359 GB/s  tenant     nan tok/s (0 steps)  bw  77.31 %  sm_util  77.16  sm_occ   8.73
+alone        tenant SMs None  decode SMs 154  B=8  step   15.53 ms   1390 GB/s  tenant     nan tok/s (0 steps)  bw  78.53 %  sm_util  80.18  sm_occ  11.32
+alone        tenant SMs None  decode SMs 138  B=1  step   11.84 ms   1338 GB/s  tenant     nan tok/s (0 steps)  bw  74.96 %  sm_util  65.78  sm_occ  12.03
+alone        tenant SMs None  decode SMs 138  B=4  step   13.11 ms   1396 GB/s  tenant     nan tok/s (0 steps)  bw  78.48 %  sm_util  71.31  sm_occ   8.08
+alone        tenant SMs None  decode SMs 138  B=8  step   15.40 ms   1402 GB/s  tenant     nan tok/s (0 steps)  bw  79.19 %  sm_util  72.91  sm_occ  10.50
+alone        tenant SMs None  decode SMs 106  B=1  step   11.94 ms   1326 GB/s  tenant     nan tok/s (0 steps)  bw  73.95 %  sm_util  50.73  sm_occ   9.31
+alone        tenant SMs None  decode SMs 106  B=4  step   14.06 ms   1302 GB/s  tenant     nan tok/s (0 steps)  bw  73.40 %  sm_util  52.97  sm_occ   6.27
+alone        tenant SMs None  decode SMs 106  B=8  step   16.82 ms   1284 GB/s  tenant     nan tok/s (0 steps)  bw  72.53 %  sm_util  52.61  sm_occ   7.86
+alone        tenant SMs None  decode SMs  74  B=1  step   11.93 ms   1327 GB/s  tenant     nan tok/s (0 steps)  bw  74.00 %  sm_util  36.57  sm_occ   6.70
+alone        tenant SMs None  decode SMs  74  B=4  step   14.64 ms   1250 GB/s  tenant     nan tok/s (0 steps)  bw  70.33 %  sm_util  37.54  sm_occ   5.08
+alone        tenant SMs None  decode SMs  74  B=8  step   17.93 ms   1204 GB/s  tenant     nan tok/s (0 steps)  bw  68.04 %  sm_util  38.18  sm_occ   6.48
+tenant_alone tenant SMs    0    29030 tok/s (56 steps)  bw  23.22 %  sm_util  59.37  sm_occ  14.54
+tenant_alone tenant SMs    8     3490 tok/s (5 steps)  bw   2.80 %  sm_util   4.50  sm_occ   0.96
+shared       tenant SMs    0  decode SMs 170  B=1  step   14.58 ms   1086 GB/s  tenant    9890 tok/s (19 steps)  bw  69.05 %  sm_util  84.51  sm_occ  17.32
+shared       tenant SMs    0  decode SMs 170  B=4  step   17.87 ms   1024 GB/s  tenant   12810 tok/s (25 steps)  bw  69.83 %  sm_util  86.54  sm_occ  14.38
+shared       tenant SMs    0  decode SMs 170  B=8  step   21.42 ms   1008 GB/s  tenant   14930 tok/s (29 steps)  bw  71.12 %  sm_util  89.24  sm_occ  17.70
+shared       tenant SMs    8  decode SMs 170  B=1  step   12.22 ms   1296 GB/s  tenant    2061 tok/s (3 steps)  bw  74.24 %  sm_util  80.07  sm_occ  14.89
+shared       tenant SMs    8  decode SMs 170  B=4  step   14.27 ms   1282 GB/s  tenant    2357 tok/s (4 steps)  bw  75.60 %  sm_util  82.83  sm_occ   9.81
+shared       tenant SMs    8  decode SMs 170  B=8  step   16.67 ms   1295 GB/s  tenant    2544 tok/s (4 steps)  bw  76.93 %  sm_util  86.35  sm_occ  12.45
+disjoint     tenant SMs   16  decode SMs 154  B=1  step   12.41 ms   1276 GB/s  tenant    4465 tok/s (8 steps)  bw  75.70 %  sm_util  80.16  sm_occ  15.14
+disjoint     tenant SMs   16  decode SMs 154  B=4  step   14.46 ms   1266 GB/s  tenant    5148 tok/s (9 steps)  bw  77.43 %  sm_util  84.62  sm_occ  10.49
+disjoint     tenant SMs   16  decode SMs 154  B=8  step   16.91 ms   1276 GB/s  tenant    5347 tok/s (9 steps)  bw  78.73 %  sm_util  87.67  sm_occ  13.04
+disjoint     tenant SMs   32  decode SMs 138  B=1  step   12.75 ms   1241 GB/s  tenant    8032 tok/s (15 steps)  bw  75.56 %  sm_util  79.37  sm_occ  15.29
+disjoint     tenant SMs   32  decode SMs 138  B=4  step   14.97 ms   1222 GB/s  tenant    9238 tok/s (17 steps)  bw  78.83 %  sm_util  84.83  sm_occ  11.44
+disjoint     tenant SMs   32  decode SMs 138  B=8  step   17.50 ms   1233 GB/s  tenant    9441 tok/s (17 steps)  bw  79.76 %  sm_util  86.95  sm_occ  13.86
+disjoint     tenant SMs   64  decode SMs 106  B=1  step   13.57 ms   1167 GB/s  tenant   13353 tok/s (26 steps)  bw  75.83 %  sm_util  75.15  sm_occ  15.01
+disjoint     tenant SMs   64  decode SMs 106  B=4  step   16.49 ms   1110 GB/s  tenant   15167 tok/s (30 steps)  bw  76.75 %  sm_util  79.58  sm_occ  12.72
+disjoint     tenant SMs   64  decode SMs 106  B=8  step   20.27 ms   1065 GB/s  tenant   15355 tok/s (29 steps)  bw  74.82 %  sm_util  78.53  sm_occ  14.27
+disjoint     tenant SMs   96  decode SMs  74  B=1  step   14.64 ms   1081 GB/s  tenant   18532 tok/s (37 steps)  bw  74.42 %  sm_util  71.26  sm_occ  15.01
+disjoint     tenant SMs   96  decode SMs  74  B=4  step   18.72 ms    978 GB/s  tenant   19057 tok/s (37 steps)  bw  72.71 %  sm_util  72.21  sm_occ  13.57
+disjoint     tenant SMs   96  decode SMs  74  B=8  step   22.55 ms    957 GB/s  tenant   19242 tok/s (37 steps)  bw  71.97 %  sm_util  73.51  sm_occ  15.07
+alone_end    tenant SMs None  decode SMs 170  B=1  step   11.68 ms   1355 GB/s  tenant     nan tok/s (0 steps)  bw  75.55 %  sm_util  80.99  sm_occ  14.92
+alone_end    tenant SMs None  decode SMs 170  B=4  step   13.40 ms   1365 GB/s  tenant     nan tok/s (0 steps)  bw  76.78 %  sm_util  84.13  sm_occ   9.53
+alone_end    tenant SMs None  decode SMs 170  B=8  step   15.81 ms   1366 GB/s  tenant     nan tok/s (0 steps)  bw  77.14 %  sm_util  87.22  sm_occ  12.11
+alone_end    tenant SMs None  decode SMs 154  B=1  step   11.87 ms   1334 GB/s  tenant     nan tok/s (0 steps)  bw  74.71 %  sm_util  72.82  sm_occ  13.34
+alone_end    tenant SMs None  decode SMs 154  B=4  step   13.16 ms   1391 GB/s  tenant     nan tok/s (0 steps)  bw  78.21 %  sm_util  77.94  sm_occ   8.82
+alone_end    tenant SMs None  decode SMs 154  B=8  step   15.54 ms   1389 GB/s  tenant     nan tok/s (0 steps)  bw  78.48 %  sm_util  80.15  sm_occ  11.31
+alone_end    tenant SMs None  decode SMs 138  B=1  step   11.83 ms   1338 GB/s  tenant     nan tok/s (0 steps)  bw  74.63 %  sm_util  65.50  sm_occ  11.98
+alone_end    tenant SMs None  decode SMs 138  B=4  step   13.46 ms   1359 GB/s  tenant     nan tok/s (0 steps)  bw  76.46 %  sm_util  69.58  sm_occ   7.88
+alone_end    tenant SMs None  decode SMs 138  B=8  step   15.40 ms   1402 GB/s  tenant     nan tok/s (0 steps)  bw  79.19 %  sm_util  72.93  sm_occ  10.50
+alone_end    tenant SMs None  decode SMs 106  B=1  step   11.94 ms   1326 GB/s  tenant     nan tok/s (0 steps)  bw  73.97 %  sm_util  50.75  sm_occ   9.31
+alone_end    tenant SMs None  decode SMs 106  B=4  step   13.63 ms   1342 GB/s  tenant     nan tok/s (0 steps)  bw  75.50 %  sm_util  54.37  sm_occ   6.44
+alone_end    tenant SMs None  decode SMs 106  B=8  step   16.82 ms   1284 GB/s  tenant     nan tok/s (0 steps)  bw  72.53 %  sm_util  52.59  sm_occ   7.86
+alone_end    tenant SMs None  decode SMs  74  B=1  step   11.87 ms   1333 GB/s  tenant     nan tok/s (0 steps)  bw  74.37 %  sm_util  36.78  sm_occ   6.74
+alone_end    tenant SMs None  decode SMs  74  B=4  step   14.64 ms   1250 GB/s  tenant     nan tok/s (0 steps)  bw  70.31 %  sm_util  37.53  sm_occ   5.08
+alone_end    tenant SMs None  decode SMs  74  B=8  step   17.93 ms   1204 GB/s  tenant     nan tok/s (0 steps)  bw  68.03 %  sm_util  38.18  sm_occ   6.48
+wrote results/knee_bw2_chkB.csv

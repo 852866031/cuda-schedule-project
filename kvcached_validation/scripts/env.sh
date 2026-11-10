@@ -2,6 +2,7 @@
 HERE_ENV=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$HERE_ENV/${VENV_NAME:-.venv}/bin/activate"   # VENV_NAME=.venv-main selects the kvcached-main environment
 export MODEL=${MODEL:-meta-llama/Meta-Llama-3-8B}
+export HF_HOME=${HF_HOME:-/mnt/storage/huggingface}   # all model weights live on /mnt (the home cache is gone); ~/.profile sets the same
 export HF_HUB_OFFLINE=1
 export PYTHONHASHSEED=0            # reproducible LMCache token hashing
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}

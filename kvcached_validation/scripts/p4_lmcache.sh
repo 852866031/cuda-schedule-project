@@ -13,6 +13,7 @@ while [[ $# -gt 0 ]]; do case $1 in
   --exportable) EXPORTABLE=1; shift;; --stress) STRESS=$2; shift 2;; --resize) RESIZE=1; shift;; *) echo "bad arg $1"; exit 2;; esac; done
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 source "$HERE/.venv-lmc/bin/activate"
+export HF_HOME=${HF_HOME:-/mnt/storage/huggingface}   # all model weights live on /mnt
 export MODEL=meta-llama/Meta-Llama-3-8B HF_HUB_OFFLINE=1 PYTHONHASHSEED=0 OMP_NUM_THREADS=8 CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=1
 PORT=8100; LMC_PORT=5557; LMC_HTTP=8182; IPC=vllm_b

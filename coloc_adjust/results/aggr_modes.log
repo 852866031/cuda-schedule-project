@@ -1,0 +1,141 @@
+decode context after a 8-SM split: 162 of 170 SMs
+decode context after a 96-SM split: 74 of 170 SMs
+GPM counters from GPU-092b263f-e5f9-5679-b28d-d840879780f1
+alone                aggr SMs None target        decode SMs 170 B=1  step   11.70 ms  decode  1354 GB/s  aggr    nan GB/s    nan calls/s  bw  75.48 %  sm_util  81.11   435 W  2805 MHz thr 0.00
+alone                aggr SMs None target        decode SMs 170 B=8  step   15.82 ms  decode  1365 GB/s  aggr    nan GB/s    nan calls/s  bw  77.10 %  sm_util  87.11   439 W  2940 MHz thr 0.00
+alone                aggr SMs None target        decode SMs 162 B=1  step   11.83 ms  decode  1338 GB/s  aggr    nan GB/s    nan calls/s  bw  74.64 %  sm_util  76.52   434 W  2940 MHz thr 0.00
+alone                aggr SMs None target        decode SMs 162 B=8  step   15.99 ms  decode  1350 GB/s  aggr    nan GB/s    nan calls/s  bw  76.24 %  sm_util  81.90   439 W  2932 MHz thr 0.00
+alone                aggr SMs None target        decode SMs  74 B=1  step   11.91 ms  decode  1329 GB/s  aggr    nan GB/s    nan calls/s  bw  74.12 %  sm_util  36.66   426 W  2940 MHz thr 0.00
+alone                aggr SMs None target        decode SMs  74 B=8  step   18.13 ms  decode  1191 GB/s  aggr    nan GB/s    nan calls/s  bw  70.56 %  sm_util  37.72   403 W  2940 MHz thr 0.00
+mode_alone  gemv32   aggr SMs   96 target   max  aggr   1326 GB/s   19763 calls/s  bw  73.06 %  sm_util  37.08   366 W  2947 MHz thr 0.00
+mode_alone  gemv32   aggr SMs   96 target   100  aggr    100 GB/s    1490 calls/s  bw   5.51 %  sm_util   2.74   106 W  2962 MHz thr 0.00
+mode_alone  gemv32   aggr SMs   96 target   200  aggr    200 GB/s    2980 calls/s  bw  11.04 %  sm_util   5.50   124 W  2947 MHz thr 0.00
+mode_alone  gemv32   aggr SMs   96 target   400  aggr    400 GB/s    5961 calls/s  bw  22.07 %  sm_util  11.04   161 W  2925 MHz thr 0.00
+mode_alone  write32  aggr SMs   96 target   max  aggr   1552 GB/s   23127 calls/s  bw  86.56 %  sm_util  43.77   307 W  2925 MHz thr 0.00
+mode_alone  write32  aggr SMs   96 target   100  aggr    100 GB/s    1490 calls/s  bw   5.58 %  sm_util   2.79   101 W  2962 MHz thr 0.00
+mode_alone  write32  aggr SMs   96 target   200  aggr    200 GB/s    2980 calls/s  bw  11.16 %  sm_util   5.57   114 W  2962 MHz thr 0.00
+mode_alone  write32  aggr SMs   96 target   400  aggr    400 GB/s    5960 calls/s  bw  22.32 %  sm_util  11.18   143 W  2960 MHz thr 0.00
+mode_alone  copy32   aggr SMs   96 target   max  aggr   1387 GB/s   20663 calls/s  bw  77.33 %  sm_util  43.85   300 W  2947 MHz thr 0.00
+mode_alone  copy32   aggr SMs   96 target   100  aggr    100 GB/s    1490 calls/s  bw   5.58 %  sm_util   3.13   102 W  2962 MHz thr 0.00
+mode_alone  copy32   aggr SMs   96 target   200  aggr    200 GB/s    2980 calls/s  bw  11.16 %  sm_util   6.26   117 W  2962 MHz thr 0.00
+mode_alone  copy32   aggr SMs   96 target   400  aggr    400 GB/s    5961 calls/s  bw  22.32 %  sm_util  12.54   146 W  2962 MHz thr 0.00
+mode_alone  tiny     aggr SMs   96 target   max  aggr      0 GB/s  136218 calls/s  bw   0.00 %  sm_util   0.09   108 W  2962 MHz thr 0.00
+mode_alone  tiny     aggr SMs   96 target     2  aggr      0 GB/s    2000 calls/s  bw   0.00 %  sm_util   0.00    87 W  2962 MHz thr 0.00
+mode_alone  tiny     aggr SMs   96 target     5  aggr      0 GB/s    5000 calls/s  bw   0.00 %  sm_util   0.00    88 W  2962 MHz thr 0.00
+mode_alone  tiny     aggr SMs   96 target    20  aggr      0 GB/s   20000 calls/s  bw   0.00 %  sm_util   0.01    93 W  2962 MHz thr 0.00
+mode_alone  tiny     aggr SMs   96 target    50  aggr      0 GB/s   50001 calls/s  bw   0.00 %  sm_util   0.03   100 W  2962 MHz thr 0.00
+mode_alone  compute  aggr SMs   96 target   max  aggr      0 GB/s   43698 calls/s  bw   0.00 %  sm_util  26.68   319 W  2932 MHz thr 0.00
+mode_alone  compute  aggr SMs   96 target 10.92  aggr      0 GB/s   10920 calls/s  bw   0.00 %  sm_util   6.66   139 W  2932 MHz thr 0.00
+mode_alone  compute  aggr SMs   96 target 21.85  aggr      0 GB/s   21850 calls/s  bw   0.00 %  sm_util  13.35   193 W  2925 MHz thr 0.00
+mode_alone  gemv32   aggr SMs    8 target   max  aggr    486 GB/s    7240 calls/s  bw  26.82 %  sm_util   4.31   224 W  2947 MHz thr 0.00
+mode_alone  gemv32   aggr SMs    8 target   100  aggr    100 GB/s    1490 calls/s  bw   5.52 %  sm_util   0.89   116 W  2947 MHz thr 0.00
+mode_alone  gemv32   aggr SMs    8 target   200  aggr    200 GB/s    2980 calls/s  bw  11.04 %  sm_util   1.78   143 W  2947 MHz thr 0.00
+mode_alone  gemv32   aggr SMs    8 target   400  aggr    400 GB/s    5961 calls/s  bw  22.09 %  sm_util   3.55   200 W  2947 MHz thr 0.00
+mode_alone  write32  aggr SMs    8 target   max  aggr    363 GB/s    5403 calls/s  bw  20.23 %  sm_util   4.51   187 W  2947 MHz thr 0.00
+mode_alone  write32  aggr SMs    8 target   100  aggr    100 GB/s    1490 calls/s  bw   5.58 %  sm_util   1.25   116 W  2947 MHz thr 0.00
+mode_alone  write32  aggr SMs    8 target   200  aggr    200 GB/s    2980 calls/s  bw  11.16 %  sm_util   2.51   142 W  2947 MHz thr 0.00
+mode_alone  copy32   aggr SMs    8 target   max  aggr    464 GB/s    6909 calls/s  bw  25.87 %  sm_util   4.39   209 W  2947 MHz thr 0.00
+mode_alone  copy32   aggr SMs    8 target   100  aggr    100 GB/s    1490 calls/s  bw   5.58 %  sm_util   0.95   115 W  2947 MHz thr 0.00
+mode_alone  copy32   aggr SMs    8 target   200  aggr    200 GB/s    2980 calls/s  bw  11.16 %  sm_util   1.90   140 W  2947 MHz thr 0.00
+mode_alone  copy32   aggr SMs    8 target   400  aggr    400 GB/s    5960 calls/s  bw  22.32 %  sm_util   3.79   193 W  2947 MHz thr 0.00
+mode_alone  tiny     aggr SMs    8 target   max  aggr      0 GB/s  137884 calls/s  bw   0.00 %  sm_util   0.09   109 W  2947 MHz thr 0.00
+mode_alone  tiny     aggr SMs    8 target     2  aggr      0 GB/s    2000 calls/s  bw   0.00 %  sm_util   0.00    89 W  2947 MHz thr 0.00
+mode_alone  tiny     aggr SMs    8 target     5  aggr      0 GB/s    5000 calls/s  bw   0.00 %  sm_util   0.00    89 W  2947 MHz thr 0.00
+mode_alone  tiny     aggr SMs    8 target    20  aggr      0 GB/s   20000 calls/s  bw   0.00 %  sm_util   0.01    94 W  2947 MHz thr 0.00
+mode_alone  tiny     aggr SMs    8 target    50  aggr      0 GB/s   49999 calls/s  bw   0.00 %  sm_util   0.03   100 W  2947 MHz thr 0.00
+mode_alone  compute  aggr SMs    8 target   max  aggr      0 GB/s    8004 calls/s  bw   0.00 %  sm_util   4.33   148 W  2947 MHz thr 0.00
+mode_alone  compute  aggr SMs    8 target     2  aggr      0 GB/s    2000 calls/s  bw   0.00 %  sm_util   1.08   103 W  2947 MHz thr 0.00
+mode_alone  compute  aggr SMs    8 target     4  aggr      0 GB/s    4000 calls/s  bw   0.00 %  sm_util   2.16   118 W  2947 MHz thr 0.00
+mode_corun  idle     aggr SMs   96 target     0  decode SMs  74 B=1  step   11.87 ms  decode  1334 GB/s  aggr      0 GB/s      0 calls/s  bw  74.31 %  sm_util  36.74   432 W  2940 MHz thr 0.00
+mode_corun  idle     aggr SMs   96 target     0  decode SMs  74 B=8  step   17.88 ms  decode  1207 GB/s  aggr      0 GB/s      0 calls/s  bw  68.23 %  sm_util  38.20   413 W  2940 MHz thr 0.00
+mode_corun  gemv32   aggr SMs   96 target   100  decode SMs  74 B=1  step   12.66 ms  decode  1251 GB/s  aggr    100 GB/s   1490 calls/s  bw  75.34 %  sm_util  40.63   434 W  2940 MHz thr 0.00
+mode_corun  gemv32   aggr SMs   96 target   100  decode SMs  74 B=8  step   19.12 ms  decode  1129 GB/s  aggr    100 GB/s   1490 calls/s  bw  69.41 %  sm_util  41.30   414 W  2940 MHz thr 0.00
+mode_corun  gemv32   aggr SMs   96 target   200  decode SMs  74 B=1  step   13.42 ms  decode  1179 GB/s  aggr    200 GB/s   2980 calls/s  bw  76.94 %  sm_util  44.58   437 W  2940 MHz thr 0.00
+mode_corun  gemv32   aggr SMs   96 target   200  decode SMs  74 B=8  step   20.32 ms  decode  1062 GB/s  aggr    200 GB/s   2980 calls/s  bw  71.22 %  sm_util  45.50   416 W  2939 MHz thr 0.00
+mode_corun  gemv32   aggr SMs   96 target   400  decode SMs  74 B=1  step   15.19 ms  decode  1042 GB/s  aggr    400 GB/s   5960 calls/s  bw  80.42 %  sm_util  51.94   440 W  2935 MHz thr 0.00
+mode_corun  gemv32   aggr SMs   96 target   400  decode SMs  74 B=8  step   22.78 ms  decode   947 GB/s  aggr    400 GB/s   5961 calls/s  bw  75.90 %  sm_util  51.99   423 W  2931 MHz thr 0.00
+mode_corun  gemv32   aggr SMs   96 target   max  decode SMs  74 B=1  step   24.31 ms  decode   651 GB/s  aggr    931 GB/s  13879 calls/s  bw  88.25 %  sm_util  75.41   439 W  2918 MHz thr 0.00
+mode_corun  gemv32   aggr SMs   96 target   max  decode SMs  74 B=8  step   39.38 ms  decode   548 GB/s  aggr   1041 GB/s  15511 calls/s  bw  89.06 %  sm_util  76.07   432 W  2917 MHz thr 0.00
+mode_corun  write32  aggr SMs   96 target   100  decode SMs  74 B=1  step   12.68 ms  decode  1248 GB/s  aggr    100 GB/s   1490 calls/s  bw  75.28 %  sm_util  39.01   436 W  2926 MHz thr 0.00
+mode_corun  write32  aggr SMs   96 target   100  decode SMs  74 B=8  step   19.27 ms  decode  1120 GB/s  aggr    100 GB/s   1490 calls/s  bw  68.96 %  sm_util  39.53   413 W  2926 MHz thr 0.00
+mode_corun  write32  aggr SMs   96 target   200  decode SMs  74 B=1  step   13.59 ms  decode  1165 GB/s  aggr    200 GB/s   2980 calls/s  bw  76.27 %  sm_util  43.26   432 W  2928 MHz thr 0.00
+mode_corun  write32  aggr SMs   96 target   200  decode SMs  74 B=8  step   20.48 ms  decode  1054 GB/s  aggr    200 GB/s   2980 calls/s  bw  70.84 %  sm_util  41.25   411 W  2925 MHz thr 0.00
+mode_corun  write32  aggr SMs   96 target   400  decode SMs  74 B=1  step   15.77 ms  decode  1004 GB/s  aggr    400 GB/s   5960 calls/s  bw  78.43 %  sm_util  48.97   424 W  2931 MHz thr 0.00
+mode_corun  write32  aggr SMs   96 target   400  decode SMs  74 B=8  step   23.04 ms  decode   937 GB/s  aggr    400 GB/s   5961 calls/s  bw  75.56 %  sm_util  44.79   410 W  2925 MHz thr 0.00
+mode_corun  write32  aggr SMs   96 target   max  decode SMs  74 B=1  step   35.54 ms  decode   445 GB/s  aggr   1011 GB/s  15059 calls/s  bw  81.29 %  sm_util  79.87   386 W  2947 MHz thr 0.00
+mode_corun  write32  aggr SMs   96 target   max  decode SMs  74 B=8  step   54.82 ms  decode   394 GB/s  aggr   1042 GB/s  15534 calls/s  bw  80.64 %  sm_util  82.55   379 W  2947 MHz thr 0.00
+mode_corun  copy32   aggr SMs   96 target   100  decode SMs  74 B=1  step   12.72 ms  decode  1244 GB/s  aggr    100 GB/s   1490 calls/s  bw  75.04 %  sm_util  38.94   436 W  2925 MHz thr 0.00
+mode_corun  copy32   aggr SMs   96 target   100  decode SMs  74 B=8  step   19.18 ms  decode  1125 GB/s  aggr    100 GB/s   1490 calls/s  bw  69.23 %  sm_util  40.18   413 W  2925 MHz thr 0.00
+mode_corun  copy32   aggr SMs   96 target   200  decode SMs  74 B=1  step   13.53 ms  decode  1170 GB/s  aggr    200 GB/s   2980 calls/s  bw  76.48 %  sm_util  41.84   432 W  2925 MHz thr 0.00
+mode_corun  copy32   aggr SMs   96 target   200  decode SMs  74 B=8  step   20.37 ms  decode  1060 GB/s  aggr    200 GB/s   2980 calls/s  bw  71.15 %  sm_util  42.91   411 W  2925 MHz thr 0.00
+mode_corun  copy32   aggr SMs   96 target   400  decode SMs  74 B=1  step   15.35 ms  decode  1031 GB/s  aggr    400 GB/s   5960 calls/s  bw  79.95 %  sm_util  47.47   427 W  2930 MHz thr 0.00
+mode_corun  copy32   aggr SMs   96 target   400  decode SMs  74 B=8  step   22.70 ms  decode   951 GB/s  aggr    400 GB/s   5960 calls/s  bw  76.19 %  sm_util  47.07   413 W  2925 MHz thr 0.00
+mode_corun  copy32   aggr SMs   96 target   max  decode SMs  74 B=1  step   35.31 ms  decode   448 GB/s  aggr   1098 GB/s  16366 calls/s  bw  86.34 %  sm_util  78.70   391 W  2947 MHz thr 0.00
+mode_corun  copy32   aggr SMs   96 target   max  decode SMs  74 B=8  step   55.76 ms  decode   387 GB/s  aggr   1151 GB/s  17155 calls/s  bw  86.28 %  sm_util  81.87   383 W  2947 MHz thr 0.00
+mode_corun  tiny     aggr SMs   96 target     2  decode SMs  74 B=1  step   11.96 ms  decode  1324 GB/s  aggr      0 GB/s   2000 calls/s  bw  73.79 %  sm_util  36.49   437 W  2925 MHz thr 0.00
+mode_corun  tiny     aggr SMs   96 target     2  decode SMs  74 B=8  step   18.19 ms  decode  1187 GB/s  aggr      0 GB/s   2000 calls/s  bw  67.08 %  sm_util  37.70   414 W  2925 MHz thr 0.00
+mode_corun  tiny     aggr SMs   96 target     5  decode SMs  74 B=1  step   12.04 ms  decode  1315 GB/s  aggr      0 GB/s   5000 calls/s  bw  73.37 %  sm_util  36.30   435 W  2925 MHz thr 0.00
+mode_corun  tiny     aggr SMs   96 target     5  decode SMs  74 B=8  step   18.23 ms  decode  1184 GB/s  aggr      0 GB/s   5000 calls/s  bw  66.94 %  sm_util  37.63   414 W  2925 MHz thr 0.00
+mode_corun  tiny     aggr SMs   96 target    20  decode SMs  74 B=1  step   12.14 ms  decode  1304 GB/s  aggr      0 GB/s  20000 calls/s  bw  72.74 %  sm_util  36.05   434 W  2925 MHz thr 0.00
+mode_corun  tiny     aggr SMs   96 target    20  decode SMs  74 B=8  step   18.29 ms  decode  1180 GB/s  aggr      0 GB/s  20000 calls/s  bw  66.71 %  sm_util  37.54   414 W  2925 MHz thr 0.00
+mode_corun  tiny     aggr SMs   96 target    50  decode SMs  74 B=1  step   12.25 ms  decode  1293 GB/s  aggr      0 GB/s  50000 calls/s  bw  72.12 %  sm_util  35.88   432 W  2922 MHz thr 0.00
+mode_corun  tiny     aggr SMs   96 target    50  decode SMs  74 B=8  step   18.36 ms  decode  1176 GB/s  aggr      0 GB/s  50000 calls/s  bw  66.48 %  sm_util  37.43   413 W  2925 MHz thr 0.00
+mode_corun  tiny     aggr SMs   96 target   max  decode SMs  74 B=1  step   12.56 ms  decode  1261 GB/s  aggr      0 GB/s 128828 calls/s  bw  70.34 %  sm_util  35.31   427 W  2917 MHz thr 0.00
+mode_corun  tiny     aggr SMs   96 target   max  decode SMs  74 B=8  step   18.44 ms  decode  1170 GB/s  aggr      0 GB/s 132015 calls/s  bw  66.17 %  sm_util  37.33   413 W  2925 MHz thr 0.00
+mode_corun  compute  aggr SMs   96 target 10.92  decode SMs  74 B=1  step   12.22 ms  decode  1295 GB/s  aggr      0 GB/s  10920 calls/s  bw  72.25 %  sm_util  42.86   481 W  2902 MHz thr 1.00
+mode_corun  compute  aggr SMs   96 target 10.92  decode SMs  74 B=8  step   19.15 ms  decode  1127 GB/s  aggr      0 GB/s  10920 calls/s  bw  67.83 %  sm_util  45.00   461 W  2907 MHz thr 1.00
+mode_corun  compute  aggr SMs   96 target 21.85  decode SMs  74 B=1  step   12.41 ms  decode  1276 GB/s  aggr      0 GB/s  21850 calls/s  bw  71.20 %  sm_util  49.86   501 W  2841 MHz thr 1.00
+mode_corun  compute  aggr SMs   96 target 21.85  decode SMs  74 B=8  step   18.65 ms  decode  1157 GB/s  aggr      0 GB/s  21850 calls/s  bw  65.76 %  sm_util  51.33   502 W  2876 MHz thr 1.00
+mode_corun  compute  aggr SMs   96 target   max  decode SMs  74 B=1  step   13.04 ms  decode  1214 GB/s  aggr      0 GB/s  38816 calls/s  bw  67.73 %  sm_util  61.86   500 W  2670 MHz thr 1.00
+mode_corun  compute  aggr SMs   96 target   max  decode SMs  74 B=8  step   19.46 ms  decode  1109 GB/s  aggr      0 GB/s  39699 calls/s  bw  62.80 %  sm_util  64.12   500 W  2695 MHz thr 1.00
+mode_corun  idle_end aggr SMs   96 target     0  decode SMs  74 B=1  step   11.87 ms  decode  1333 GB/s  aggr      0 GB/s      0 calls/s  bw  74.37 %  sm_util  36.78   442 W  2925 MHz thr 0.00
+mode_corun  idle_end aggr SMs   96 target     0  decode SMs  74 B=8  step   17.95 ms  decode  1203 GB/s  aggr      0 GB/s      0 calls/s  bw  67.98 %  sm_util  38.16   420 W  2925 MHz thr 0.00
+mode_corun  idle     aggr SMs    8 target     0  decode SMs 162 B=1  step   11.85 ms  decode  1336 GB/s  aggr      0 GB/s      0 calls/s  bw  74.53 %  sm_util  76.43   450 W  2918 MHz thr 0.00
+mode_corun  idle     aggr SMs    8 target     0  decode SMs 162 B=8  step   15.73 ms  decode  1373 GB/s  aggr      0 GB/s      0 calls/s  bw  77.33 %  sm_util  83.02   459 W  2917 MHz thr 0.77
+mode_corun  gemv32   aggr SMs    8 target   100  decode SMs 162 B=1  step   12.25 ms  decode  1292 GB/s  aggr    100 GB/s   1490 calls/s  bw  77.63 %  sm_util  78.38   461 W  2926 MHz thr 0.71
+mode_corun  gemv32   aggr SMs    8 target   100  decode SMs 162 B=8  step   16.71 ms  decode  1292 GB/s  aggr    100 GB/s   1490 calls/s  bw  78.57 %  sm_util  83.73   459 W  2918 MHz thr 0.92
+mode_corun  gemv32   aggr SMs    8 target   200  decode SMs 162 B=1  step   12.73 ms  decode  1244 GB/s  aggr    200 GB/s   2980 calls/s  bw  80.51 %  sm_util  80.55   472 W  2925 MHz thr 1.00
+mode_corun  gemv32   aggr SMs    8 target   200  decode SMs 162 B=8  step   17.45 ms  decode  1237 GB/s  aggr    200 GB/s   2980 calls/s  bw  81.06 %  sm_util  85.48   465 W  2918 MHz thr 1.00
+mode_corun  gemv32   aggr SMs    8 target   400  decode SMs 162 B=1  step   12.75 ms  decode  1241 GB/s  aggr    203 GB/s   3018 calls/s  bw  80.53 %  sm_util  80.67   472 W  2925 MHz thr 1.00
+mode_corun  gemv32   aggr SMs    8 target   400  decode SMs 162 B=8  step   18.20 ms  decode  1186 GB/s  aggr    293 GB/s   4360 calls/s  bw  83.34 %  sm_util  87.13   471 W  2925 MHz thr 1.00
+mode_corun  gemv32   aggr SMs    8 target   max  decode SMs 162 B=1  step   12.75 ms  decode  1241 GB/s  aggr    203 GB/s   3022 calls/s  bw  80.55 %  sm_util  80.69   473 W  2925 MHz thr 1.00
+mode_corun  gemv32   aggr SMs    8 target   max  decode SMs 162 B=8  step   18.20 ms  decode  1186 GB/s  aggr    293 GB/s   4366 calls/s  bw  83.35 %  sm_util  87.14   470 W  2924 MHz thr 1.00
+mode_corun  write32  aggr SMs    8 target   100  decode SMs 162 B=1  step   12.54 ms  decode  1263 GB/s  aggr    100 GB/s   1490 calls/s  bw  76.06 %  sm_util  77.10   450 W  2918 MHz thr 0.00
+mode_corun  write32  aggr SMs    8 target   100  decode SMs 162 B=8  step   16.95 ms  decode  1274 GB/s  aggr    100 GB/s   1490 calls/s  bw  77.52 %  sm_util  83.27   451 W  2917 MHz thr 0.00
+mode_corun  write32  aggr SMs    8 target   200  decode SMs 162 B=1  step   13.23 ms  decode  1197 GB/s  aggr    200 GB/s   2980 calls/s  bw  78.04 %  sm_util  77.70   451 W  2925 MHz thr 0.00
+mode_corun  write32  aggr SMs    8 target   200  decode SMs 162 B=8  step   17.96 ms  decode  1202 GB/s  aggr    200 GB/s   2980 calls/s  bw  79.02 %  sm_util  84.60   448 W  2917 MHz thr 0.00
+mode_corun  write32  aggr SMs    8 target   max  decode SMs 162 B=1  step   13.34 ms  decode  1187 GB/s  aggr    219 GB/s   3269 calls/s  bw  78.57 %  sm_util  77.89   452 W  2925 MHz thr 0.00
+mode_corun  write32  aggr SMs    8 target   max  decode SMs 162 B=8  step   19.28 ms  decode  1120 GB/s  aggr    328 GB/s   4886 calls/s  bw  81.51 %  sm_util  86.58   447 W  2914 MHz thr 0.00
+mode_corun  copy32   aggr SMs    8 target   100  decode SMs 162 B=1  step   12.56 ms  decode  1260 GB/s  aggr    100 GB/s   1490 calls/s  bw  75.87 %  sm_util  77.58   451 W  2925 MHz thr 0.00
+mode_corun  copy32   aggr SMs    8 target   100  decode SMs 162 B=8  step   16.84 ms  decode  1282 GB/s  aggr    100 GB/s   1490 calls/s  bw  77.99 %  sm_util  83.43   453 W  2917 MHz thr 0.00
+mode_corun  copy32   aggr SMs    8 target   200  decode SMs 162 B=1  step   13.23 ms  decode  1197 GB/s  aggr    200 GB/s   2980 calls/s  bw  77.97 %  sm_util  78.90   454 W  2926 MHz thr 0.00
+mode_corun  copy32   aggr SMs    8 target   200  decode SMs 162 B=8  step   17.75 ms  decode  1216 GB/s  aggr    200 GB/s   2980 calls/s  bw  79.86 %  sm_util  84.95   453 W  2918 MHz thr 0.00
+mode_corun  copy32   aggr SMs    8 target   400  decode SMs 162 B=1  step   13.58 ms  decode  1166 GB/s  aggr    251 GB/s   3741 calls/s  bw  79.16 %  sm_util  79.56   455 W  2925 MHz thr 0.00
+mode_corun  copy32   aggr SMs    8 target   400  decode SMs 162 B=8  step   18.81 ms  decode  1148 GB/s  aggr    325 GB/s   4845 calls/s  bw  82.92 %  sm_util  86.63   457 W  2918 MHz thr 0.00
+mode_corun  copy32   aggr SMs    8 target   max  decode SMs 162 B=1  step   13.58 ms  decode  1166 GB/s  aggr    251 GB/s   3741 calls/s  bw  79.14 %  sm_util  79.57   456 W  2926 MHz thr 0.00
+mode_corun  copy32   aggr SMs    8 target   max  decode SMs 162 B=8  step   18.81 ms  decode  1147 GB/s  aggr    325 GB/s   4850 calls/s  bw  82.93 %  sm_util  86.63   457 W  2918 MHz thr 0.00
+mode_corun  tiny     aggr SMs    8 target     2  decode SMs 162 B=1  step   11.89 ms  decode  1332 GB/s  aggr      0 GB/s   2000 calls/s  bw  76.10 %  sm_util  76.15   448 W  2919 MHz thr 0.00
+mode_corun  tiny     aggr SMs    8 target     2  decode SMs 162 B=8  step   16.03 ms  decode  1347 GB/s  aggr      0 GB/s   2000 calls/s  bw  76.08 %  sm_util  81.82   454 W  2918 MHz thr 0.00
+mode_corun  tiny     aggr SMs    8 target     5  decode SMs 162 B=1  step   11.95 ms  decode  1325 GB/s  aggr      0 GB/s   5000 calls/s  bw  73.90 %  sm_util  75.80   447 W  2917 MHz thr 0.00
+mode_corun  tiny     aggr SMs    8 target     5  decode SMs 162 B=8  step   16.06 ms  decode  1344 GB/s  aggr      0 GB/s   5000 calls/s  bw  75.94 %  sm_util  81.68   453 W  2919 MHz thr 0.00
+mode_corun  tiny     aggr SMs    8 target    20  decode SMs 162 B=1  step   12.11 ms  decode  1307 GB/s  aggr      0 GB/s  20000 calls/s  bw  72.90 %  sm_util  74.82   443 W  2918 MHz thr 0.00
+mode_corun  tiny     aggr SMs    8 target    20  decode SMs 162 B=8  step   16.10 ms  decode  1341 GB/s  aggr      0 GB/s  20000 calls/s  bw  75.74 %  sm_util  81.48   452 W  2917 MHz thr 0.00
+mode_corun  tiny     aggr SMs    8 target    50  decode SMs 162 B=1  step   12.23 ms  decode  1295 GB/s  aggr      0 GB/s  50000 calls/s  bw  72.21 %  sm_util  74.23   442 W  2919 MHz thr 0.00
+mode_corun  tiny     aggr SMs    8 target    50  decode SMs 162 B=8  step   16.14 ms  decode  1337 GB/s  aggr      0 GB/s  50000 calls/s  bw  75.54 %  sm_util  81.35   451 W  2919 MHz thr 0.00
+mode_corun  tiny     aggr SMs    8 target   max  decode SMs 162 B=1  step   12.41 ms  decode  1276 GB/s  aggr      0 GB/s  99568 calls/s  bw  71.16 %  sm_util  73.24   439 W  2918 MHz thr 0.00
+mode_corun  tiny     aggr SMs    8 target   max  decode SMs 162 B=8  step   16.25 ms  decode  1328 GB/s  aggr      0 GB/s 123629 calls/s  bw  75.06 %  sm_util  80.88   450 W  2917 MHz thr 0.00
+mode_corun  compute  aggr SMs    8 target     2  decode SMs 162 B=1  step   11.95 ms  decode  1325 GB/s  aggr      0 GB/s   2000 calls/s  bw  73.87 %  sm_util  77.37   457 W  2917 MHz thr 0.15
+mode_corun  compute  aggr SMs    8 target     2  decode SMs 162 B=8  step   16.33 ms  decode  1322 GB/s  aggr      0 GB/s   2000 calls/s  bw  76.18 %  sm_util  83.22   462 W  2917 MHz thr 1.00
+mode_corun  compute  aggr SMs    8 target     4  decode SMs 162 B=1  step   12.06 ms  decode  1312 GB/s  aggr      0 GB/s   4000 calls/s  bw  73.19 %  sm_util  78.30   465 W  2917 MHz thr 1.00
+mode_corun  compute  aggr SMs    8 target     4  decode SMs 162 B=8  step   16.63 ms  decode  1298 GB/s  aggr      0 GB/s   4000 calls/s  bw  76.39 %  sm_util  84.56   471 W  2917 MHz thr 1.00
+mode_corun  compute  aggr SMs    8 target   max  decode SMs 162 B=1  step   12.10 ms  decode  1309 GB/s  aggr      0 GB/s   5232 calls/s  bw  73.00 %  sm_util  79.12   471 W  2917 MHz thr 1.00
+mode_corun  compute  aggr SMs    8 target   max  decode SMs 162 B=8  step   16.80 ms  decode  1285 GB/s  aggr      0 GB/s   6099 calls/s  bw  76.65 %  sm_util  86.04   482 W  2917 MHz thr 1.00
+mode_corun  idle_end aggr SMs    8 target     0  decode SMs 162 B=1  step   11.72 ms  decode  1350 GB/s  aggr      0 GB/s      0 calls/s  bw  75.16 %  sm_util  77.06   453 W  2917 MHz thr 0.00
+mode_corun  idle_end aggr SMs    8 target     0  decode SMs 162 B=8  step   15.73 ms  decode  1373 GB/s  aggr      0 GB/s      0 calls/s  bw  77.53 %  sm_util  83.22   460 W  2917 MHz thr 1.00
+alone_end            aggr SMs None target        decode SMs 170 B=1  step   11.70 ms  decode  1353 GB/s  aggr    nan GB/s    nan calls/s  bw  75.47 %  sm_util  81.12   452 W  2918 MHz thr 0.00
+alone_end            aggr SMs None target        decode SMs 170 B=8  step   15.84 ms  decode  1363 GB/s  aggr    nan GB/s    nan calls/s  bw  76.98 %  sm_util  87.02   458 W  2917 MHz thr 0.20
+alone_end            aggr SMs None target        decode SMs 162 B=1  step   11.85 ms  decode  1336 GB/s  aggr    nan GB/s    nan calls/s  bw  74.52 %  sm_util  76.40   449 W  2917 MHz thr 0.00
+alone_end            aggr SMs None target        decode SMs 162 B=8  step   15.72 ms  decode  1373 GB/s  aggr    nan GB/s    nan calls/s  bw  77.18 %  sm_util  82.88   458 W  2917 MHz thr 0.70
+alone_end            aggr SMs None target        decode SMs  74 B=1  step   11.92 ms  decode  1328 GB/s  aggr    nan GB/s    nan calls/s  bw  74.06 %  sm_util  36.61   439 W  2925 MHz thr 0.00
+alone_end            aggr SMs None target        decode SMs  74 B=8  step   17.98 ms  decode  1200 GB/s  aggr    nan GB/s    nan calls/s  bw  67.68 %  sm_util  38.01   416 W  2925 MHz thr 0.00
+wrote results/aggr_modes.csv
