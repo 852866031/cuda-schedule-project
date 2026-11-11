@@ -229,10 +229,12 @@ relation. The slowdown follows the tenant's token rate (Figure 2), not this coun
 
 *Figure 5 — the shape probe (`run_probe.sh`, `analyze_probe.py`): engine at 1 req/s with a fixed
 3 GiB KV limit, tenant at a fixed 7.5 GiB budget and the same 4 k tok/s cap in every window, one
-60-s window per shape. (a) Decode slowdown per 1 k tenant tok/s by shape: k = 4 micro-batches
-1.3 %, k = 8 2.6 %, activation offload 5.9 %, 12 / 20 streamed layers 9.2 / 8.2 %. (b) The
-memory-controller counter for the same windows, with the no-tenant level dotted: it falls for the
-copy-heavy shapes while their cost rises.*
+60-s window per shape. (a) The tenant's training speed: the two micro-batch shapes reach the cap,
+the other three stay below it (2.8k, 2.3k, 2.0k tok/s). (b) Decode slowdown against the engine
+alone: +5.2 % to +20.8 %. (c) Their ratio, the decode slowdown per 1 k tenant tok/s: k = 4
+micro-batches 1.3 %, k = 8 2.6 %, activation offload 5.9 %, 12 / 20 streamed layers 9.2 / 8.2 %.
+(d) NVML's memory-controller counter for the same windows, with the engine-alone level dotted: it
+falls for the copy-heavy shapes while their cost rises.*
 
 - **Resizing costs decode nothing.** The engine alone with its limit following the load equals
   the engine alone with a fixed 13 GiB limit in every phase (round 1, TPOT within 0.1 ms); changing
