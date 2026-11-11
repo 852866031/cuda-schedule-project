@@ -268,9 +268,15 @@ Experiments
   tenant converts it with its bytes per token and pauses between micro-batches. Compare with the
   existing TPOT-feedback cap and with an SM limit at equal tenant throughput (E1.1 is the first
   half). Nearest prior work: MemGuard, Ripple.
-- [ ] **C2 Phase-aware scheduling.** Run tenant work when decode needs little bandwidth
-  (prefill, idle gaps); earlier vLLM measurement: prefill about 13 %, decode about 81 % GPU
-  memory busy. Needs a signal from the engine.
+- [ ] **C2 Phase-aware scheduling: little room on a decode node; folded into C1.** The idea was
+  to run tenant work when decode needs little bandwidth. The engine here only decodes (the prefix
+  arrives as cached KV; it prefills only the 128 new tokens of a request), so there is no prefill
+  phase to use; the earlier figure "prefill about 13 %, decode about 81 % GPU memory busy" came
+  from an engine doing both and does not apply. While any request runs the GPU is busy 93–100 %
+  (D5; the idle-gate scheme trained nothing), and decode alone uses 75–79 % of the bandwidth at
+  B = 1, 4 and 8. What is left: no request running at all, at most about 7 % of the time at
+  0.5 req/s and above. Keep it as one rule of C1: lift the byte budget while the engine's busy
+  flag is clear. No experiment of its own.
 - [ ] **C3 Fewer bytes per tenant token.** The shape probe shows a 7× range in decode cost per
   tenant token. Find which shape parameters set bytes per token and pick the cheapest that still
   trains.

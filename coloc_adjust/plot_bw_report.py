@@ -5,6 +5,7 @@
   bw_slowdown.png    decode slowdown against the reader's GB/s, one line per reader SM count (results/aggr_corun.csv)
   bw_tenant.png      the fine-tune tenant on the same axes, against the reader's lines (results/knee_bw2.csv)
   bw_modes.png       what kind of aggressor activity costs decode (results/aggr_modes.csv)
+  bw_tenant_alone.png  the fine-tune tenant alone: traffic against the SMs it gets (results/knee_bw2_summary.md)
 Colours: one blue ramp for the SM count (ordered), blue / orange / aqua for unordered kinds; both sets were run
 through the dataviz validator.  Text is never in a series colour."""
 import csv, statistics as st
@@ -96,5 +97,24 @@ def fig_modes():
     fig.legend(handles=[Patch(color=BLUE, label="moves bytes to or from GPU memory"), Patch(color=AQUA, label="moves almost no bytes")], loc="lower center", ncol=2, fontsize=10)
     fig.tight_layout(rect=(0, 0.07, 1, 1)); fig.savefig(OUT + "bw_modes.png", dpi=150); print(OUT + "bw_modes.png")
 
+def fig_tenant_alone():
+    """the fine-tune tenant alone on M SMs: GPU-memory traffic against M (table "Tenant alone" of results/knee_bw2_summary.md)"""
+    rows, on = [], False
+    for ln in open("results/knee_bw2_summary.md"):
+        if ln.startswith("## "): on = ln.strip() == "## Tenant alone"
+        c = [x.strip() for x in ln.strip().strip("|").split("|")]
+        if on and c and c[0].isdigit(): rows.append((int(c[0]), float(c[3])))
+    rows.sort(); x = [m for m, _ in rows]; y = [v for _, v in rows]
+    fig, a = plt.subplots(figsize=(6.6, 4.3))
+    a.plot([0, x[-1]], [0, y[-1]], "--", color=GREY, lw=1.2, zorder=1)
+    a.plot(x, y, "o-", color=ORANGE)
+    a.annotate("if traffic followed the SM count", (110, y[-1] / x[-1] * 110), xytext=(8, -14), textcoords="offset points", color=INK2, fontsize=10)
+    a.annotate(f"{x[0]} SMs: {y[0]:.0f} GB/s, {y[0] / (y[-1] / x[-1] * x[0]):.1f}x the proportional share", (x[0], y[0]), xytext=(26, 22), textcoords="data",
+               va="center", color=INK, fontsize=10, arrowprops=dict(arrowstyle="-", color=INK2, lw=0.8, shrinkB=5))
+    a.annotate(f"all {x[-1]} SMs: {y[-1]:.0f} GB/s", (x[-1], y[-1]), xytext=(-6, 9), textcoords="offset points", ha="right", color=INK, fontsize=10)
+    a.set_xlim(0, 176); a.set_ylim(0, 480); a.set_xticks([8, 32, 64, 96, 128, 170]); a.set_xlabel("SMs given to the tenant (of 170)")
+    a.set_ylabel("GPU-memory traffic of the tenant (GB/s)"); a.set_title("Tenant alone: traffic falls more slowly than its SMs")
+    fig.tight_layout(); fig.savefig(OUT + "bw_tenant_alone.png", dpi=150); print(OUT + "bw_tenant_alone.png")
+
 if __name__ == "__main__":
-    fig_tenant(); fig_knee(); fig_slowdown(); fig_modes()
+    fig_tenant(); fig_knee(); fig_tenant_alone(); fig_slowdown(); fig_modes()

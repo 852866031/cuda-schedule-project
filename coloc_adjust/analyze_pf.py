@@ -45,7 +45,7 @@ ax[1].plot(R[R.ok].t, R[R.ok].lat * 1e3, ".", ms=2.5, color="#ff7f0e", alpha=0.5
 ax[2].step(pf.rel, pf.limit_gib, where="post", color="#c1121f", label="tenant KV limit (GiB)")
 ax[2].fill_between(pf.rel, 0, pf.paused * pf.limit_gib.max(), step="post", color="#999999", alpha=0.3, label="paused")
 ax[2].fill_between(pf.rel, 0, pf.asleep * pf.limit_gib.max(), step="post", color="#444444", alpha=0.4, label="asleep")
-ax[2].set_ylabel("GiB"); ax[2].legend(fontsize=8, loc="upper left", ncol=3, frameon=False); ax[2].set_xlabel("time since end of warm-up (s)"); ax[2].set_xlim(-35, end + 5)
+ax[2].set_ylabel("GiB"); ax[2].legend(fontsize=9, loc="upper center", bbox_to_anchor=(0.5, 0.95), bbox_transform=fig.transFigure, ncol=3, frameon=False); ax[2].set_xlabel("time since end of warm-up (s)"); ax[2].set_xlim(-35, end + 5)
 for a_ in ax:
     a_.grid(True, axis="y", alpha=0.25)
     for t, _ in sched[1:]: a_.axvline(t, color="k", ls=":", lw=0.6, alpha=0.6)

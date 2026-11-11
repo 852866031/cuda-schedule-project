@@ -165,8 +165,14 @@ smallest setting still costs 5 %.
 batches to stay inside it. Figure 3 says what an allowance costs decode: 4–7 % per 100 GB/s. This
 is the knob that matches what decode actually pays for.
 
-**3. Timing — proposed.** Decode does not need the path all the time (between requests, and
-while it reads a new prompt). Let the tenant move its bytes in those gaps.
+**3. Timing — proposed, with little room on a decode node.** The idea: let the tenant move its
+bytes when decode does not need the path. On this engine such moments are rare. It only decodes:
+the long prompt prefix arrives as cached KV, and the engine itself reads in only the 128 new
+tokens of each request. While any request is running the GPU is busy 93–100 % of the time (in the
+main report, a tenant allowed to run only in the gaps trained nothing), and decode keeps the path
+equally busy with 1, 4 or 8 requests. What is left is the time with no request at all: at most
+about 7 % at 0.5 requests per second and above. So timing is not a knob of its own here. It
+reduces to one rule inside the byte budget: lift the allowance while no request is running.
 
 Two more ideas come with these: make the tenant cost less per unit of useful work (in an earlier
 probe the harm to decode per tenant token varied 7-fold between tenant configurations), and cut
