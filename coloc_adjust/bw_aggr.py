@@ -11,6 +11,7 @@ Worker (started by aggr_corun.py):  bw_aggr.py --ctl F --out rows.csv --sms-set 
     copy32   copy:  half a chunk read, half a chunk written (same bytes a call)  target in GB/s
     tiny     a 16 KB in-place add: a kernel launch with almost no bytes          target in thousand calls/s
     compute  512 x 512 float32 matrix product (3 MB working set, stays in L2)    target in thousand calls/s
+    mm128, mm2304  the same with 128 x 128 (0.2 MB, very short kernels) and 2304 x 2304 (64 MB, one long kernel)
   rows.csv: one row per 0.25 s: t0,t1,seq,sms,target_gbps,bytes,calls
 Pacing: after each call the worker waits until bytes_done / elapsed <= target, so the traffic is spread at
 sub-millisecond grain (one call is 0.3-2 ms), not in long on/off bursts.
@@ -117,11 +118,14 @@ if __name__ == "__main__":
         buf = torch.empty(n, rows, 4096, device="cuda", dtype=torch.float32).normal_(0, 0.02)
         x = torch.empty(1, 4096, device="cuda").normal_(); v = torch.zeros(4096, device="cuda")
         a = torch.empty(512, 512, device="cuda").normal_(0, 0.04); o = torch.empty(512, 512, device="cuda")
+        a1 = torch.empty(128, 128, device="cuda").normal_(0, 0.08); o1 = torch.empty(128, 128, device="cuda")          # overnight 3, R6: 0.2 MB working set, very short kernels
+        a3 = torch.empty(2304, 2304, device="cuda").normal_(0, 0.02); o3 = torch.empty(2304, 2304, device="cuda")       # 64 MB working set, one long kernel per call
         MODES = dict(gemv32=((lambda i: F.linear(x, buf[i])), nbytes, True),
                      write32=((lambda i: buf[i].fill_(0.01)), nbytes, True),
                      copy32=((lambda i: buf[i, :h].copy_(buf[(i + n // 2) % n, h:])), 2 * h * 4096 * 4, True),
                      tiny=((lambda i: v.add_(1.0)), 0, False),
-                     compute=((lambda i: torch.mm(a, a, out=o)), 0, False))
+                     compute=((lambda i: torch.mm(a, a, out=o)), 0, False),
+                     mm128=((lambda i: torch.mm(a1, a1, out=o1)), 0, False), mm2304=((lambda i: torch.mm(a3, a3, out=o3)), 0, False))
     for k, (f_, _, _) in MODES.items():
         for i in range(4): f_(i)
     torch.cuda.synchronize()

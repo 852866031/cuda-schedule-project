@@ -265,3 +265,101 @@ whether which SMs a green context gets changes the bandwidth it can reach.
 - MemGuard reproduction report (describes the original mechanism) [A]: https://arxiv.org/abs/2609.04547
 - BWLOCK++ [A]: https://arxiv.org/abs/1712.08738
 - Not checked [M]: REEF (OSDI 2022), Intel RDT memory bandwidth allocation, iGniter, gpulet.
+
+## 5. Second search (Nov 15): work that changes the neighbour itself
+
+The sources above decide how much hardware a job gets or when it may run. This search asked
+whether anyone changes how the best-effort job itself executes so that it does more work per byte
+of GPU-memory traffic, because a bandwidth-bound job runs next to it (section 5.6 of `REPORT.md`).
+
+**How this section was produced.** By an automated search agent, in one pass. Its reading depth
+per source is given with the same tags as above. I have not re-read these papers; before any of
+this goes into a paper, the three closest (Harli, LoRAFusion, ConCo) have to be read in full.
+
+**Verdict of the search.** The position is open as far as it could find: no source combines an
+incumbent / best-effort GPU setting, memory-bandwidth interference as the cost, and a remedy that
+restructures the neighbour to raise its work per byte. Closest, in order: Harli, LoRAFusion,
+ConCo, the Protean Code line.
+
+### 5.1 The same setting, a different lever
+
+- **Harli** (Xu, Zhao, Cui, Chen et al.; arXiv 2511.11729) [T]. PEFT fine-tuning colocated with
+  LLM decode instances on Ada6000 and A100, split by SM partitioning (green contexts). Decode shows
+  about 85 % GPU-memory-bandwidth utilisation against about 40 % SM utilisation. Interference is a
+  two-task memory-bandwidth contention model, slowdown = (f_infer + f_ft) / B, linear in the
+  fine-tuner's SM share. The fine-tuning job is split into per-layer submodels and micro-batches of
+  about 10 ms for scheduling, and borrows KV-cache memory. Its only bandwidth lever is the tuner's
+  SM count, and it treats the tuner's bytes per unit of work as fixed. **Must be read in full**:
+  it is the nearest work to the whole prototype, and our co-run result (an SM limit is a weak
+  control of the tenant's traffic, section 2.7) bears directly on its model.
+- **SIRIUS** (Wang, Wang, Han, Chen; USENIX ATC 2025) [P]. The training job shrinks its batch
+  within milliseconds, keeping the effective batch by accumulation, to hand GPU memory to
+  inference; for compute it caps the trainer's SMs. A co-designed neighbour, for memory capacity.
+- Also in this setting, changing scheduling or batch size only: CoLLM (arXiv 2604.16400) [P],
+  MACE (arXiv 2510.03283) [A], MOLT (arXiv 2610.05748) [A], AntMan (OSDI 2020) [A].
+
+### 5.2 The mechanism, without a co-runner
+
+- **LoRAFusion** (Zhu, Su, Ding, Song, Wang, Pekhimenko; EuroSys 2026; arXiv 2510.00206) [T].
+  LoRA cuts training throughput by about 40 % against the frozen model although it adds under 1 %
+  of the parameters, because the adapter GEMMs and element-wise operators are memory-bandwidth-bound
+  on large activation tensors; a profiler shows global-memory traffic about 2.64× that of the
+  frozen linear layer. It splits the graph where the tensor shrinks to rank r and fuses the
+  memory-bound operators into custom kernels. Reported: measured GPU-memory traffic down 34–37 %,
+  kernels up to 1.39× faster, end-to-end up to 1.96×. The goal is the job's own throughput. It is
+  the building block and the baseline a frugal neighbour would reuse or have to beat.
+- **FlashAttention** (NeurIPS 2022) [A]: tiled attention that never writes the N×N matrix to GPU
+  memory. Fusion compilers that describe fusion as cutting global-memory traffic, all evaluated
+  alone: ComFuse (arXiv 2608.03537) [P], Neptune (PLDI 2026) [A], Mirage Persistent Kernel
+  (OSDI 2026) [A].
+- No roofline or bytes-per-token study that splits fine-tuning traffic into weights and
+  intermediate results was found. Our operator count (`../results/tenant_inventory.md`: 12 %
+  weights, 88 % intermediate results, counted on the CPU) is the nearest thing we have.
+
+### 5.3 Shared-GPU compilation
+
+- **ConCo** (Lu, Sun, Xu, Sun, Sun; ICS 2025) [T]. Extends an auto-tuner to pre-generate several
+  kernel variants per inference model, each tuned for a fraction of the SMs, selected at run time
+  by concurrency. Its analysis notes that the generated code has higher arithmetic intensity and
+  puts less pressure on global-memory bandwidth. Symmetric inference tasks, aggregate throughput;
+  frugality is a by-product.
+- **Tacker** (HPCA 2022) [A]: fuses a Tensor-Core kernel of one application with a CUDA-Core
+  kernel of another so both core types are used. No evidence that it targets memory traffic.
+
+### 5.4 The CPU precedent: a good neighbour by code change
+
+- **QoS-Compile** (Tang, Mars, Soffa; CGO 2012) [P]: the compiler inserts no-ops between memory
+  instructions and intermittent sleeps in the contentious regions of the low-priority application,
+  "a software rate-based technique". **ReQoS** (ASPLOS 2013) [A]: the same with a runtime that
+  adjusts the napping from the high-priority job's QoS.
+- **Protean Code** (Laurenzano, Zhang, Tang, Mars; MICRO 2014) [T]: a runtime re-compiles the
+  running batch program and searches variants in which some loads carry non-temporal hints, to
+  tune the pressure it puts on shared caches; it falls back to naps. The contended resource is
+  cache occupancy, not bandwidth, and the hints do not reduce bytes moved.
+- Sandberg et al. (SC 2010) [A], Bao and Ding (CGO 2013) [A], VELTAIR (ASPLOS 2022) [P]:
+  cache-conscious compilation with co-runners in mind, on CPUs.
+- These lines slow the neighbour down or reduce its cache footprint. None makes it do more work
+  per byte.
+
+### 5.5 Candidate frugal neighbours
+
+- **Ladder Side-Tuning** (NeurIPS 2022) [A]: a small side network fed by a frozen backbone, with
+  no back-propagation through the backbone. **Quantized Side Tuning** (ACL 2024) [A]: the same
+  with a 4-bit backbone. **Egeria** (EuroSys 2023) [A]: freezes converged layers and caches their
+  outputs. They report memory footprint and time, not memory traffic.
+
+### 5.6 Not verified
+
+Inside-kernel throttling of a GPU job's memory traffic on a real discrete GPU: nothing found
+beyond the simulator work already listed (and Kayiran et al., MICRO 2014 [A]). Numbers of the [A]
+entries come from abstracts. Bubble-Up, Bubble-Flux, Heracles, PARTIES and CPI2 were not read in
+this pass.
+
+Sources of this section: Harli https://arxiv.org/abs/2511.11729 · LoRAFusion
+https://arxiv.org/abs/2510.00206 · ConCo
+https://hpcrl.github.io/ICS2025-webpage/program/Proceedings_ICS25/ics25-73.pdf · Protean Code
+https://www.jasonmars.org/wp-content/uploads/2020/05/MICRO.2014.21.pdf · ReQoS
+https://www.jasonmars.org/wp-content/uploads/2020/05/2490301.2451126.pdf · SIRIUS
+https://www.usenix.org/conference/atc25/presentation/wang-jiali · Ladder Side-Tuning
+https://arxiv.org/abs/2206.06522 · Quantized Side Tuning https://arxiv.org/abs/2401.07159 ·
+VELTAIR https://arxiv.org/abs/2201.06212 · FlashAttention https://arxiv.org/abs/2205.14135

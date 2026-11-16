@@ -1,0 +1,15 @@
+[
+{"shape": -1, "pass": 0, "t_from": 1.6, "t_to": 61.6},
+{"shape": 2, "pass": 1, "t_from": 76.6, "t_to": 181.6},
+{"shape": 3, "pass": 1, "t_from": 222.8, "t_to": 327.8},
+{"shape": 4, "pass": 1, "t_from": 369.5, "t_to": 474.5},
+{"shape": 5, "pass": 1, "t_from": 516.6, "t_to": 621.6},
+{"shape": 6, "pass": 1, "t_from": 664.2, "t_to": 769.2},
+{"shape": -1, "pass": 1, "t_from": 797.2, "t_to": 857.2},
+{"shape": 6, "pass": 2, "t_from": 872.3, "t_to": 977.3},
+{"shape": 5, "pass": 2, "t_from": 1019.3, "t_to": 1124.3},
+{"shape": 4, "pass": 2, "t_from": 1166.0, "t_to": 1271.0},
+{"shape": 3, "pass": 2, "t_from": 1312.2, "t_to": 1417.2},
+{"shape": 2, "pass": 2, "t_from": 1458.5, "t_to": 1563.5},
+{"shape": -1, "pass": 2, "t_from": 1589.8, "t_to": 1649.8},
+{"shape": -9, "pass": 0, "t_from": 0, "t_to": 0}]

@@ -15,6 +15,8 @@ the GPU as the tenant's budget (/dev/shm/coloc_ft_budget).
 """
 import argparse, asyncio, csv, json, math, os, sys, time, urllib.request
 from collections import deque
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pacing import slow_update
 from aiohttp import web, ClientSession, ClientTimeout, TCPConnector
 
 GiB = 1024 ** 3
@@ -47,6 +49,9 @@ ap.add_argument("--tpot-slo", type=float, default=None, help="P1.1: cap the tena
 ap.add_argument("--tpot-ref", default=None, help="phases CSV of the baseline run (columns rps, tpot50) used as the TPOT reference")
 ap.add_argument("--slo-period", type=float, default=2.0); ap.add_argument("--slo-gain", type=float, default=4.0)
 ap.add_argument("--cap-min", type=float, default=500.0); ap.add_argument("--cap-max", type=float, default=20000.0)
+ap.add_argument("--gbps-fixed", type=float, default=None, help="overnight 3, C1: publish a constant GB/s allowance for the tenant")
+ap.add_argument("--slo-mode", default="fast", choices=["fast", "slow"], help="slow (overnight 3): the TPOT loop drives a GB/s allowance, at most --slo-step per period, between --gbps-min and --gbps-max; the ceiling is published while no request is in the engine")
+ap.add_argument("--slo-step", type=float, default=0.10); ap.add_argument("--gbps-min", type=float, default=10.0); ap.add_argument("--gbps-max", type=float, default=150.0)
 ap.add_argument("--sm-table", default="", help="tenant SM share by arrival rate, 'rps:sms,...' interpolated (e.g. '0:128,1:64,2:32,3:16'); empty = not published")
 args = ap.parse_args()
 
@@ -242,17 +247,19 @@ async def control_loop(app):
     def budget_for(lim): return max(0, total - fixed - tenant_fixed - safety - lim)
     limit = None; seq = 0; below_since = None; last_metrics = {}; last_m_t = 0; pending_budget_up = None
     last_sms = None; need = 0; need_hist = deque(); want_limit = None; limit_cap = None; nv_free = None; arrivals20 = deque()
-    slo = {"cap": args.cap_max if args.tpot_slo is not None else None, "t": 0.0, "tpot": None, "base": None}
+    SLOW = args.tpot_slo is not None and args.slo_mode == "slow"
+    slo = {"cap": args.cap_max if (args.tpot_slo is not None and not SLOW) else None, "t": 0.0, "tpot": None, "base": None,
+           "gbps": args.gbps_max if SLOW else args.gbps_fixed, "pub": args.gbps_max if SLOW else args.gbps_fixed}   # gbps: the loop's value; pub: what is published
     def publish(now, budget, limit, need, lam):
         nonlocal seq, last_sms
         seq += 1; last_sms = sm_share(lam)
         write_json(args.budget_file, dict(seq=seq, ts=now, bytes=int(budget), limit=limit, need=need, lam=lam, sms=last_sms,
-                                          tok_s_cap=slo["cap"]))
+                                          tok_s_cap=slo["cap"], gbps=slo["pub"]))
     f = open(args.log, "w", newline=""); w = csv.writer(f)
     w.writerow(["t", "running", "waiting", "blocks_in_use", "blocks_running_final", "blocks_waiting_admit", "blocks_waiting_final",
                 "lambda_hat", "need_gib", "limit_gib", "kvc_used_gib", "kvc_limit_gib", "ft_budget_gib", "ft_tier", "ft_footprint_gib",
                 "ft_seq_ack", "action", "m_running", "m_waiting", "m_queue_sum", "m_queue_count", "m_preempt",
-                "nvml_free_gib", "limit_cap_gib", "want_limit_gib", "engine_fixed_gib", "tpot_ms", "tpot_base_ms", "tok_s_cap"])
+                "nvml_free_gib", "limit_cap_gib", "want_limit_gib", "engine_fixed_gib", "tpot_ms", "tpot_base_ms", "tok_s_cap", "gbps", "gbps_loop"])
     # initial limit from kvcached
     used0, lim0 = kvc_state()
     limit = lim0 if lim0 else int(args.max_limit_gib * GiB)
@@ -319,7 +326,20 @@ async def control_loop(app):
             limit = kvlim or limit
         if now - last_m_t > 1.0:
             last_metrics = metrics(); last_m_t = now
-        if args.tpot_slo is not None and TPOT_REF is not None and now - slo["t"] >= args.slo_period:
+        if SLOW:
+            # overnight 3: same error signal as P1.1 (10-s median TPOT against the baseline at this arrival rate), but a GB/s
+            # allowance that moves at most --slo-step per period; with no request in the engine the ceiling is published and
+            # the loop's value is kept for the next arrival
+            if TPOT_REF is not None and now - slo["t"] >= args.slo_period:
+                slo["t"] = now
+                lam20 = sum(1 for t in arrivals20 if t >= now - 20.0) / 20.0
+                slo["tpot"] = tpot_now(now); slo["base"] = TPOT_REF(lam20)
+                if slo["tpot"] is not None and slo["base"] and any(t >= now - 10.0 for t, _ in completions):
+                    slo["gbps"] = slow_update(slo["gbps"], slo["tpot"] / slo["base"] - 1.0, args.tpot_slo, args.slo_gain, args.slo_step, args.gbps_min, args.gbps_max)
+            want_pub = args.gbps_max if (d["running"] == 0 and d["waiting"] == 0) else slo["gbps"]
+            if abs(want_pub - slo["pub"]) / slo["pub"] > 0.02:
+                slo["pub"] = want_pub; publish(now, budget, limit, need, lam)
+        elif args.tpot_slo is not None and TPOT_REF is not None and now - slo["t"] >= args.slo_period:
             # P1.1: multiplicative update of the tenant's tokens/s cap from the decode TPOT error against the baseline
             slo["t"] = now
             lam20 = sum(1 for t in arrivals20 if t >= now - 20.0) / 20.0
@@ -340,7 +360,8 @@ async def control_loop(app):
                     last_metrics.get("num_preemptions_total", ""),
                     "" if nv_free is None else f"{nv_free/GiB:.2f}", "" if limit_cap is None else f"{limit_cap/GiB:.2f}",
                     "" if want_limit is None else f"{want_limit/GiB:.2f}", f"{fixed/GiB:.2f}",
-                    "" if slo["tpot"] is None else f"{slo['tpot']:.2f}", "" if slo["base"] is None else f"{slo['base']:.2f}", "" if slo["cap"] is None else f"{slo['cap']:.0f}"])
+                    "" if slo["tpot"] is None else f"{slo['tpot']:.2f}", "" if slo["base"] is None else f"{slo['base']:.2f}", "" if slo["cap"] is None else f"{slo['cap']:.0f}",
+                    "" if slo["pub"] is None else f"{slo['pub']:.1f}", "" if slo["gbps"] is None else f"{slo['gbps']:.1f}"])
         f.flush()
 
 async def on_startup(app):

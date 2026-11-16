@@ -26,6 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from layer_offload import OffloadManager
 from xfer_trace import XferTrace, default_path
 from green_ctx import GreenCtx
+from pacing import Bpt, BlockPacer, cap_tok_s
+from loss_chunk import chunked_lm_loss
 
 GiB = 1024 ** 3
 TOTAL_GIB = 31.3536
@@ -54,6 +56,19 @@ ap.add_argument("--tok-s-cap", type=float, default=0.0, help="fixed tokens/s cap
 ap.add_argument("--green-prebuilt", action="store_true", help="P2: create every green context of --green-set once at start and only switch streams between steps (no create/destroy per switch)")
 ap.add_argument("--green-set", default="128,96,64,32,16", help="SM counts to prebuild with --green-prebuilt")
 ap.add_argument("--green-dynamic", action="store_true", help="take the SM count from the budget file's 'sms' field (VRAM-scheduler-driven); --green-sms is the fallback")
+# ---- overnight plan 3: C1 (byte allowance, two pacing methods) and C2 (variants that move fewer bytes per token)
+ap.add_argument("--gbps-cap", type=float, default=0.0, help="fixed GB/s allowance; 0 = follow the budget file's gbps if present")
+ap.add_argument("--bpt-json", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "results_o3", "bytes_per_token.json"), help="MB per token by variant and shape (tenant_bytes.py)")
+ap.add_argument("--bpt-variant", default="base", help="row of --bpt-json used to turn GB/s into tokens/s ('base' also for a variant that must do the usual tenant's tokens/s)")
+ap.add_argument("--pace", default="step", choices=["step", "block"], help="keep the cap by pausing after a step, or in slices at block boundaries; the budget file's 'pace' overrides")
+ap.add_argument("--slice-blocks", type=int, default=8, help="blocks per slice with --pace block; the budget file's 'slice' overrides")
+ap.add_argument("--lora-top-layers", type=int, default=0, help="LoRA on the top N layers only (0 = all layers); changes the training")
+ap.add_argument("--attn", default=None, help="attention implementation (sdpa, eager); default: the model's")
+ap.add_argument("--compile", action="store_true", help="torch.compile the model (no block hooks: no idle gate, no block pacing, no mid-step preemption)")
+ap.add_argument("--loss-chunk", type=int, default=0, help="output layer and loss over this many positions at a time (0 = the usual way)")
+ap.add_argument("--forward-only", action="store_true", help="reference: forward pass only, nothing is trained")
+ap.add_argument("--force-ckpt", action="store_true", help="gradient checkpointing in every shape")
+ap.add_argument("--no-slow-shapes", action="store_true", help="shapes with offload count as 'does not fit': pause instead")
 args = ap.parse_args()
 
 # tier configurations, most to least GPU-hungry; (tier, k micro-batches, activation offload, n layers weight-offloaded)
@@ -74,10 +89,14 @@ signal.signal(signal.SIGTERM, lambda *_: stop.update(flag=True)); signal.signal(
 
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict
 from transformers import AutoModelForCausalLM
-model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.bfloat16)
-model = get_peft_model(model, LoraConfig(r=args.lora_r, lora_alpha=2 * args.lora_r,
-                                         target_modules=["q_proj", "k_proj", "v_proj", "o_proj"], task_type="CAUSAL_LM"))
-model.enable_input_require_grads()
+model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.bfloat16, **({"attn_implementation": args.attn} if args.attn else {}))
+_lora = dict(r=args.lora_r, lora_alpha=2 * args.lora_r, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"], task_type="CAUSAL_LM")
+if args.lora_top_layers: _lora["layers_to_transform"] = list(range(model.config.num_hidden_layers - args.lora_top_layers, model.config.num_hidden_layers))
+model = get_peft_model(model, LoraConfig(**_lora))
+if not args.lora_top_layers: model.enable_input_require_grads()   # with LoRA on the top layers only, the backward pass stops at the lowest adapted layer
+net = torch.compile(model) if args.compile else model
+body = torch.compile(model.base_model.model.model) if (args.compile and args.loss_chunk) else None
+bpt = Bpt(args.bpt_json, args.bpt_variant)
 model.train()
 ckpt_state = {"on": None}
 def set_ckpt(on):
@@ -113,6 +132,7 @@ def poll_budget_midstep():
         raise Preempt(f"budget {budget/GiB:.2f} GiB < need of cfg {cfg_i}")
 def rd(i): return struct.unpack_from("<q", page, i * 8)[0]
 def gate(*_):
+    pacer.tick()
     poll_budget_midstep()
     if page is None or rd(0) != MAGIC: return
     t0 = time.monotonic_ns()
@@ -122,8 +142,9 @@ def gate(*_):
         poll_budget_midstep()          # a gated tenant must still release memory when asked
     ev = torch.cuda.Event(); ev.record(); fence["ev"] = ev
     gate_ns["v"] += time.monotonic_ns() - t0
-for m in layers:
-    m.register_forward_pre_hook(lambda *a: gate()); m.register_full_backward_pre_hook(lambda *a: gate())
+if not args.compile:
+    for m in layers:
+        m.register_forward_pre_hook(lambda *a: gate()); m.register_full_backward_pre_hook(lambda *a: gate())
 duty_state = {"t": time.monotonic_ns(), "busy": 0}
 def busy_duty():
     """fraction of the last interval the engine reported busy (from the page's busy_ns_total)."""
@@ -277,13 +298,19 @@ def set_green(sms):
 peaks = {}
 if os.path.exists(args.tiers_json):
     peaks = {int(k): float(v) for k, v in json.load(open(args.tiers_json)).items()}
-budget_extra = {"sms": None, "cap": None}
+budget_extra = {"sms": None, "cap": None, "gbps": None, "pace": None, "slice": None}
+compiled_ok = set()   # with --compile: the shapes compiled at start
+def sync_tenant():
+    """wait for the tenant's queued kernels (the hook may run in autograd's device thread, so name the stream)"""
+    (green["ctx"].torch_stream() if green["ctx"] is not None else torch.cuda.default_stream()).synchronize()
+pacer = BlockPacer(sync_tenant, poll=poll_budget_midstep)
 def read_budget():
     if args.fixed_budget_gib is not None:
         if args.tok_s_cap: budget_extra["cap"] = args.tok_s_cap
         return args.fixed_budget_gib * GiB, 0
     try:
         j = json.load(open(args.budget_file)); budget_extra["sms"] = j.get("sms"); budget_extra["cap"] = args.tok_s_cap or j.get("tok_s_cap")
+        budget_extra["gbps"] = j.get("gbps"); budget_extra["pace"] = j.get("pace"); budget_extra["slice"] = j.get("slice")
         return float(j["bytes"]), int(j.get("seq", 0))
     except Exception:
         return TOTAL_GIB * GiB, 0
@@ -291,6 +318,8 @@ def choose(budget, duty):
     if args.fixed_tier is not None: return args.fixed_tier
     for i, cfg in enumerate(TIERS[:-1]):
         if cfg["k"] and duty > args.collision_duty and cfg["k"] < 4: continue
+        if args.no_slow_shapes and (cfg["act"] or cfg["off"]): continue
+        if args.compile and compiled_ok and i not in compiled_ok: continue   # a shape first met in mid-run would compile for ~45 s inside one step
         if peaks.get(i, 1e9) + args.margin_gib * GiB <= budget: return i
     return PAUSE
 def apply_cap(budget):
@@ -311,15 +340,20 @@ def train_step(cfg, ids):
     gate()
     for i in range(k):
         sub = ids[i::k]
+        if args.forward_only:
+            with torch.no_grad(): loss_sum += net(input_ids=sub, labels=sub).loss.item()
+            continue
         with act_offload(cfg["act"]):
-            out = model(input_ids=sub, labels=sub)
-            loss = out.loss / k
+            if args.loss_chunk:
+                sur, lval = chunked_lm_loss(model, sub, args.loss_chunk, body); loss = sur / k
+            else:
+                out = net(input_ids=sub, labels=sub); loss = out.loss / k; lval = None
         if offload["mgr"] is not None:
             offload["mgr"].pre_forward() if False else None
             offload["mgr"].backward(loss)
         else:
             loss.backward()
-        loss_sum += loss.item() * k
+        loss_sum += float(lval) if lval is not None else loss.item() * k
         if k > 1: gate()
     opt.step(); sched.step(); opt.zero_grad(set_to_none=True)
     torch.cuda.synchronize(); pin_recycle()
@@ -330,7 +364,7 @@ def main():
     out = open(args.out, "w", newline="") if args.out else None
     w = csv.writer(out) if out else None
     if w: w.writerow(["ts", "step", "cfg", "tier", "k", "off", "act", "dt_ms", "tok_s", "loss", "peak_gib", "reserved_gib",
-                      "gated_ms", "budget_gib", "duty", "act_out_mb", "act_in_mb", "snapshot_ms", "event", "sms", "cap_tok_s", "sleep_ms"])
+                      "gated_ms", "budget_gib", "duty", "act_out_mb", "act_in_mb", "snapshot_ms", "event", "sms", "cap_tok_s", "sleep_ms", "pace", "slices", "slice_sleep_ms", "gbps", "units"])
     to_gpu(); cur = None; seq_seen = -1; t_start = time.time(); last_snap = step; up_since = {"cfg": None, "t": 0.0}
     last_budget = {"v": TOTAL_GIB * GiB}
     if args.green_prebuilt:
@@ -345,6 +379,20 @@ def main():
         torch.cuda.synchronize(); prebuild_green()
     if args.green_remaining_of: set_green(args.green_remaining_of)
     elif args.green_sms and not args.green_dynamic: set_green(args.green_sms)
+    if args.compile and not args.calibrate:
+        # compile every shape that fits the budget now, before the first real step: a recompilation in mid-run would hold
+        # the tenant inside one "step" for tens of seconds, with no hooks to release memory through
+        b0, _ = read_budget()
+        for i_, c_ in enumerate(TIERS[:-1]):
+            if c_["act"] or c_["off"] or peaks.get(i_, 1e18) + args.margin_gib * GiB > b0: continue
+            try:
+                apply_cap(b0); set_ckpt(c_["ckpt"] or args.force_ckpt); tw = time.time()
+                ids = torch.randint(0, vocab, (args.batch, args.seq), generator=gen).to(dev)
+                for j_ in range(2):
+                    sub = ids[j_::c_["k"]]; (net(input_ids=sub, labels=sub).loss / c_["k"]).backward()
+                opt.zero_grad(set_to_none=True); torch.cuda.synchronize(); compiled_ok.add(i_); print(f"ft_worker: compiled shape cfg {i_} (k={c_['k']}) in {time.time() - tw:.0f} s", flush=True)
+            except torch.OutOfMemoryError:
+                opt.zero_grad(set_to_none=True); torch.cuda.empty_cache(); print(f"ft_worker: shape cfg {i_} did not fit while compiling", flush=True)
     if args.calibrate:
         results = {}
         for i, cfg in enumerate(TIERS[:-1]):
@@ -384,7 +432,7 @@ def main():
                 time.sleep(0.2); continue
             try:
                 apply_cap(max(budget, 1.5 * GiB))   # transient room for re-binding; the real cap follows
-                to_gpu(); set_ckpt(TIERS[i]["ckpt"]); set_weight_offload(TIERS[i]["off"]); torch.cuda.empty_cache(); apply_cap(budget); cur = i
+                to_gpu(); set_ckpt(TIERS[i]["ckpt"] or args.force_ckpt); set_weight_offload(TIERS[i]["off"]); torch.cuda.empty_cache(); apply_cap(budget); cur = i
             except torch.OutOfMemoryError:
                 print(f"ft_worker: OOM while moving to cfg {i} (budget {budget/GiB:.2f}); pausing", flush=True)
                 opt.zero_grad(set_to_none=True); to_cpu(); torch.cuda.empty_cache(); peaks[i] = max(peaks.get(i, 0), budget + 0.1 * GiB)
@@ -397,11 +445,17 @@ def main():
         cfg = TIERS[i]
         ids = torch.randint(0, vocab, (args.batch, args.seq), generator=gen).to(dev)
         g0 = gate_ns["v"]; torch.cuda.reset_peak_memory_stats(dev); t0 = time.time(); preempt_state["cur"] = i
+        # the cap of this step: a tokens/s cap, and/or a GB/s allowance turned into tokens/s with this shape's bytes per token
+        cap = budget_extra["cap"]; gbps = args.gbps_cap or budget_extra["gbps"]
+        if gbps:
+            cg = cap_tok_s(float(gbps), bpt.mb(i)); cap = min(cap, cg) if cap else cg
+        pace = budget_extra["pace"] or args.pace; nslice = int(budget_extra["slice"] or args.slice_blocks)
+        pacer.begin_step(i, ids.numel(), cap if pace == "block" else None, nslice)
         try:
             loss, tokens = train_step(cfg, ids)
             torch.cuda.synchronize()
         except Preempt as e:
-            preempt_state["cur"] = None; preempt_state["count"] += 1
+            preempt_state["cur"] = None; preempt_state["count"] += 1; pacer.active = False
             opt.zero_grad(set_to_none=True); torch.cuda.synchronize(); torch.cuda.empty_cache()
             event = f"preempted mid-step ({e}) after {(time.time()-t0)*1e3:.0f} ms"
             if w: w.writerow([f"{time.time():.3f}", step, i, cfg["tier"], cfg["k"], cfg["off"], int(cfg["act"]), "", "", "", "", f"{torch.cuda.memory_reserved(dev)/GiB:.2f}", f"{(gate_ns['v']-g0)/1e6:.0f}", f"{budget/GiB:.2f}", f"{duty:.2f}", "", "", "", event]); out.flush()
@@ -412,10 +466,10 @@ def main():
             event = f"oom at cfg {i}, budget {budget/GiB:.2f}"; print("ft_worker:", event, flush=True)
             if w: w.writerow([f"{time.time():.3f}", step, i, cfg["tier"], cfg["k"], cfg["off"], int(cfg["act"]), "", "", "", "", f"{torch.cuda.memory_reserved(dev)/GiB:.2f}", "", f"{budget/GiB:.2f}", f"{duty:.2f}", "", "", "", event]); out.flush()
             cur = None; continue
-        preempt_state["cur"] = None
+        preempt_state["cur"] = None; pst = pacer.end_step()
         dt = time.time() - t0; step += 1
         # P1.1: throughput cap from the VRAM scheduler -- idle after the step so tokens/s (incl. the idle) stays under the cap
-        cap = budget_extra["cap"]; sleep_ms = 0.0
+        sleep_ms = 0.0
         if cap and tokens / dt > cap:
             pause_s = tokens / cap - dt; t_sl = time.time()
             while time.time() - t_sl < pause_s and not stop["flag"]:
@@ -434,7 +488,7 @@ def main():
             w.writerow([f"{time.time():.3f}", step, i, cfg["tier"], cfg["k"], cfg["off"], int(cfg["act"]), f"{dt*1e3:.0f}", f"{tokens/dt:.0f}",
                         f"{loss:.4f}", f"{torch.cuda.max_memory_allocated(dev)/GiB:.2f}", f"{torch.cuda.memory_reserved(dev)/GiB:.2f}",
                         f"{(gate_ns['v']-g0)/1e6:.0f}", f"{budget/GiB:.2f}", f"{duty:.2f}", f"{act_stats['out_b']/2**20:.0f}", f"{act_stats['in_b']/2**20:.0f}", snap_ms, event, green["sms"],
-                        "" if not cap else f"{cap:.0f}", f"{sleep_ms:.0f}"])
+                        "" if not cap else f"{cap:.0f}", f"{sleep_ms:.0f}", pace, pst["slices"], f"{pst['sleep_s']*1e3:.0f}", "" if not gbps else f"{float(gbps):.1f}", pst["units"]])
             out.flush()
         if step % 20 == 0:
             print(f"  step {step} cfg {i} (tier {cfg['tier']} k={cfg['k']} off={cfg['off']}): {dt*1e3:.0f} ms, {tokens/dt:.0f} tok/s, "

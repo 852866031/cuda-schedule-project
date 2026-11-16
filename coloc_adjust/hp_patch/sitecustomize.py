@@ -68,6 +68,41 @@ if os.environ.get("COLOC_ENGINE_SMS"):
             setattr(R, name, wrapped)
     _install_meta_hook("vllm.v1.worker.gpu.model_runner", _patch_engine_green)
 
+if os.environ.get("COLOC_ENGINE_SMS_DYN"):
+    # overnight 3, R7: the engine's steps run on one of several prebuilt green contexts; which one follows the "sms" field the
+    # VRAM scheduler publishes in the budget file (read at most twice a second, switched between steps)
+    def _patch_engine_green_dyn(mod):
+        import json, time, torch
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from green_ctx import GreenCtx
+        want = sorted({int(x) for x in os.environ["COLOC_ENGINE_SMS_DYN"].split(",") if x}, reverse=True)
+        bud = os.environ.get("COLOC_BUDGET_FILE", "/dev/shm/coloc_ft_budget"); logp = os.environ.get("COLOC_ENGINE_SMS_LOG")
+        R = mod.GPUModelRunner
+        st = {"pool": None, "cur": None, "t": 0.0, "sms": None}
+        def _stream():
+            if st["pool"] is None:
+                st["pool"] = {n: GreenCtx(n, device=0) for n in want}
+                print(f"[coloc hp_patch] engine green contexts prebuilt: { {n: g.sm_count for n, g in st['pool'].items()} }", file=sys.stderr)
+            now = time.time()
+            if now - st["t"] > 0.5:
+                st["t"] = now
+                try: s = json.load(open(bud)).get("sms")
+                except Exception: s = None
+                if s:
+                    key = min(st["pool"], key=lambda k: abs(k - int(s)))
+                    if key != st["sms"]:
+                        torch.cuda.synchronize(); st["sms"] = key; st["cur"] = st["pool"][key].torch_stream(); torch.cuda.empty_cache()
+                        if logp:
+                            with open(logp, "a") as f: f.write(f"{now:.3f},{key},{st['pool'][key].sm_count}\n")
+            return st["cur"] if st["cur"] is not None else torch.cuda.default_stream()
+        for name in ("execute_model", "sample_tokens"):
+            orig = getattr(R, name)
+            def wrapped(self, *a, _orig=orig, **kw):
+                with torch.cuda.stream(_stream()):
+                    return _orig(self, *a, **kw)
+            setattr(R, name, wrapped)
+    _install_meta_hook("vllm.v1.worker.gpu.model_runner", _patch_engine_green_dyn)
+
 if os.environ.get("COLOC_HP_SIGNAL") == "1":
     def _patch_runner(mod):
         import mmap, struct, threading, time

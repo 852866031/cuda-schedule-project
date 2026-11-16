@@ -5,15 +5,68 @@ both GPUs capped at 500 W, `../results/`)** — all figures and tables below are
 stated; round 1 is referred to where it differs. Branch `kvcached-validation`, directory
 `coloc_adjust/`. Design in [DESIGN.md](../DESIGN.md), the round-2 plan in
 [PLAN_overnight2.md](../PLAN_overnight2.md), run-by-run predictions and outcomes in
-[DECISIONS.md](DECISIONS.md) (D1–D10 round 1, D11–D19 round 2). Section 2.7 summarises the
-bandwidth-interference measurements (full account in [REPORT_bandwidth.md](REPORT_bandwidth.md)),
-section 5 the next steps and section 6 the related work.
+[DECISIONS.md](DECISIONS.md) (D1–D10 round 1, D11–D19 round 2, D20–D28 the night of Nov 16). Section 0 is the storyline. Sections
+2.2.1 and 2.2.2 (tail latency, and decode's slowdown split by what the tenant is doing) are
+re-analyses of the round-2 runs added on Nov 15. Section 2.7 analyses what makes a tenant slow
+decode (full account in [REPORT_bandwidth.md](REPORT_bandwidth.md)), section 5 has the next steps and, in 5.7, what the night of Nov 16 measured of them,
+section 6 the related work, section 7 the open questions and limits.
 
 **Terminology.** Two memories appear in this report and are kept apart by name. **GPU memory** is
 the 5090's 31.35 GiB of GDDR7: "GPU memory bandwidth" is the SM ↔ GPU-memory path (≈ 1.8 TB/s) and
 "GPU-memory-controller busy" is NVML's reading of it. **Host RAM** is the machine's 60 GiB of DDR: the
 KV tiers, the tenant's offloaded activations, streamed weights and snapshots live there and move over
 PCIe (≈ 14 GB/s). The word DRAM is not used for either.
+
+## 0. Storyline
+
+Each step says what was known, what was done, what came out, and the goal it led to. Steps 1–7
+are measured; step 8 is the plan.
+
+0. **Starting point.** The earlier studies ended on one result: with KV offloaded to host RAM, a
+   decode engine's performance does not depend on its GPU-memory budget below a knee that moves
+   with load. So the GPU memory below the knee, and the SMs decode does not need, could go to a
+   second job on the same GPU (the tenant). *Goal: test this. First: can the budget change
+   without restarting the engine?*
+1. **Can the KV budget change live?** ([`../../kvcached_validation/REPORT.md`](../../kvcached_validation/REPORT.md))
+   kvcached shrinks and grows the budget under load. A new limit takes effect in about 1.3 s, kills
+   no request and costs nothing per step, and at every budget it is indistinguishable from a
+   restart at that budget. *Goal: make the budget follow load and hand the rest to a tenant.*
+2. **Can GPU memory follow load?** (sections 1 and 2.2) A router, a VRAM scheduler and a tenant
+   that moves along a ladder of shapes, with no change to vLLM: 0 failures, 0 preemptions and 0 s
+   oversubscribed over 11 minutes at 0.5–4 req/s. A static split loses at both ends. The memory
+   half is solved. *Goal: the tenant also uses compute; find what that costs decode and how to
+   bound it.*
+3. **How should compute be shared?** (sections 2.1–2.4) Four classes of sharing were tried: take
+   turns; run together without a limit; together with fewer SMs; together with less time. Taking
+   turns gives the tenant nothing, because the GPU is busy 93–100 % of the time while requests
+   run. Running together costs +2.2 % TPOT per 1 k tenant tok/s. The two fewer-SM schemes are
+   the cheapest per token and slow decode evenly; throttling holds the median but not the tail;
+   while the tenant pauses, decode is back at its baseline. One result does not fit a picture of
+   two jobs competing for compute: disjoint SMs cost as much as shared SMs. *Goal: find what the
+   two jobs actually share.*
+4. **What limits decode?** (section 2.6) Alone, a decode step reaches its GPU-memory-bandwidth
+   plateau on 56–80 SMs. It is limited by the path to GPU memory, not by compute. *Goal: see how
+   the bytes divide when a tenant joins.*
+5. **With a tenant next to it** (section 2.7). The two jobs' traffic does not add up: what the
+   tenant moves, decode loses. A tenant on 8 SMs still costs 5–7 %. Cutting its SMs to 1/12 cuts
+   its own throughput to 1/7 and the harm only to 1/4. Separate SMs do not separate the path, and
+   an SM limit is a weak knob. *Goal: check that decode is reacting to bytes, and to what else.*
+6. **Is it the bytes?** (section 2.7) A synthetic second job with a set traffic: decode's
+   slowdown is close to linear in GB/s, 4–7 % per 100 GB/s. The real tenant costs more than its
+   bytes: writes, kernel launches and arithmetic each add a cost, and power is shared too.
+   *Goal: see what existing work does about this.*
+7. **Existing work** (section 6). The literature agrees that splitting SMs does not isolate
+   bandwidth; the mechanisms that do are not available on this card; a byte budget for a GPU job
+   exists only to protect CPU tasks. *Goal: control the tenant's bytes directly.*
+8. **Next, planned** (section 5). C1, a byte budget kept in two ways (pause after each step, or
+   in finer slices); C2, a tenant changed so that the same work uses less of the GPU-memory
+   bandwidth and decode slows down less. The first experiment is E1.1.
+9. **Measured, Nov 16** (section 5.7). At the same tenant work, a byte allowance on 32 SMs halves
+   decode's cost against the latency-feedback scheme and removes its tail (mean token gap +5.6 /
+   +6.3 % against +12.2 / +11.0 %; p90 +6 / +4 % against +28 / +15 %). A compiled tenant moves
+   41 % fewer bytes per token with the same training and brings decode to +4.3 / +4.0 %. Slicing
+   the tenant's work finer shows nothing on the real engine. The shapes with offload cost decode
+   three to four times more per byte than the fast ones and should not run next to decode.
 
 ## 1. What was built
 
@@ -116,6 +169,24 @@ phase under this load.
 
 ### 2.1 What the schemes are
 
+The schemes fall into four classes by how compute is shared. GPU memory follows the load in all
+of them except the static split.
+
+| class | scheme | GPU memory | compute | when the tenant runs |
+|---|---|---|---|---|
+| reference | `adjust_notenant` (baseline) | follows load | no tenant | – |
+| reference | `static_split` | **fixed**: engine KV 6.69 GiB, tenant 6 GiB | MPS co-run on all SMs | always |
+| **A** take turns | `adjust` (idle gate) | follows load | the tenant waits before each block while the engine is busy | only when the engine is idle |
+| **B** together, no limit | `adjust_nogate` (MPS) | follows load | both jobs share all 170 SMs | always |
+| **C** together, fewer SMs | `adjust_mps20` | follows load | SMs shared, the tenant capped at 20 % of them | always |
+| | `green_split` | follows load | engine on 128 SMs, tenant on the other 42 | always |
+| | `green_dyn2` | follows load | the tenant's SM count follows the arrival rate: 96 / 64 / 32 / 16 at 0.5 / 1 / 2 / ≥ 3 req/s | always |
+| **D** together, less time | `tpot_slo15` | follows load | all SMs shared; every 2 s the scheduler compares decode TPOT with the target (baseline +15 %) and sets a tokens/s cap; the tenant pauses after each step to keep it | runs, then pauses |
+| | `tpot_slo5` | follows load | the same with a +5 % target | runs, then pauses |
+
+"Always" means the tenant does not stop by itself. At 3–4 req/s the memory budget is zero and
+the tenant is paused in every scheme. The full list, with the round-1 schemes, follows.
+
 | scheme | engine KV limit | tenant | compute sharing | round |
 |---|---|---|---|---|
 | `adjust_notenant` | VRAM scheduler | none | – (baseline) | 1, 2 |
@@ -199,6 +270,105 @@ Round-1 (600 W) tables for the same schemes are in the git history of this file 
 `../results_600w/`; the only round-1 numbers that differ from round 2 beyond noise are the
 `static_split` ones, because round 1 ran it with the idle gate on (kept as `static_split_gate`).
 
+**The same results with the best three of each column marked.** ①②③ mark the three best values
+of a column; ties share a mark and the baseline does not take part. Lower is better for TPOT,
+queue wait and cost; higher is better for tenant throughput. Where a cell holds several numbers,
+each is ranked on its own. The last column is the decode slowdown divided by the tenant's k tok/s.
+
+| scheme | class | TPOT @0.5 req/s | @1 | @2 | queue @3 / @4 (ms) | tenant k tok/s @0.5 / 1 / 2 | % per 1 k tok/s @0.5 / 1 |
+|---|---|---|---|---|---|---|---|
+| Inference alone (baseline) | – | 12.0 | 12.6 | 16.3 | 214 / 1292 | – | – |
+| Static split | – | 21.8 (+82 %) | 16.7 (+32 %) | 21.8 (+34 %) | 4941 / 13472 | ③ 13.2 / ① 12.2 / ① 12.9 | 6.2 / 2.7 |
+| Idle gate | A | ① 12.1 (+1 %) | ① 12.8 (+1 %) | ① 16.5 (+1 %) | ① 238 / ② 2262 | 0 / 0 / 0 | tenant did not run |
+| MPS | B | 15.4 (+29 %) | 16.3 (+29 %) | 18.9 (+16 %) | 257 / 2302 | ① 14.5 / ② 11.7 / ② 3.0 | 2.0 / 2.5 |
+| MPS 20 % | C | 13.2 (+10 %) | ③ 14.0 (+11 %) | 18.0 (+10 %) | ③ 254 / 2940 | 7.0 / 6.5 / 2.2 | ③ 1.4 / ② 1.7 |
+| Disjoint SMs 128/42 | C | 15.3 (+28 %) | 16.2 (+28 %) | 18.6 (+14 %) | 308 / 3367 | ② 13.7 / ③ 11.6 / ③ 2.9 | 2.0 / ③ 2.5 |
+| Dynamic green contexts | C | 13.7 (+14 %) | 14.5 (+15 %) | 17.8 (+9 %) | ② 250 / ① 2216 | 11.9 / 9.3 / 2.3 | ② 1.2 / ① 1.6 |
+| 15 % latency SLO | D | ② 12.5 (+5 %) | ③ 14.0 (+11 %) | ③ 17.3 (+6 %) | 280 / ③ 2277 | 3.8 / 4.0 / 1.5 | ① 1.1 / 2.8 |
+| 5 % latency SLO | D | ③ 12.8 (+7 %) | ② 13.1 (+3 %) | ② 16.9 (+4 %) | 306 / 2425 | 3.8 / 1.2 / 0.4 | 1.8 / 3.3 |
+
+Two marks need a caution. The idle gate has ① in every decode column because its tenant did not
+run. The static split has ① for tenant throughput because it never gives GPU memory back; it pays
+for that with +32–82 % TPOT and 5–13 s of queueing. And the last column is unstable for the two
+throttled schemes: their slowdown comes in bursts, so the median used here gives 1.1–3.3 % where
+the mean gives 2.3–2.9 %, and the +3 % of the 5 % scheme at 1 req/s is inside the ±4 % noise.
+
+### 2.2.1 The tail: TPOT p90
+
+The tables above use the median. The same request logs give the 90th percentile
+(`../analyze_overlap.py` computes the per-request TPOT the same way as `round2_tables.py`):
+TPOT p90 in ms with the change against the baseline's p90, best three per column marked; the
+last column repeats the change of the median.
+
+| scheme | class | p90 @0.5 req/s | p90 @1 | p90 @2 | median, for comparison @0.5 / 1 |
+|---|---|---|---|---|---|
+| Inference alone (baseline) | – | 13.3 | 14.1 | 18.9 | – |
+| Static split | – | 23.1 (+74 %) | 19.2 (+37 %) | 22.8 (+21 %) | +82 / +32 % |
+| Idle gate | A | ① 13.3 (+0 %) | ① 14.3 (+1 %) | ① 19.1 (+1 %) | +1 / +1 % |
+| MPS | B | 17.0 (+27 %) | 18.4 (+31 %) | 21.3 (+13 %) | +29 / +29 % |
+| MPS 20 % | C | ② 14.7 (+10 %) | ③ 15.8 (+12 %) | ③ 20.3 (+8 %) | +10 / +11 % |
+| Disjoint SMs 128/42 | C | 17.0 (+28 %) | 18.2 (+30 %) | 21.5 (+14 %) | +28 / +28 % |
+| Dynamic green contexts | C | ③ 15.3 (+15 %) | 16.3 (+16 %) | 20.5 (+9 %) | +14 / +15 % |
+| 15 % latency SLO | D | 17.1 (+29 %) | 16.3 (+16 %) | ② 20.2 (+7 %) | +5 / +11 % |
+| 5 % latency SLO | D | 17.0 (+28 %) | ② 14.6 (+4 %) | 20.4 (+8 %) | +7 / +3 % |
+
+- **For the two fewer-SM schemes the tail equals the median**: +10–12 % with MPS 20 %, +15–16 %
+  with dynamic green contexts. Their slowdown is even.
+- **For the two throttled schemes the median looks good at 0.5 req/s and the tail is as slow as
+  with no throttle**: +5 % against +29 % for the 15 % scheme, +7 % against +28 % for the 5 % scheme;
+  un-throttled MPS is at +27 %.
+- **The cause is the feedback loop, not the run-and-pause pattern.** In that phase the scheduler's
+  cap swings between 500 and 20,000 tokens/s; the tenant's longest pause is 8 s and for the rest
+  it runs near full speed. Requests that fall into a full-speed stretch make up the tail.
+- **A fixed cap has no such tail.** The shape probe uses a fixed 4 k tok/s cap, with the tenant
+  running 0.35 s and pausing 0.67 s in a regular pattern: median +5 %, p90 +6 %. A request takes
+  1.5–2 s and so spans more than one cycle.
+
+### 2.2.2 The average, and the moments when the tenant runs
+
+The slowdowns above are averages over a phase. The request log has a timestamp for every decode
+token and the tenant's log says when each of its steps computed and when it slept, so every
+decode token gap can be assigned to "tenant running" or "tenant not running"
+(`../analyze_overlap.py`, tables in `../results/overlap_summary.md`). This is a re-analysis of
+the existing runs.
+
+![average and overlap](figures/overlap_schemes.png)
+
+*Figure 11 — decode slowdown at 0.5 and 1 req/s: the phase average (grey), while the tenant runs
+(orange) and while it does not (green); the small print under each group is the share of time the
+tenant runs. Mean of the token gaps against the same phases of the no-tenant run.*
+
+| scheme | class | tenant runs, share of time | decode, phase average | while the tenant runs | while it does not |
+|---|---|---|---|---|---|
+| MPS | B | 99 / 98 % | +26.0 / +26.6 % | ③ +24.9 / +25.8 % | – |
+| MPS 20 % | C | 99 / 99 % | ① +9.5 / ③ +10.9 % | ① +9.4 / ① +10.5 % | – |
+| Disjoint SMs 128/42 | C | 95 / 98 % | +25.0 / +26.2 % | +25.2 / +25.2 % | – |
+| Dynamic green contexts | C | 98 / 98 % | +13.1 / +14.1 % | ② +12.5 / ② +13.5 % | – |
+| 15 % latency SLO | D | 36 / 33 % | ② +10.4 / ② +9.6 % | +30.0 / +23.0 % | −1.2 / +2.0 % |
+| 5 % latency SLO | D | 40 / 9 % | ③ +11.2 / ① +2.8 % | +28.6 / ③ +17.2 % | −0.7 / +1.2 % |
+
+Each cell: 0.5 req/s / 1 req/s. "–": that state covers under 5 % of the time. The idle gate is
+left out because its tenant did not run. These are means over token gaps; the tables above use
+the median of per-request TPOT, so the numbers differ a little (15 % scheme: +5 % / +11 % there,
++10.4 % / +9.6 % here).
+
+1. **While the tenant does not run, decode is at its baseline** (−1 to +2 %). A pause leaves
+   nothing behind.
+2. **Throttling (class D) does not lower the slowdown at the moments of overlap; it shortens the
+   overlap.** While the tenant runs, decode is 23–30 % slower, as with un-throttled MPS (25–26 %),
+   but the tenant runs only a third of the time. The average is the product: 36 % × 30 % ≈ 10.8 %,
+   measured 10.4 %.
+3. **Fewer SMs (class C) lower the slowdown at every moment, and the tenant runs all the time**:
+   +9–11 % with MPS 20 %, +12–14 % with dynamic green contexts. The disjoint 128/42 split is the
+   exception at +25 %, because the tenant still runs flat out on 42 SMs.
+4. **Per token, less time saves nothing and fewer SMs do.** Decode slowdown per 1 k tenant tok/s
+   at 1 req/s: MPS 2.3 %, 15 % scheme 2.4 %, disjoint SMs 2.3 %; MPS 20 % 1.7 %, dynamic green
+   contexts 1.5 %.
+5. **At 2 req/s the comparison has to change.** The tenant is paused by its memory budget about
+   half of the time, and exactly when the load peaks, so a phase average mixes load and tenant
+   state. Against the no-tenant run at the same number of running requests: +8–15 % while the
+   tenant runs, −2 to 0 % while it does not. The conclusions are the same.
+
 ### 2.3 Green-context schemes
 
 `green_ctx.py`, ctypes on libcuda; round 1 details in DECISIONS D8–D10, round 2 in D18.
@@ -267,7 +437,8 @@ falls for the copy-heavy shapes while their cost rises.*
   these schemes and the SLO-capped runs share one line, +2.2 % TPOT per 1 k tenant tok/s.
 - **The tenant's shape sets how much a token costs** (Figures 4 and 5). Decode slowdown per 1 k
   tenant tok/s: 1.3 % with k = 4 micro-batches, 2.6 % with k = 8, 5.9 % with activation offload and
-  8–9 % with weight streaming. NVML's GPU-memory-controller-busy counter does not separate the two
+  8–9 % with weight streaming. Split by tenant state, the shapes slow decode alike while they run
+  (+16–22 %) and differ in how fast the tenant runs (11.4k down to 2.0k tok/s; section 5.4). NVML's GPU-memory-controller-busy counter does not separate the two
   users — it reads 49–73 % with the engine alone and does not rise with the tenant's throughput
   (Figure 4a) — so it is not a usable feedback signal; the tenant's token rate and shape are.
   Section 2.7 measures the traffic itself.
@@ -280,7 +451,13 @@ falls for the copy-heavy shapes while their cost rises.*
   TPOT, the 15 % scheme stays within +0–14 % in every phase with the tenant at 1.3–5.3k tok/s
   (on the Figure-2 line, as it should: the cap only moves the tenant along the line). The 5 %
   scheme holds +2–7 % but mostly pins the tenant at its 500 tok/s floor: a 5 % target is inside the
-  noise of a 10-s TPOT window (the baseline moves ±4 % between repeats of the same phase).
+  noise of a 10-s TPOT window (the baseline moves ±4 % between repeats of the same phase). These
+  are medians: at 0.5 req/s the p90 of both throttled schemes is +28–29 %, because the loop swings
+  the cap (section 2.2.1).
+- **Less time and fewer SMs act differently** (section 2.2.2). Throttling leaves the slowdown at
+  the moments of overlap where it was (+23–30 %) and shortens the overlap; while the tenant
+  pauses, decode is at its baseline. Fewer SMs lower the slowdown at every moment (+9–14 %) with
+  the tenant running all the time, and are cheaper per token.
 
 ### 2.5 The prefill tenant (round 2, plan P3)
 
@@ -370,10 +547,46 @@ What follows for the schemes:
 Limits: the step is synthetic and runs alone. The co-run version — the same decode step on N SMs
 with the tenant on M SMs — and the tenant's own curve are in section 2.7.
 
-### 2.7 Bandwidth interference: decode next to a tenant (Nov 9, GPU 1)
+### 2.7 What makes a tenant slow decode: the factors (Nov 9, GPU 1)
 
-Section 2.6 measured the decode step alone. This section puts a second job next to it and counts
-bytes. The decode step is the synthetic step of 2.6. The tenant is the fine-tune tenant in its
+**The conclusion first.** The main factor is the bytes the tenant moves between the SMs and GPU
+memory: the two jobs' SMs can be separated, the path to GPU memory cannot. After that come writes
+to GPU memory, kernel launches, arithmetic and power. How many SMs the tenant has is an indirect
+and weak factor.
+
+**Why this part was needed.** If the tenant slowed decode by competing for compute, separating
+the SMs would fix it. Three results of the sections above say otherwise:
+
+- **Separate SMs, same cost.** Engine on 128 SMs and tenant on the other 42: decode +28 %. Both
+  on all SMs: +29 % (section 2.2).
+- **Decode is not short of SMs.** The engine on 128 SMs is as fast as on all 170 (section 2.3).
+- **It is not the host link either.** PCIe is used at about 10 % on average and inference loads
+  that overlap tenant copies are not slower (section 3).
+
+So the two jobs compete for something that is neither SMs nor PCIe. This part asks what it is,
+and whether the one knob at hand, the tenant's SM count, controls it.
+
+![shared path](figures/08_shared_memory_path.png)
+
+*Diagram 6 — the structure the answers point to (source `../diagrams/08_shared_memory_path.drawio`):
+the SMs can be split between the jobs, the path from the SMs to GPU memory cannot. It is inferred
+from byte counting, not observed inside the card.*
+
+**Five questions, each raised by the answer before it.**
+
+| | Question | How it was tested | Answer |
+|---|---|---|---|
+| 1 | What limits decode: SMs or something else? | Decode alone on 8 to 170 SMs (section 2.6) | **Not SMs.** It tops out on 56–80 SMs at about 1.34 TB/s. The limit is the path to GPU memory |
+| 2 | The path is taken by decode; where do the tenant's bytes come from? | The real tenant next to decode, bytes of both counted | **Out of decode's.** The two jobs' sum does not grow |
+| 3 | Does giving the tenant fewer SMs protect decode? | Tenant from 96 down to 8 SMs | **Only weakly.** 1/12 of the SMs: the tenant runs at 1/7, the harm falls to 1/4, and about 5 % stays |
+| 4 | Is decode reacting to bytes? | A second job whose GB/s can be set | **Yes.** The slowdown is close to linear: 4–7 % per 100 GB/s |
+| 5 | Why does the real tenant cost more than its bytes? | The second job doing only reads, only writes, only launches, only arithmetic | **Three more things cost.** Writes, kernel launches and arithmetic; power is shared too |
+
+Together: what decode pays depends mainly on how many bytes the tenant moves. The tenant's SM
+count acts on that only indirectly. This is the starting point of section 5.
+
+**Set-up.** Section 2.6 measured the decode step alone. Here a second job runs next to it and
+the bytes are counted. The decode step is the synthetic step of 2.6. The tenant is the fine-tune tenant in its
 usual shape (cfg 2, k = 4), on a green context of M SMs; decode has the other SMs unless stated.
 Traffic is read from the device-wide GPU-memory-bandwidth counter (NVML GPM), calibrated against
 the decode step's known read rate: 1 % = 17.79 GB/s over 54 decode-alone points, median error
@@ -381,7 +594,7 @@ the decode step's known read rate: 1 % = 17.79 GB/s over 54 decode-alone points,
 The full account, with the test set-up and every table, is in
 [REPORT_bandwidth.md](REPORT_bandwidth.md); the list of results is in [`../TODO.md`](../TODO.md).
 
-**The tenant alone.**
+**Question 3, first half: the tenant alone.**
 
 ![tenant alone](figures/bw_tenant_alone.png)
 
@@ -403,7 +616,7 @@ The tenant moves 13.4–14.3 MB per token at every SM count, so its traffic foll
 Its traffic is not proportional to its SMs: from 170 to 8 SMs (1/21) it falls from 414 to 50 GB/s
 (1/8), and traffic per SM rises from 2.4 to 6.3 GB/s.
 
-**Decode next to the tenant.**
+**Questions 2 and 3: decode next to the tenant.**
 
 ![decode alone and with the tenant](figures/bw_tenant.png)
 
@@ -431,7 +644,7 @@ case, so the difference is not caused by decode having fewer SMs.*
 - On shared SMs (decode on all 170, the tenant on M of them) the tenant reaches only 34–73 % of
   its solo rate, against 68–88 % on disjoint SMs.
 
-**Where the bandwidth ceiling is.**
+**Question 2, continued: where the bandwidth ceiling is.**
 
 | What runs | GPU-memory traffic | Share of the nominal 1.78 TB/s |
 |---|---|---|
@@ -447,7 +660,7 @@ decode from 1,207 to 1,156 GB/s, the sum stays at 1,206 GB/s (68 % of nominal) a
 slower. The measurements show that the path as a whole is shared. They do not show which part of
 it does the limiting.
 
-**A second job with set traffic.** The tenant is replaced by a synthetic job on its own SMs that
+**Questions 4 and 5: a second job with set traffic.** The tenant is replaced by a synthetic job on its own SMs that
 moves a set number of GB/s (`../bw_aggr.py`, `../aggr_corun.py`).
 
 ![slowdown against traffic](figures/bw_slowdown.png)
@@ -480,6 +693,12 @@ rerun, step times within 0.5 %).*
 - **Power is a second shared resource.** Arithmetic at full speed on 96 SMs drives the board to
   the 500 W cap and the clock drops 8–9 %. At the read, write and copy points the clock is
   unchanged, so the byte results are not a power effect.
+
+![where to limit](figures/10_where_to_limit.png)
+
+*Diagram 7 — the places where the tenant can be limited (source `../diagrams/10_where_to_limit.drawio`).
+Fewer SMs (1) is the knob in use and is weak; a byte budget (2) is the plan of section 5; timing
+(3) has almost no room, because decode leaves no gaps (section 5.5).*
 
 Limits: decode is the synthetic step, most points were run once (4-s windows), and the decode
 baseline sits on one of two levels about 1 % apart, which puts about ±1 point on every slowdown.
@@ -518,7 +737,7 @@ memory system, not with each other for the link.
 
 ## 4. What this shows
 
-Figure-centred summary (diagrams 1–5, Figures 0–10, `../results/<scheme>_timeline.png`,
+Figure-centred summary (diagrams 1–7, Figures 0–12, `../results/<scheme>_timeline.png`,
 `../results/<scheme>_xfer.png`):
 
 1. **The memory half of the problem is solved, with honest accounting** (diagrams 1–3). A router in
@@ -560,81 +779,133 @@ Figure-centred summary (diagrams 1–5, Figures 0–10, `../results/<scheme>_tim
    second job costs decode 4–7 % per 100 GB/s, close to linearly. Cutting the tenant from 96 to
    8 SMs cuts its own throughput to about 1/7 and the harm to decode only to about 1/4, with a
    floor near 5 %. Writes, kernel launches and arithmetic each add a cost of their own.
+7. **Throttling and fewer SMs are different tools** (sections 2.2.1, 2.2.2, Figure 11). While the
+   tenant pauses, decode is at its baseline, and while it runs under a tokens/s cap decode is as
+   slow as with no cap: a cap shortens the overlap, it does not soften it. Fewer SMs soften it
+   and cost less per tenant token (1.5–1.7 % per 1 k tok/s against 2.3–2.4 %). The feedback loop
+   of the SLO schemes holds the median but swings the cap, so at 0.5 req/s their p90 is +28–29 %
+   where a fixed cap gives p90 = median.
 
-## 5. Next steps: limit the tenant's bytes directly
+## 5. Next steps: limit the tenant's bytes, and make the tenant use fewer
 
-Nothing in this section is built or measured. It says what will be built, what the prototype
-already has, and which experiment decides each step. The numbers quoted are the measurements of
-section 2.
+Sections 5.1 to 5.6 are the design as it stood before the night of Nov 16: what would be built,
+what the prototype already had, and which experiment decides each step; the numbers they quote
+are the measurements of section 2. **Section 5.7 has what that night measured**, including the
+points where it corrects 5.1 to 5.6.
 
-Section 2.7 leaves three measurements: decode's cost follows the bytes the tenant moves; an SM
-limit acts on those bytes only indirectly and has a floor near 5 %; and while requests are running
-decode leaves no gaps (section 2.4). The steps therefore limit the bytes directly (C1), spread
-them evenly in time (C4) and make the same training move fewer bytes (C3). Using idle time (C2)
-has almost no room on a decode node and is kept as one rule of C1.
+### 5.1 What the steps rest on
+
+Two sets of measurements meet. **Section 2.7 says what to control**: the bytes the tenant moves,
+not its SMs. **Section 2.2.2 says how**: letting the tenant run and pause is a usable handle,
+because decode is at its baseline while the tenant pauses. C1 joins the two: it limits the tenant
+from outside. C2 takes the first finding to the tenant itself: if decode pays for the tenant's
+bytes, change the tenant so that the same work moves fewer.
+
+![from measurements to ideas](figures/15_measurements_to_ideas.png)
+
+*Diagram 8 — from the measurements to the ideas (source `../diagrams/15_measurements_to_ideas.svg`,
+drawn by `../diagrams/make_svg.py`). The two boxes on the left are measured; the yellow boxes are
+the designs that follow and are not built.*
+
+| Measured | Where | So | Lands in |
+|---|---|---|---|
+| Decode's slowdown follows the second job's bytes: 4–7 % per 100 GB/s; the two jobs' sum does not grow | 2.7, questions 2 and 4 | The quantity to control is bytes, not SMs | **C1**: the allowance is in GB/s |
+| An SM limit is indirect and weak, with a floor near 5 %. 8 SMs is the dearest point per token, 16–64 SMs the cheapest | 2.7, question 3; 2.2.2 | Do not squeeze the tenant onto few SMs; give it a few dozen | **C1**: enough SMs |
+| While the tenant pauses decode is at its baseline (−1 to +2 %); while it runs the cost is that of continuous co-running | 2.2.2 | Run-and-pause acts linearly in time and can keep an allowance | **C1**: kept by pausing |
+| With a fixed cap p90 equals the median; when the feedback loop swings the cap, p90 is as with no throttle | 2.2.1 | The allowance must change slowly | **C1**: a steady allowance |
+| At the same tok/s, tenant shapes differ 7-fold in cost; while running they slow decode alike and differ in speed | 2.4, 5.4 | Tokens/s is the wrong unit; how the tenant computes changes what a token costs decode | The unit of **C1**; **C2** |
+| Counted on the CPU, not measured on the GPU: 88 % of the bytes of a tenant step are intermediate results; a shorter backward pass has 36–44 % fewer bytes per token | 5.4 | The tenant's traffic for the same work can be lowered | **C2** |
+| One full-speed burst of the tenant spans about thirty decode steps; a regular run-and-pause averages out over a request | 2.2.1 | Slicing improves only the jitter between tokens | **C1**, second method, later |
+| There are no gaps between decode steps (GPU busy 93–100 %); under the idle gate the tenant trained nothing | 2.2, 2.4 | There is no period for the tenant to hide in | Timing is not pursued |
+| In the literature a byte budget is used only to protect CPU tasks | 6 | A byte budget with decode as the victim has no precedent found | **C1** is new |
 
 ![where the steps attach](figures/11_next_steps_attach.png)
 
-*Diagram 6 — where each step attaches to the prototype (source
+*Diagram 9 — where each step attaches to the prototype (source
 `../diagrams/11_next_steps_attach.svg`). Plain text is what the code already has; yellow tags mark
 what is to be built. All steps change only the tenant's own loop and two fields in shared files:
 no driver change, no interception of CUDA calls, no change to the inference engine.*
 
 | | In one line | Already in the code | To build | Decided by |
 |---|---|---|---|---|
-| **C1** byte budget | Give the tenant a GB/s allowance; it pauses when over | A tok/s cap with a pause after each step; the TPOT feedback loop (`tpot_slo15`) | A GB/s field in the budget file; bytes per token for each shape; the conversion | E1.1: at equal traffic, pauses against an SM limit |
-| **C4** finer steps | Move the pause from the end of a step to block boundaries | A hook before each block's forward and backward pass; CUDA event sync | A byte bucket inside the hooks | The cost of one sync per boundary |
-| **C3** cheaper shape | Pick the shape that moves the fewest bytes per token and still trains | Shape chosen by GPU-memory budget; the cost per token of 5 shapes (Figure 5) | Bytes per token for each shape; a bandwidth constraint in the choice | Whether the 7-fold cost range follows bytes per token |
-| **C2** timing | Lift the allowance while no request is running | The engine's busy flag, read by the tenant at block boundaries | One rule inside C1 | Measured: little room (below) |
+| **C1** byte budget, first method | Give the tenant a GB/s allowance; it pauses when over | A tok/s cap with a pause after each step; the TPOT feedback loop (`tpot_slo15`) | A GB/s field in the budget file; bytes per token for each shape; the conversion | E1.1: at equal traffic, pauses against an SM limit |
+| **C1** byte budget, second method | Move the pause from the end of a step to block boundaries | A hook before each block's forward and backward pass; CUDA event sync | A byte bucket inside the hooks | The cost of one sync per boundary |
+| **C2** a tenant that uses less bandwidth | Change the tenant so that the same work moves fewer bytes, and decode slows down less | Five shapes chosen by GPU-memory budget; fused attention; an operator count on the CPU | Bytes per token of each shape and variant from the GPU counter; switches in the tenant for merged operators, a chunked output layer and LoRA on the top layers | Whether decode's slowdown at equal tenant work falls with the tenant's bytes per token (not tested yet) |
 
-### 5.1 C1: a byte budget
+### 5.2 C1: a byte budget (first method: pause after each step)
 
 The tenant gets an allowance: at most so many bytes per second on average. It works at full
-speed, stops when the allowance is used, and continues when it is refilled.
+speed, stops when the allowance is used, and continues when it is refilled. There are two ways to
+keep the same allowance: pause after each step (this section; half of it exists in the code), or
+pause at block boundaries so that the work comes in much shorter slices (section 5.3).
 
-Today the tenant is held back by giving it fewer SMs, so that it works slowly all the time. By
-section 2.7 this costs decode 2.2–2.7 % per 1 k tenant tok/s on 8 disjoint SMs, against 1.3–1.5 %
-on 64–96. C1 holds the tenant back the other way: enough SMs, less time.
+Today the tenant is held back by giving it fewer SMs, so that it works slowly all the time.
+Section 2.7 gives the cost of that per unit of training:
 
-![three ways](figures/12_three_ways.png)
+| Tenant on (disjoint SMs) | Decode slowdown per 1 k tenant tok/s | SMs left for decode | Decode slower from the SM loss alone |
+|---|---|---|---|
+| 8 | 2.2–2.7 % | 162 | about 0 |
+| 16 | 1.4–1.9 % | 154 | about 0 |
+| 32 | 1.2–1.7 % | 138 | about 0 |
+| 64 | 1.3–1.5 % | 106 | +2–7 % |
+| 96 | 1.3–1.5 % | 74 | +2–14 % |
 
-*Diagram 7 — three ways to hold the tenant to the same amount of work, about 2.6k tok/s (source
-`../diagrams/12_three_ways.svg`). Bar height is the tenant's GPU-memory traffic at that moment,
-area is bytes moved; 3.2 s, to scale. Row 1 is measured; rows 2 and 3 are planned. Scale: on 96
-disjoint SMs the tenant runs at 18.5–19.2k tok/s and one step is 4,096 tokens, about 216 ms; on
-8 SMs it runs at 2.4–2.9k tok/s.*
+8 SMs is the dearest point per token, 1.5–2 times the others; from 16 SMs up the cost per token
+is flat; and from 64 SMs up decode itself runs short of SMs. C1 therefore holds the tenant back
+the other way: 16–32 SMs, and less time. A comparison that needs no extrapolation: on 8 SMs the
+tenant runs at 2.4–2.9k tok/s for +5.4–7.5 % decode; on 16 SMs at 4.5–5.3k tok/s for +6.4–9.9 %,
+1.9 times the training for 1–2.4 points more.
+
+![C1, first method](figures/12_c1_budget.png)
+
+*Diagram 10 — C1, first method (source `../diagrams/12_c1_budget.svg`). Both rows do the same
+amount of work, about 2.6k tok/s; bar height is the tenant's GPU-memory traffic at that moment,
+area is bytes moved; 3.2 s, to scale. The dashed line is the allowance: the average, as high as
+the bar of the first row. Scale: on 32 disjoint SMs the tenant runs at 8.0–9.4k tok/s and one
+step of 4,096 tokens takes about 0.47 s; on 8 SMs it runs at 2.4–2.9k tok/s.*
 
 1. The VRAM scheduler writes one more field into the budget file: how many GB/s the tenant may
    use now. The starting value comes from the measured price (the decode slowdown allowed, divided
-   by the cost per 100 GB/s); TPOT feedback then corrects it. The feedback loop exists: it is
-   `tpot_slo15`, which held +0–14 % in every phase.
+   by the cost per 100 GB/s); TPOT feedback then corrects it, slowly (section 2.2.1).
 2. The tenant converts GB/s into tok/s by dividing by the bytes per token of its current shape.
    One shape is measured so far (13.4–14.3 MB). The others are measured once each at start-up,
    when the tenant has the GPU to itself and the bandwidth counter reads its traffic alone.
-3. The tenant runs on a larger set of SMs (96, for example) and pauses after each step so that
-   its average traffic stays inside the allowance. The pause exists; today it is computed from
-   tok/s.
+3. The tenant runs on 16–32 SMs and pauses after each step so that its average traffic stays
+   inside the allowance. The pause exists; today it is computed from tok/s.
+4. While no request is running (the engine's busy flag is clear) the allowance is lifted; it is
+   restored when the first request arrives.
 
 The allowance is in bytes and not in tok/s because, at the same 1 k tok/s, different tenant shapes
 cost decode up to 7 times more (Figure 5): a tok/s cap has to be retuned whenever the tenant
 changes shape, a byte allowance does not.
 
-**The deciding experiment (E1.1).** Bring the tenant to the same tok/s in two ways: with an SM
-limit, and on all SMs with pauses. Three traffic levels × decode batch sizes 1, 4 and 8; compare
-the mean and p99 of decode step time. About 15 minutes of GPU time. If the two curves coincide, a
-byte budget does not beat an SM limit on cost, and what remains is that it has no floor and can be
-adjusted continuously.
+What section 2.2.2 already supports: decode is at its baseline while the tenant pauses, and
+while it runs the cost is that of continuous co-running (both with all SMs shared). Not measured:
+the two together, a tenant on 32 SMs that runs and pauses.
 
-### 5.2 C4: finer steps
+**The deciding experiment (E1.1).** Bring the tenant to the same tok/s in two ways: by giving it
+only 8 SMs, and by giving it 32 SMs with pauses. Three traffic levels × decode batch sizes 1, 4
+and 8; compare the mean and p90 of decode step time. About 15 minutes of GPU time. If the two
+curves coincide, a byte budget does not beat an SM limit on cost, and what remains is that it has
+no floor and can be adjusted continuously.
 
-With the pause after a step, the tenant alternates between about 216 ms at full speed and a longer
-pause, and one such burst spans more than ten decode steps (12–18 ms each). C4 cuts the same work
-into slices shorter than one decode step (row 3 of Diagram 7).
+### 5.3 C1, second method: pauses at block boundaries
+
+With the pause after a step, the tenant alternates between about 0.47 s at full speed and a longer
+pause, and one such burst spans about thirty decode steps (12–18 ms each). The second method
+keeps the same allowance and cuts the same work into slices shorter than one decode step.
+
+![C1, second method](figures/16_c1_finer.png)
+
+*Diagram 11 — the two methods at the scale of single decode steps (source
+`../diagrams/16_c1_finer.svg`). Each small cell is one decode step of about 15 ms; 1.6 s shown.
+Both rows do the same work. The first row is drawn from measured numbers; the second is the
+design.*
 
 1. Each block of the tenant model already has a hook before its forward pass and one before its
    backward pass; today they check the GPU-memory budget and the idle gate. The model has 24
    blocks, so one step with 4 micro-batches has 4 × 48 = 192 points where it can stop, one every
-   1.1 ms on average on 96 SMs.
+   2.4 ms on average on 32 SMs.
 2. A byte bucket goes into the hook. At each boundary it is charged an equal part of the step's
    bytes. When the bucket is empty, the tenant first waits for the GPU to finish the kernels
    already submitted (a CUDA event sync, which exists) and then sleeps until the bucket is
@@ -642,34 +913,101 @@ into slices shorter than one decode step (row 3 of Diagram 7).
 3. The refill rate is the GB/s allowance of C1. The bucket size sets the length of a slice; the
    target is shorter than one decode step.
 
-Not covered: the optimizer update and the loss computation are outside the blocks; a block cannot
-be split further; charging every boundary equally is an assumption, since the split of bytes
-between forward and backward passes is not measured yet. To measure first: the cost of one sync
-per boundary, 192 per step. The idle-gate scheme used this code path, but the tenant trained
-nothing in that run, so it left no overhead data.
+Why it comes later: it does not change the average, only how evenly the slowdown is spread, and
+over a request a regular run-and-pause already averages out (fixed cap: median +5 %, p90 +6 %,
+section 2.2.1). What it would improve is the jitter between tokens. Not covered: the optimizer
+update and the loss computation are outside the blocks; a block cannot be split further; charging
+every boundary equally is an assumption, since the split of bytes between forward and backward
+passes is not measured yet. To measure first: the cost of one sync per boundary, 192 per step.
 
-### 5.3 C3: fewer bytes per tenant token
+### 5.4 C2: a tenant that uses less of the GPU-memory bandwidth
 
-The starting point is the shape probe (Figure 5): at the same 4k tok/s cap the decode cost per
-1 k tenant tok/s runs from 1.3 % to 9.2 % across five shapes.
+C1 limits the tenant from outside and leaves it as it is. C2 changes the tenant: the same
+training work should put less traffic on the path between GPU memory and the SMs, so that decode
+slows down less. Its measure is **decode's slowdown at equal tenant work**. Nothing of C2 is
+measured next to decode yet; this section says what is known about the tenant's bytes and which
+means there are.
 
-1. Run each shape alone and measure its bytes per token with the bandwidth counter. Only cfg 2
-   (k = 4) is measured so far. About 10 minutes of GPU time.
-2. Check whether the decode cost per token is proportional to bytes per token.
-3. If it is: the tenant's choice of shape, which today looks only at GPU memory, gets one more
-   constraint. Among the shapes that fit both the memory budget and the byte allowance it picks
-   the one with the highest tok/s.
-4. If it is not: the choice uses the measured decode cost per token of each shape instead of
-   bytes.
+**Where the tenant's bytes go.** One micro-batch of the tenant (2 × 512 tokens) was taken apart
+operator by operator **on the CPU, with no GPU used** (`../tenant_inventory.py`,
+`../results/tenant_inventory.md`): every primitive operator of the forward and backward pass,
+with the bytes it reads and writes at 2 bytes per element. This is a count, not a GPU
+measurement: it assumes each operator is its own kernel that reads its inputs from GPU memory and
+writes its output there.
 
-### 5.4 C2: timing has little room on a decode node
+| Variant | Operator calls that move data | MB per token | of which forward / backward | Weights' share |
+|---|---|---|---|---|
+| The tenant as it is (LoRA on all 24 layers) | 3,302 | 17.0 | 6.7 / 10.2 | 12 % |
+| Forward pass only | 1,318 | 6.7 | 6.7 / 0 | 17 % |
+| LoRA on the top 8 layers | 1,710 | 10.9 | 6.2 / 4.7 | 15 % |
+| LoRA on the top 4 layers | 1,318 | 9.4 | 6.1 / 3.3 | 16 % |
+| 8 sequences per pass (1 micro-batch) | 3,302 | 15.4 | 5.8 / 9.5 | 3 % |
+| 1 sequence per pass (8 micro-batches) | 3,301 | 19.1 | 7.9 / 11.2 | 22 % |
+| Attention not fused (`eager`) | 3,720 | 23.3 | 9.8 / 13.5 | 9 % |
+
+- The count gives 17.0 MB per token for the tenant's usual shape; the GPU counter measured
+  13.4–14.3 MB (section 2.7). The count is an upper estimate of the same order.
+- **Weights are 12 % of the bytes; 88 % are intermediate results** written to memory by one
+  operator and read back by the next. Element-wise multiplications and additions alone are 37 %.
+- **The output layer is about a fifth**: the logits over the 151,936-token vocabulary are 297 MB
+  for one micro-batch and are written or read about ten times between the last projection, the
+  loss and their backward passes.
+- **More tokens per pass over the weights changes little**: 15.4 to 19.1 MB per token from 1 to 8
+  micro-batches. Only the weights' part moves.
+- **A shorter backward pass changes a lot**: LoRA on the top 4–8 layers gives 9.4–10.9 MB per
+  token, 36–44 % less, with half the operator calls.
+- The tenant already uses the fused attention; without it the count would be 37 % higher.
+
+**The means**, from the least to the most invasive. None is measured next to decode.
+
+| | Means | Does the training change? | What is known |
+|---|---|---|---|
+| 1 | Choose among the shapes the tenant already has | No | Measured next to decode, one 60-s window per shape (below). Bytes per token known for one shape only |
+| 2 | Settings: micro-batch size, attention implementation | No | By count: micro-batch size moves the bytes per token by about ±10 %; the fused attention is already in use |
+| 3 | Merge operators so that intermediate results stay inside the SMs and are not written to GPU memory: the element-wise chains (by a compiler or by hand-written kernels), the output layer and loss | No | By count these are 37 % and about a fifth of the bytes. LoRAFusion reports 34–37 % less GPU-memory traffic from merged LoRA kernels, for the job's own speed (section 6) |
+| 4 | Train fewer layers: LoRA on the top layers only | Yes; whether the result is as good is a separate question | By count 36–44 % fewer bytes per token |
+
+**Means 1, the shapes, is the only one with measurements.** A shape is how the tenant computes
+one step, with the training itself unchanged: into how many micro-batches the 8 sequences are
+split (1, 2, 4 or 8), whether intermediate results are moved to host RAM, and whether the weights
+of 12 or 20 layers are kept in host RAM and read in layer by layer. The shapes were built to save
+GPU memory, and the tenant steps down through them when decode needs memory back.
+
+![tenant shapes](figures/17_shapes.png)
+
+*Diagram 12 — the five shapes of the shape probe (source `../diagrams/17_shapes.svg`): the GPU
+memory each needs (`../tiers.json`), the tenant's speed while it runs and decode's slowdown while
+it runs (`../results/overlap_summary.md`; one 60-s window per shape).*
+
+While the tenant runs, decode is 16–22 % slower with every shape. The shapes differ in the
+tenant's own speed, 11.4k down to 2.0k tok/s: a shape that saves memory is slower and has to run
+longer for the same tokens. To deliver the same 4 k tok/s the first shape runs 31 % of the time,
+the second 61 %, the last three all the time. The slowdown divided by the speed is the cost per
+1 k tok/s: about 2 %, 2.5 %, 6 %, 10 % and 10 %. So among the shapes that fit GPU memory the
+fastest costs decode least for the same work.
+
+**What is not known, and decides C2:**
+
+- **The decode side.** That decode's slowdown follows the tenant's tokens/s is measured within
+  one shape (section 2.7). Whether it falls when the same tokens/s move fewer bytes has not been
+  tested with any variant.
+- **The slow shapes.** They slow decode as much while they run as the fast ones, at a fifth to a
+  quarter of the tokens per second. Their bytes per token are not measured. Either they move
+  several times more bytes for a token, or decode is paying for something other than bytes there.
+- **A tenant left to run flat out.** A variant with fewer bytes per token may simply run faster
+  and fill the same bandwidth. C2 is therefore compared at equal tenant work, and it needs C1 or
+  an SM limit next to it to hold the work fixed.
+- **The floor.** A second job that moves no bytes still slows decode from 8 SMs, by 1.4–2.6 %
+  with one request and 3.8–6.9 % with eight (section 2.7). No change to the tenant's bytes goes below that.
+
+### 5.5 Not pursued: timing on a decode node
 
 The idea was to let the tenant work when decode does not need the path. On a decode node there
 are only two such moments: the gaps between decode steps, and the time with no request at all.
 
 ![timing on a decode node](figures/13_decode_node_timing.png)
 
-*Diagram 8 — what timing can use on a decode node (schematic, not to scale; source
+*Diagram 13 — what timing can use on a decode node (schematic, not to scale; source
 `../diagrams/13_decode_node_timing.svg`). The engine fetches the prefix KV and prefills only the
 128 new tokens of each request (about 160 ms together); the rest is decode.*
 
@@ -680,35 +1018,188 @@ are only two such moments: the gaps between decode steps, and the time with no r
   nominal bandwidth with 1, 4 and 8 requests (section 2.7).
 - **What is left is the time with no request at all**: at most about 7 % at 0.5 req/s and above.
 
-C2 is therefore not a step of its own. It is kept as one rule of C1: the tenant reads the existing
-busy flag and lifts its allowance while no request is running.
+Timing is therefore not a step of its own. What is left of it is rule 4 of C1.
 
-### 5.5 Order of work, and the other open items
+### 5.6 Order of work
 
 | Order | What | What it answers | GPU time (estimate) |
 |---|---|---|---|
 | 1 | E1.1: equal traffic, two knobs | Whether C1 is worth building | about 15 min |
-| 2 | C1, smallest version: GB/s in the budget file, conversion in the tenant | Comparison with `tpot_slo15` and `green_dyn2` on the full 11-minute schedule | about 12 min per scheme |
-| 3 | C4: byte bucket in the block hooks | Decode p99; the overhead of the syncs | about 12 min per scheme |
-| 4 | C3, first step: bytes per token of each shape | Whether the 7-fold range follows bytes | about 10 min |
+| 2 | C1, first method: GB/s in the budget file, conversion in the tenant, a slowly changing allowance | Comparison with `tpot_slo15` and `green_dyn2` on the full 11-minute schedule, median and p90 | about 12 min per scheme |
+| 3 | C2, tenant side: the table of section 5.4 from the GPU counter, for every shape and variant | Where the tenant's bytes go; how far each means lowers them; C1's conversion | about 25 min |
+| 4 | C2, decode side: variants with fewer bytes per token next to decode, at equal tenant tokens/s; then on the 11-minute schedule | Whether decode's slowdown falls with the tenant's bytes per token | about 35 min, then about 12 min per scheme |
+| 5 | C1, second method: byte bucket in the block hooks | Jitter between tokens; the overhead of the syncs | about 12 min per scheme |
+
+The runs, with a prediction written down before each, are in
+[`../PLAN_overnight3.md`](../PLAN_overnight3.md).
 
 Also open, from the earlier sections: drive the dynamic SM share from the measured TPOT error
-instead of the arrival rate (the green-context table is open-loop; the SLO loop is closed but
-moves only the token rate), with a target above the measurement noise (≥ 10 %) or a longer window;
-for the prefill tenant, credit the memory released during sleep to the KV pool by reading the
-adapter's live footprint, and wake only when the budget exceeds the weights (section 2.5); keep
-the engine at ≥ 80 SMs whenever the partitions are disjoint (section 2.6).
+instead of the arrival rate (the green-context table is open-loop); for the prefill tenant,
+credit the memory released during sleep to the KV pool by reading the adapter's live footprint,
+and wake only when the budget exceeds the weights (section 2.5); keep the engine at ≥ 80 SMs
+whenever the partitions are disjoint (section 2.6); and express the results in the proposal's
+metric, the load served within the SLO.
+
+### 5.7 Measured on Nov 16: C1 and C2
+
+One night on both cards, with a prediction written down before each run
+([`../PLAN_overnight3.md`](../PLAN_overnight3.md)); every prediction and outcome is in
+[DECISIONS.md](DECISIONS.md), D20–D28. The tenant got a GB/s allowance (the budget file's new
+field, turned into tokens/s with the bytes per token of its shape), a second way to keep it
+(slices at block boundaries), and switches for variants that move fewer bytes per token. The
+synthetic runs use the decode step of section 2.6 on GPU 1; the real-engine runs use the
+11-minute schedule on GPU 0, against a baseline of the same night (TPOT median 12.0 / 12.7 /
+16.4 ms at 0.5 / 1 / 2 req/s; the Nov 9 baseline was 12.0 / 12.6 / 16.3). Two controls were run
+again and reproduce their Nov 9 results within 2 points.
+
+![C1 and C2 measured](figures/o3_c1_c2.png)
+
+*Figure 12 — the night of Nov 16 (`../plot_o3.py`). (a) and (b): the synthetic decode step, both
+passes averaged (they differ by at most 0.2 points). (c) and (d): the real engine against the
+baseline of the same night.*
+
+**C2, the tenant side: how many bytes a token costs** (tenant alone on 32 SMs, about 43 s each;
+the counter was calibrated again: 1 % = 17.79 GB/s).
+
+| Tenant | MB per token | vs usual | tokens/s | Does the training change? |
+|---|---|---|---|---|
+| Usual shape, 4 micro-batches | 13.47 | – | 11,628 | – |
+| 1 / 2 / 8 micro-batches | 15.58 / 13.48 / 14.88 | +16 / 0 / +10 % | 14,543 / 13,416 / 9,579 | No |
+| Slow shapes: activations, + 12, + 20 layers in host RAM | 15.19 / 16.57 / 17.61 | +13 / +23 / +31 % | 3,246 / 2,566 / 2,364 | No |
+| Attention not fused (`eager`) | 20.66 | +53 % | 10,096 | No |
+| **`torch.compile`** | **7.95** | **−41 %** | 14,457 | No |
+| Output layer and loss in chunks of 16 positions | 42.23 | +214 % | 7,706 | No |
+| LoRA on the top 8 / top 4 layers | 10.10 / 9.24 | −25 / −31 % | 17,743 / 20,198 | Yes |
+| Forward only (reference) | 3.73 | −72 % | 25,010 | Nothing is trained |
+
+- Merging operators with the compiler removes 41 % of the tenant's traffic and makes it 24 %
+  faster, with the same training.
+- Chunking the output layer was a design error: each chunk reads the 272-MB output matrix again.
+- The operator count of section 5.4 overstated the saving of the top-layer variants by about 12
+  points and had the direction wrong for one micro-batch.
+- The slow shapes move only 42–49 GB/s while they run (the fast ones 143–181 GB/s).
+
+**C2, the decode side: at equal tenant work, fewer bytes cost decode less** (Figure 12b; tenant on
+32 SMs, synthetic decode step on the other 138).
+
+| Tenant, all at the usual tenant's tokens/s | 1 request | 4 | 8 | per 1 k tok/s |
+|---|---|---|---|---|
+| Usual | +8.1 % | +13.9 % | +13.7 % | 1.02 / 1.51 / 1.46 % |
+| `torch.compile` | +5.3 % | +9.7 % | +9.2 % | 0.66 / 1.06 / 0.99 % |
+| LoRA on the top 4 layers | +5.2 % | +9.7 % | +9.4 % | 0.65 / 1.06 / 1.00 % |
+
+Decode's slowdown falls by 30–36 %. Against the tenant's GB/s all settings lie on one line
+(7.0–8.5 % per 100 GB/s at one request). Left to run flat out, the variants run faster instead:
+the compiled tenant then does a third more work for a slightly lower cost (+7.2 %), the
+top-4-layers tenant does 80 % more and costs more (+9.6 %). C2 therefore needs C1 next to it.
+
+**C1 on the synthetic step: the same tenant work, limited in different ways** (Figure 12a).
+
+| Tenant doing 2.4 / 2.8 / 2.9 k tok/s | Mean, 1 / 4 / 8 requests | p90 of single steps |
+|---|---|---|
+| 8 SMs all the time | +3.9 / +6.9 / +5.9 % | +5.4 / +7.9 / +8.2 % |
+| 32 SMs, pause after each step | +2.5 / +5.7 / +5.5 % | +5.8 / +11.8 / +11.0 % |
+| 32 SMs, slices of 8 blocks | +2.6 / +5.9 / +5.6 % | +5.5 / +10.3 / +9.1 % |
+| 32 SMs, slices of 1 block (about 2.4 ms) | +2.6 / +5.8 / +5.5 % | +2.2 / +5.5 / +5.2 % |
+| All SMs, pause after each step | +4.6 / +7.0 / +6.5 % | +12.7 / +20.0 / +19.0 % |
+
+- A few dozen SMs with pauses is cheaper than 8 SMs all the time, but by 0.4–1.4 points, not the
+  2–3 predicted: while the tenant pauses, decode is still +2.7–3.0 % at 4 and 8 requests (+0.7 %
+  at one). It is not the power limit and not a recovery after the burst; the cause is open.
+- All SMs with pauses, which is what `tpot_slo15` does, is no better than 8 SMs and has the
+  worst tail.
+- Slices of one block bring the p90 of single decode steps down to the mean, at 5 % of the
+  tenant's speed while running. The syncs themselves cost the tenant under 1 %.
+
+**C1 and C2 on the real engine** (Figure 12c, d; 0.5 / 1 req/s; the mean token gap and the
+per-request TPOT are against the baseline of the same night).
+
+| Scheme | Tenant tok/s | Mean token gap | per 1 k tok/s | TPOT median | TPOT p90 |
+|---|---|---|---|---|---|
+| `tpot_slo15`: fast loop, all SMs (control) | 3,769 / 3,953 | +12.2 / +11.0 % | 3.2 / 2.8 % | +7 / +10 % | +28 / +15 % |
+| `green_dyn2`: 16–96 SMs by load (control) | 11,468 / 9,154 | +13.4 / +13.8 % | 1.2 / 1.5 % | +14 / +15 % | +16 / +13 % |
+| C1: 32 SMs, fixed 50 GB/s, pause after a step | 3,524 / 3,670 | +5.6 / +6.3 % | 1.6 / 1.7 % | +6 / +6 % | +6 / +4 % |
+| C1: the same in 1-block slices | 3,195 / 3,348 | +5.7 / +5.9 % | 1.8 / 1.8 % | +6 / +6 % | +6 / +4 % |
+| C1: slow loop, target +15 % | 3,686 / 4,167 | +5.5 / +6.2 % | 1.5 / 1.5 % | +6 / +7 % | +7 / +5 % |
+| C1: slow loop, target +5 % | 2,622 / 1,442 | +3.5 / +2.6 % | 1.3 / 1.8 % | +3 / +4 % | +4 / +0 % |
+| C1 + C2: fixed 50 GB/s' worth of tokens, compiled tenant | 3,524 / 3,688 | +4.3 / +4.0 % | 1.2 / 1.1 % | +5 / +4 % | +4 / +2 % |
+| C1 + C2: the same, LoRA on the top 4 layers | 3,524 / 3,670 | +5.6 / +4.8 % | 1.6 / 1.3 % | +5 / +5 % | +8 / +3 % |
+
+- **C1, first method, works as predicted.** At the tenant work of `tpot_slo15`, a fixed byte
+  allowance on 32 SMs halves decode's cost (+5.6 / +6.3 % against +12.2 / +11.0 %) and brings the
+  p90 back to the median (+6 / +4 % against +28 / +15 %).
+- **A slowly moving allowance holds its target** where the fast loop did not: with a +5 % target,
+  median +3 / +4 % at both rates (the fast loop: +11 % at 0.5 req/s). It is more careful than
+  asked: with the +15 % target decode is +5.5 / +6.2 % and the tenant does no more work than under
+  `tpot_slo15`; with +5 % the allowance sits at its floor at 1 req/s.
+- **C1, second method, shows nothing on the real engine.** Per-request TPOT is identical, the p90
+  of token gaps is unchanged (+7.9 / +14.3 % against +8.2 / +14.7 %), and the tenant loses 9 % of
+  its tokens. The gain on the synthetic step does not carry over.
+- **C2 holds for the compiled tenant:** the same tokens/s cost decode +4.3 / +4.0 % instead of
+  +5.6 / +6.3 %. For the top-4-layers tenant the gain shows only at 1 req/s.
+- **Not running the slow shapes pays.** The compiled tenant cannot run the shapes with offload and
+  pauses instead: at 2 req/s it does 1,502 tok/s against 1,809 and decode is +2.5 % against +7.3 %.
+
+**The slow shapes cost more than their bytes** (real engine at 1 req/s, every shape under the same
+50 GB/s allowance on 32 SMs, 120 s each, two passes).
+
+| Shape | MB per token | Tenant tok/s | Share of time computing | GB/s while computing | Decode, mean token gap | per 100 GB/s |
+|---|---|---|---|---|---|---|
+| 4 micro-batches | 13.5 | 3,701 | 62 % | 80 | +6.0 % | 12 % |
+| 8 micro-batches | 14.9 | 3,321 | 75 % | 66 | +7.5 % | 15 % |
+| + activations in host RAM | 15.2 | 2,086 | 100 % | 32 | +10.0 % | 32 % |
+| + 12 layers in host RAM | 16.6 | 1,818 | 100 % | 30 | +14.0 % | 46 % |
+| + 20 layers in host RAM | 17.6 | 1,670 | 100 % | 29 | +13.0 % | 44 % |
+
+The three shapes with offload move four tenths of the fast shapes' traffic and slow decode by
+more, for half the tokens: three to four times the cost per byte. A byte allowance does not
+charge them correctly. What they add is copies between host RAM and GPU memory for every block
+and many small kernels; which of these decode pays for is not measured. So the shape rule of C2
+is: next to decode, do not run a shape with offload; pause instead.
+
+**The floor: a second job that moves no bytes still costs decode 2–10 %**, for three separate
+reasons, each seen on its own (arithmetic-only job flat out, synthetic decode step). About 100 k
+launches per second of a 16-KB kernel: +3–5 %, with the clock unchanged and the card under its
+power limit. Arithmetic on 32 SMs: the card reaches its 500-W limit, the clock falls by 2–7 % and
+decode slows by 4–10 %. A 64-MB working set next to 8 requests: the device counter reads 6–8 %
+more traffic than decode's own, and decode slows by 5–7 % with no clock change. Merged kernels
+(fewer launches) and headroom under the power limit therefore lower the floor as well.
+
+**Not obtained: the prefill tenant on green contexts that follow the scheduler.** The tenant
+engine faults (Xid 31) the first time it moves from the stream it started on to a green context,
+and the fault takes the decode engine down with it; this happened with CUDA graphs on and again
+with them off. An engine that sits on one green context from its first step ran without fault on
+Nov 9 (section 2.5), and the fine-tune tenant switches contexts without fault. The prediction
+for this run (decode's cost unchanged, the tenant's own prefill slower) is untested.
+
+**In the proposal's metric.** With targets of TPOT ≤ 20 ms and TTFT ≤ 500 ms per request (my
+proposal, not a given), every scheme serves all requests within them at 0.5 and 1 req/s. Over
+the whole schedule the requests per second within both targets are 1.07 for the engine alone,
+0.97 for `tpot_slo15`, 1.03 for `green_dyn2`, 1.01–1.02 for the C1 schemes and 1.03 for C1 + C2
+with the compiled tenant, which trains 2.1 k tok/s on average over the run.
+
+**Limits of this night.** One run per scheme on the real engine. The two baselines of the night
+agree within 0.4 % in the mean token gap, but the per-request p90 of the opening one is 3 % above
+the closing one (GPU 1 was busy during the first and idle during the last runs), so p90
+comparisons across that line carry about 3 points of doubt. The compiled tenant was restricted on
+the night to shapes compiled at start, after a test showed a 46-s stall when a shape is compiled
+in mid-run. Whether LoRA on the top 4 layers trains as well as on all layers was not examined.
+One synthetic run (R1) was stopped by a cleanup step of the other card's launcher and rerun in full.
 
 ## 6. Related work
 
-About 25 sources were surveyed; the working note with all of them is
+Two searches. The first (Nov 9, about 25 sources) covers work that limits or schedules GPU memory
+bandwidth between co-running jobs. The second (Nov 15) looked for work that changes the
+neighbour's own execution, for C2 (section 5.4). The working note with all sources is
 [RELATED_bandwidth.md](RELATED_bandwidth.md). "Not found" means not found in what was read. The
-last column of the table says how far each source was read: **full text**; **partial** (part read,
-the rest from an automatic summary); **abstract** (abstract or README only).
+last column of the table says how far each source was read: **full text**; **partial** (part
+read, the rest from an automatic summary); **abstract** (abstract or README only). Rows marked
+**search** come from the second search, which was carried out by an automated search agent: its
+reading depth is given, and I have not re-read those papers myself.
 
 ![related work](figures/14_related_work_map.png)
 
-*Diagram 9 — existing work grouped by the knob it turns, with whether it controls GPU memory
+*Diagram 14 — existing work grouped by the knob it turns, with whether it controls GPU memory
 bandwidth and whether it is usable on this RTX 5090; the tags show where the steps of section 5
 land (source `../diagrams/14_related_work_map.svg`).*
 
@@ -736,21 +1227,62 @@ land (source `../diagrams/14_related_work_map.svg`).*
 | Nexus (preprint) | Prefill and decode in one engine on green-context partitions that are resized at run time | Bandwidth appears only in its prediction model; nothing limits it | partial |
 | FlexLLM, ConServe (preprints) | Co-serve fine-tuning or offline requests with online inference at token granularity | Do not count bytes | abstract |
 | LithOS (SOSP 2025) | Schedules by groups of SMs and splits kernels | No treatment of bandwidth or L2 found | partial |
+| Harli (preprint, Nov 2025) | Colocates PEFT fine-tuning with LLM decode on SM partitions (green contexts). Measures decode at about 85 % memory-bandwidth and 40 % SM utilisation, models the interference as memory-bandwidth contention that is linear in the fine-tuner's SM share, and cuts the fine-tuning job into per-layer pieces of about 10 ms | The closest work in setting and diagnosis. Its bandwidth lever is the SM split; section 2.7 finds the SM share a weak control of the tenant's traffic | search, full text |
+| LoRAFusion (EuroSys 2026) | Fuses the memory-bound operators of LoRA fine-tuning into custom kernels. Reports GPU-memory traffic down 34–37 % and kernels up to 1.39× faster | One of C2's means (merged operators) with byte measurements, on the same kind of neighbour, for the job's own speed; no co-running job | search, full text |
+| ConCo (ICS 2025) | Compiles several kernel variants per inference model, each tuned for a share of the SMs, and picks by concurrency level; notes that the variants put less pressure on global-memory bandwidth | Symmetric inference tasks and a throughput goal; lower bandwidth pressure is a by-product, not the objective | search, full text |
+| QoS-Compile (CGO 2012), ReQoS (ASPLOS 2013), Protean Code (MICRO 2014) | On CPUs: the low-priority application's code is changed to be a better neighbour, by inserted no-ops and naps that lower its memory request rate, or by non-temporal hints that lower its cache pressure | The precedent for "a good neighbour by code change". They slow the job or cut cache pressure; none raises its work per byte | search, partial / abstract / full text |
+| SIRIUS (ATC 2025) | A training job shrinks its batch within milliseconds to hand GPU memory to inference | A best-effort job changed to be a good neighbour, for memory capacity, not bandwidth | search, partial |
+| Ladder Side-Tuning (NeurIPS 2022), Quantized Side Tuning (ACL 2024) | Train a small side network fed by a frozen backbone, with no backward pass through the backbone; the second also keeps the backbone in 4 bits | Candidate frugal neighbours; they report memory footprint, not memory traffic | search, abstract |
 
 The steps of section 5 against the nearest work:
 
 | | What the nearest work does | What is different here |
 |---|---|---|
 | **C1** | MemGuard: a budget per core and period, enforced with hardware counters. Ripple: admits the LLM's layer units by the CPU task's deadline | The victim is decode on the GPU and the throttled job is the tenant. With no per-process counter, the tenant accounts for itself with its bytes per token (cooperative) |
-| **C4** | LLMStation's `tasklet`s with a suspendable backward pass; Hummingbird's kernel pieces of about 400 µs; Tally's thread-block slicing | The tenant is a separate process that stops only at block boundaries (about 1 ms apart), with no change to autograd and no call interception. The budget is in bytes |
-| **C3** | None found. Two near ideas: SGDRC keeps a second copy of low-priority tensors on restricted channels; a simulation study (HPCA 2018) finds that a job's memory traffic is set by its active threads, not by its core count | What changes is the shape of the training job itself |
-| **C2** | Orion checks per kernel whether profiles are complementary. Hummingbird runs low-priority work only in detected gaps. LLMStation suspends fine-tuning during prefill | All rely on the victim having periods in which it does not need bandwidth. A decode node has none, so only "lift the allowance when no request is running" is left |
+| **C1**, second method | LLMStation's `tasklet`s with a suspendable backward pass; Hummingbird's kernel pieces of about 400 µs; Tally's thread-block slicing | The tenant is a separate process that stops only at block boundaries (about 1 ms apart), with no change to autograd and no call interception. The budget is in bytes |
+| **C2** | LoRAFusion merges the memory-bound operators of LoRA fine-tuning and measures the bytes, for the job's own speed. ConCo compiles kernel variants per SM share; lower bandwidth pressure is a by-product. The Protean Code line changes a neighbour's code on CPUs, to slow it or cut its cache pressure. SGDRC keeps a second copy of low-priority tensors on restricted channels | The tenant's bytes for the same work are lowered **because** a bandwidth-bound decode step runs next to it, and the result is judged by decode's slowdown |
+| Timing (not pursued) | Orion checks per kernel whether profiles are complementary. Hummingbird runs low-priority work only in detected gaps. LLMStation suspends fine-tuning during prefill | All rely on the victim having periods in which it does not need bandwidth. A decode node has none, so only "lift the allowance when no request is running" is left |
 
 - **The position with no precedent found**: a byte budget for a low-priority tenant, with a
-  bandwidth-bound decode step as the victim, on a discrete GPU without MIG. This is C1.
+  bandwidth-bound decode step as the victim, on a discrete GPU without MIG. This is C1. Harli is
+  the nearest: the same setting and a bandwidth model, with the SM split as its lever.
+- **For C2, no source was found** that changes the neighbour so that it uses less GPU-memory
+  bandwidth because a bandwidth-bound job runs next to it. The pieces exist
+  apart: LoRAFusion has the mechanism and measures bytes, with no co-runner; Harli has the
+  setting, with SMs as the lever; the Protean Code line has the idea of changing the neighbour's
+  code, on CPUs and for cache pressure.
 - **Two things section 2.7 already adds**: no source reports how a tenant's bandwidth changes with
   its SM count (Figure 7); and Elvinger et al. note that the usual profiler cannot measure under
   colocation, where the device-wide bandwidth counter can.
 - **One point that differs from Mosaic**: Mosaic reports that reads hurt the victim more than
   writes. Section 2.7 measures about the same cost per byte for reads, writes and copies from 96
   SMs, and a higher cost for writes and copies from 8 SMs.
+
+## 7. Open questions and limits
+
+Observations that have no explanation yet:
+
+- Decode alone stops at 75–79 % of the nominal bandwidth, while a pure reader reaches 88–90 %.
+- Which part of the path between the SMs and GPU memory does the limiting when the total is below
+  these levels.
+- A read-only job costs decode about half as much per byte from 8–16 SMs as from 64–96 SMs; for
+  the real tenant the direction is the opposite (8 SMs is its dearest point).
+- An arithmetic-only job on 8 SMs, with the clock unchanged, slows a decode step with 8 requests
+  by 3.8–6.9 %, and the bandwidth counter then reads 2.5–6.6 % more bytes than decode's own.
+- Dynamic green contexts cost less per tenant token than MPS co-running on all SMs.
+- The decode baseline sits on one of two levels about 1 % apart, fixed for a whole run.
+- With 4 and 8 requests, the two jobs' bytes add up to 3–4.5 % less than the counter reads.
+
+Limits of these results:
+
+- One GPU model, one inference model (Llama-3-8B), one workload distribution (Zipf-1.1), and one
+  kind of tenant for most numbers (a LoRA fine-tune).
+- In sections 2.6 and 2.7 decode is a synthetic step, not a serving engine; the serving engine of
+  section 2.2 shows the same effect with more noise.
+- Each scheme was run once. Most points of section 2.7 were run once in 4-s windows; twenty were
+  rerun and agreed within 0.5 %. The two baseline levels put about ±1 point on every slowdown
+  there.
+- Sections 2.2.1 and 2.2.2 are re-analyses of the existing runs; the shape probe has one 60-s
+  window per shape.
+- The shared path is inferred from byte counting. There is no direct hardware-level observation.
+- One power setting, a 500 W cap; the power effect of section 2.7 depends on it.

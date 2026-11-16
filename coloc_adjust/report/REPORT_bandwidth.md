@@ -178,7 +178,7 @@ Two more ideas come with these: make the tenant cost less per unit of useful wor
 probe the harm to decode per tenant token varied 7-fold between tenant configurations), and cut
 its work into smaller pieces so a limit takes effect within one decode step.
 
-**None of 2 and 3 is built or measured yet** (insight 4). They are items C1–C4 of
+**None of 2 and 3 is built or measured yet** (insight 4). They are items C1 and C2 of
 [`../TODO.md`](../TODO.md).
 
 ## 7. What this report does not show

@@ -400,3 +400,293 @@ prompt token (+6 % for 6–7 k tok/s ≈ 1 % per 1 k) is below the fine-tune ten
 consistent with prefill being compute-bound (weights read once per 8 k-token batch). Next steps
 recorded in the report: credit the sleeping footprint to the pool, wake margin ≥ the wake cost,
 a 16–32-SM green context for the prefill engine.
+
+---
+
+# Night of Nov 16: overnight plan 3 (C1 and C2)
+
+Plan and predictions: [`../PLAN_overnight3.md`](../PLAN_overnight3.md), last written Nov 15 23:27 and not edited
+since; the predictions below are copied from it. Results in `../results_o3/`, logs in `../logs_o3/`.
+
+## D20. Start, conditions, and what differs from the plan (01:55–02:12)
+
+- The machine had been rebooted and both cards were free. Jiaxuan set both to 500 W and allowed
+  both cards. **Deviation:** the plan was written for one card in series; the real-engine block (R4, R5, R7)
+  ran on GPU 0 and the synthetic block (R0–R3, R6) on GPU 1 at the same time, as on Nov 9. The
+  baseline of the night was measured while GPU 1 was busy and again at the end.
+- **Deviation, order of R4:** the two controls ran right after the baseline, because the C1 and C2
+  runs need R2's table and R1's slice length from the other card.
+- Preparation code written between 01:55 and 02:06 and checked on the CPU (`../test_o3_cpu.py`:
+  the GB/s conversion, block pacing against a simulated clock, the slow loop replayed on the Nov 9
+  TPOT log, the chunked loss against the usual loss and gradients), then a 4-minute smoke run on GPU 1.
+- **Deviations in the preparation:** (1) kernel launches per second are not measured with the
+  profiler; (2) the existing feedback loop already uses a 10-s median of TPOT, so the slow loop
+  differs from it by the ±10 % step, the GB/s unit, the floor and ceiling, and by publishing the
+  ceiling while no request is in the engine (the loop's own value is kept for the next arrival);
+  (3) under block pacing a late slice restarts the schedule, lost time is not made up; (4) R6 has no
+  register-only kernel (that needs a hand-written CUDA kernel): matrix products of 128, 512 and
+  2304 squared (0.2, 3 and 64 MB working sets) and the 16-KB "tiny" kernel instead.
+- **A fault of the night (02:33):** the real-engine launcher cleaned up "every tenant process" at
+  the start of each scheme, a line written when only one card was in use. It stopped the tenant of
+  R1 on the other card (R1 failed after 3 of 54 points) and cut one R2 run short (top 8 layers:
+  35-s window instead of 43 s, still valid). Fixed at 02:43 (the cleanup now spares the synthetic
+  runs' tenants); R1 was rerun in full after R3 (02:49–03:14). No real-engine run was affected.
+
+## D21. R0 outcome — sanity and calibration (02:06–02:12)
+
+**Prediction:** within 3 % of Nov 9 (11.7–11.8 / 13.1–13.4 / 15.4–15.8 ms; 3.5 k / 6.5 k / 11.6 k
+tok/s; 1 % of the counter = 17.8 GB/s); per-step timing within 2 % of grouped timing; the hook
+alone: no basis. **Outcome: met.** Decode alone on the full device 11.69 / 13.44 / 15.85 ms
+(Nov 9: 11.68 / 13.39 / 15.80). Per-step timing (a CUDA event after each queued step) and grouped
+wall-clock timing agree to 0.05 %. Tenant alone 3,493 / 6,518 / 11,582 tok/s on 8 / 16 / 32 SMs
+(Nov 9: 3,490 / 6,543 / 11,642). Counter: 1 % = 17.79 GB/s over 30 points, error median 0.5 %,
+max 1.0 % (Nov 9: 17.79). **The syncs of block pacing cost the tenant under 1 %:** with a cap it
+never reaches, 11,510 tok/s with a sync after every block, 11,623 after every 8, 11,637 after
+every 48, against 11,582 without.
+
+## D22. R2 outcome — bytes per token of every shape and variant (02:12–02:30)
+
+Tenant alone on 32 SMs, about 43 s per variant (`../results_o3/r2_bytes.md`).
+
+| Variant | Predicted (CPU count) | Measured MB per token | vs usual | tokens/s |
+|---|---|---|---|---|
+| usual shape, 4 micro-batches | 13.4–14.3 (Nov 9) | 13.47 | – | 11,628 |
+| 1 micro-batch | about 9 % fewer | 15.58 | **+16 %** | 14,543 |
+| 2 micro-batches | – | 13.48 | 0 % | 13,416 |
+| 8 micro-batches | about 12 % more | 14.88 | +10 % | 9,579 |
+| activation offload / + 12 layers / + 20 layers in host RAM | no basis | 15.19 / 16.57 / 17.61 | +13 / +23 / +31 % | 3,246 / 2,566 / 2,364 |
+| attention `eager` | about 37 % more | 20.66 | +53 % | 10,096 |
+| `torch.compile` | no basis | **7.95** | **−41 %** | 14,457 |
+| output layer and loss in chunks of 16 | no basis | 42.23 | **+214 %** | 7,706 |
+| both together | no basis | failed to start (a bug in the helper, fixed after) | – | – |
+| gradient checkpointing alone | no basis | 13.08 | −3 % | 8,857 |
+| LoRA on the top 8 layers | about 36 % fewer | 10.10 | −25 % | 17,743 |
+| LoRA on the top 4 layers | about 44 % fewer | 9.24 | −31 % | 20,198 |
+| forward only | about 60 % fewer | 3.73 | −72 % | 25,010 |
+
+- **`torch.compile` is the best "same training" variant: 41 % fewer bytes per token and 24 %
+  faster.** It became V1. LoRA on the top 4 layers became V2 (the count overstated the saving of
+  both top-layer variants by about 12 points).
+- **The chunked output layer was a design error of mine.** Each chunk reads the whole output
+  matrix (272 MB) again, 64 times per micro-batch, so the bytes triple. The logits are not what
+  has to be avoided; the output matrix would have to be read once for all positions.
+- **The count got the micro-batch direction wrong** for 1 micro-batch (+16 % measured, −9 % counted).
+- **The slow shapes move few bytes per second**: 42–49 GB/s while running, against 143–181 GB/s
+  for the fast shapes on the same 32 SMs, at only 13–31 % more bytes per token. If they cost
+  decode as much as on Nov 9, bytes do not explain it (R5).
+- On the full device: usual 14.30 MB per token at 28.5 k tok/s, top 4 layers 10.26 at 54.2 k.
+
+## D23. R3 outcome — fewer bytes per token next to the synthetic decode step (02:33–02:49)
+
+Tenant on 32 SMs, decode on the other 138; two passes, which differ by at most 0.2 points
+(`../results_o3/r3_table.md`).
+
+**Prediction (the C2 result):** at equal tenant tokens/s decode's slowdown falls by the same share
+as the bytes per token, from 1.2–1.7 % to about 0.7–1.1 % per 1 k tok/s; all points on one line
+of slowdown against tenant GB/s within ±20 %; flat out: no basis.
+
+| Tenant, at the usual tenant's tokens/s (8.0 k / 9.2 k / 9.4 k) | 1 request | 4 | 8 | per 1 k tok/s |
+|---|---|---|---|---|
+| usual tenant (p) | +8.1 % | +13.9 % | +13.7 % | 1.02 / 1.51 / 1.46 % |
+| `torch.compile`, paced to the same rate (r1) | +5.3 % | +9.7 % | +9.2 % | 0.66 / 1.06 / 0.99 % |
+| top 4 layers, paced to the same rate (r2) | +5.2 % | +9.7 % | +9.4 % | 0.65 / 1.06 / 1.00 % |
+
+**Outcome: met.** Decode's slowdown at equal tenant work falls by 30–36 % with both variants
+(bytes per token: −41 % and −31 %). Against tenant GB/s (tokens/s × R2's MB per token) the five
+settings at one request give 7.0–8.5 % per 100 GB/s: one line within ±10 %. Flat out, the
+variants run faster (10.7 k and 14.4 k tok/s at one request) and decode is +7.2 % and +9.6 %:
+the compiled tenant costs a little less than the usual one although it does a third more work,
+the top-4 tenant costs more because it moves more GB/s. The usual tenant cannot be paced to the
+top-4 tenant's GB/s (point s): it does not reach it. One more observation: the unpaced usual
+tenant gives decode a p90 of +16 to +29 % at a mean of +8 to +14 %; the compiled one +12 to +17 %
+at +7 to +12 %.
+
+## D24. R1 outcome — same tenant work, limited in nine ways (rerun 02:49–03:14)
+
+Two passes, at most 0.2 points apart (`../results_o3/r1_table.md`). Tenant work 2.4 k / 2.8 k /
+2.9 k tok/s (the rate of 8 SMs flat out) unless stated.
+
+| Setting | Predicted mean (1 / 4 / 8 requests) | Measured mean | Measured p90 |
+|---|---|---|---|
+| a: 8 SMs all the time | +5.4 / +7.5 / +6.4 % (Nov 9) | +3.9 / +6.9 / +5.9 % | +5.4 / +7.9 / +8.2 % |
+| c: 32 SMs, pause after each step | +2.9 / +4.6 / +4.4 % | +2.5 / +5.7 / +5.5 % | +5.8 / +11.8 / +11.0 % |
+| g: 32 SMs, slices of 1 block | as c | +2.6 / +5.8 / +5.5 % | **+2.2 / +5.5 / +5.2 %** |
+| h: 32 SMs, slices of 8 blocks | as c | +2.6 / +5.9 / +5.6 % | +5.5 / +10.3 / +9.1 % |
+| i: 32 SMs, slices of 48 blocks | as c | +2.5 / +5.8 / +5.5 % | +5.7 / +11.8 / +11.0 % |
+| f: all SMs, pause after each step | +4.5 / +6.5 / +6.2 % | +4.6 / +7.0 / +6.5 % | +12.7 / +20.0 / +19.0 % |
+| b: 16 SMs all the time (4.5–5.3 k tok/s) | +6.4 / +9.1 / +9.9 % (Nov 9) | +4.7 / +9.6 / +8.7 % | +6.2 / +10.4 / +12.9 % |
+| d: 32 SMs paced to b's rate | +5.4 / +8.5 / +8.2 % | +4.5 / +8.7 / +8.4 % | +6.7 / +12.2 / +13.3 % |
+
+- **Q1, partly met.** 32 SMs with pauses is cheaper than 8 SMs all the time at every batch size
+  and by more than the spread between passes, so the rule of the plan is passed; but the gain is
+  0.4–1.4 points, not the 2–3 predicted. All SMs with pauses is no better than 8 SMs, as predicted.
+- **Why the gain is smaller: pauses are not free at 4 and 8 requests.** While the tenant pauses,
+  decode is +0.7 % at one request but +3.0 % and +2.7 % at 4 and 8 (the prediction took 0). While
+  it runs: +8.1 / +14.0 / +13.5 %, as flat out. Checked afterwards in the same logs: it is not the
+  power limit (the clock is 0.5 % lower than alone, the power 475 W on average), and it is not a
+  recovery after each burst (the offset is the same 50 ms and 1 s after the tenant stops:
+  +2.4 to +3.0 %). An idle second process does not cause it either (R6: decode next to the idle
+  arithmetic job equals decode alone). The cause is open.
+- **Q3, met.** Slices of one block (about 2.4 ms) bring the p90 of single decode steps down to the
+  mean; slices of 8 blocks halve the gap; slices of 48 blocks change nothing. The tenant's speed
+  while running falls by 5.0 % at worst with one-block slices, and its realised rate is 4.4 % under
+  the cap. By the rule of the plan `c1_fine` runs with slices of one block.
+- **Not predicted:** the p99 of single decode steps is +26 to +32 % in every 32-SM setting,
+  whatever the pacing. The output layer, the loss and the optimizer step are outside the blocks
+  and are not sliced; that is the likely source, not verified.
+
+## D25. R6 outcome — the floor: a second job that moves no bytes (03:14–03:18)
+
+Arithmetic-only second job, flat out, on 32 and on 8 SMs, decode on the remaining SMs at 1 and 8
+requests (`../results_o3/r6_floor_summary.md`). **Prediction: none (no basis); three readings to
+tell apart.** Known from Nov 9: +1.4–2.6 % (one request) from 8 SMs.
+
+| Second job | Launches/s next to decode | Decode, 1 / 8 requests, job on 32 SMs | job on 8 SMs | Power, clock (32 SMs) |
+|---|---|---|---|---|
+| 16-KB add ("tiny") | 95–124 k | +4.8 / +3.8 % | +5.3 / +3.2 % | 435–451 W, clock unchanged |
+| 128 × 128 product (0.2 MB) | 48–67 k | +5.1 / +4.4 % | +5.3 / +3.3 % | 441–459 W, unchanged |
+| 512 × 512 product (3 MB) | 5–22 k | +4.4 / +5.0 % | +2.6 / +6.9 % | 500 W, clock −2 to −5 % |
+| 2304 × 2304 product (64 MB) | 0.1–0.6 k | +5.7 / +10.2 % | +2.4 / +5.4 % | 500 W, clock −6 to −7 % |
+
+**Outcome: all three readings hold, in different cases.**
+1. **Launches.** About 100 k launches per second of a kernel that moves 16 KB slow decode by
+   3–5 %, with the card under its power limit and the clock unchanged.
+2. **The power limit.** Arithmetic on 32 SMs brings the card to its 500-W limit; the clock falls
+   by 2–7 % (2,932 → 2,872–2,723 MHz) and decode slows by 4–10 %. On 8 SMs the limit is not
+   reached and the clock does not move.
+3. **The shared cache.** With 8 requests and the larger working sets the device counter reads
+   6–8 % more traffic than decode's own (decode's known bytes ÷ counter = 0.92–0.95): the second
+   job's working set does not stay in the cache next to decode, and it is in these cases, on
+   8 SMs with no clock change and few launches, that decode loses 5–7 %.
+
+So the floor under C2 is not one number: fewer launches (merged kernels) lower it, and so does
+headroom under the power limit. The idle baseline drifted by +1 % at one request over each block.
+
+## D26. R4 outcome — C1 and C2 on the real engine, reference schedule (02:06–04:14)
+
+Ten runs of the 11-minute schedule on GPU 0 (`../results_o3/r4_summary.md`, `../analyze_o3.py`;
+figure `figures/o3_c1_c2.png`). Order: baseline, `tpot_slo15`, `green_dyn2`, `c1_fix`, `c1_slow15`,
+`c1_slow5`, `c1_fine`, `c2b`, `c2a`, baseline. No request failed in any C1 or C2 run.
+
+**The baselines and the controls reproduce.** TPOT median 12.0 / 12.7 / 16.4 ms at 0.5 / 1 / 2
+req/s (Nov 9: 12.0 / 12.6 / 16.3; predicted within 2 %). The closing baseline: same medians, mean
+token gap within 0.4 % of the opening one. `tpot_slo15`: median +7 / +10 / +7 %, p90 +28 / +15 /
++8 % (Nov 9: +5 / +11 / +6 and +29 / +16 / +7). `green_dyn2`: +14 / +15 / +9 % and +16 / +13 /
++5 % (Nov 9: +14 / +15 / +9 and +15 / +16 / +9). Both within the predicted 2 points except
+`green_dyn2`'s p90 at 1 and 2 req/s (3–4 points lower). **One limit:** the opening baseline ran
+while GPU 1 was busy and its per-request p90 is 3 % above the closing one (14.5 / 19.6 against
+14.1 / 18.9 ms at 1 / 2 req/s); the runs before 03:22 had GPU 1 busy, `c1_fine`, `c2b` and `c2a`
+had it idle. Comparisons of p90 across that line carry about 3 points of doubt; the means do not.
+
+| Scheme, 0.5 / 1 req/s | Tenant tok/s | Mean token gap | per 1 k tok/s | TPOT median | TPOT p90 |
+|---|---|---|---|---|---|
+| `tpot_slo15` (fast loop, all SMs) | 3,769 / 3,953 | +12.2 / +11.0 % | 3.2 / 2.8 % | +7 / +10 % | +28 / +15 % |
+| `green_dyn2` (16–96 SMs by load) | 11,468 / 9,154 | +13.4 / +13.8 % | 1.2 / 1.5 % | +14 / +15 % | +16 / +13 % |
+| `c1_fix` (32 SMs, 50 GB/s, pause after a step) | 3,524 / 3,670 | +5.6 / +6.3 % | 1.6 / 1.7 % | +6 / +6 % | +6 / +4 % |
+| `c1_fine` (the same in 1-block slices) | 3,195 / 3,348 | +5.7 / +5.9 % | 1.8 / 1.8 % | +6 / +6 % | +6 / +4 % |
+| `c1_slow15` (slow loop, +15 %) | 3,686 / 4,167 | +5.5 / +6.2 % | 1.5 / 1.5 % | +6 / +7 % | +7 / +5 % |
+| `c1_slow5` (slow loop, +5 %) | 2,622 / 1,442 | +3.5 / +2.6 % | 1.3 / 1.8 % | +3 / +4 % | +4 / +0 % |
+| `c2a` (`c1_fix` with the compiled tenant) | 3,524 / 3,688 | +4.3 / +4.0 % | 1.2 / 1.1 % | +5 / +4 % | +4 / +2 % |
+| `c2b` (`c1_fix` with LoRA on the top 4 layers) | 3,524 / 3,670 | +5.6 / +4.8 % | 1.6 / 1.3 % | +5 / +5 % | +8 / +3 % |
+
+Predictions against outcomes:
+
+- **`c1_fix`, met.** Predicted: tenant 3.5–3.7 k tok/s; decode on average +5.3–6.3 % against
+  +10.4 / +9.6 % for `tpot_slo15` at the same tenant work; p90 within 2 points of the median.
+  Measured: 3,524 / 3,670 tok/s; +5.6 / +6.3 % against +12.2 / +11.0 %; p90 +6 / +4 % at a median
+  of +6 / +6 %. At the same tenant work the byte allowance on 32 SMs halves decode's cost and
+  removes the tail of the fast loop.
+- **`c1_fine`, half met.** Predicted: per-request TPOT within 1 point of `c1_fix` (met: identical);
+  the p90 of single token gaps down from the "while running" level to within 2 points of the
+  mean (**not met**: +7.9 / +14.3 % against +8.2 / +14.7 %). On the real engine the tail of the
+  token gaps does not come from the tenant's bursts at this allowance, so slicing them changes
+  nothing visible, and it cost the tenant 9 % of its tokens (lost time is not made up). The
+  synthetic result of R1 does not carry over.
+- **`c1_slow15`, partly met.** Predicted: the allowance does not bind at 0.5 and 1 req/s, decode
+  +9–13 %, tenant work 1.6–2 times that of `tpot_slo15`, p90 at 0.5 req/s under +20 %. Measured:
+  the allowance did bind in all but the last phase (median 36–60 GB/s per phase, 113 in the last; range within a factor 1.4–4.1, once 8.5),
+  decode +5.5 / +6.2 %, tenant work equal to `tpot_slo15` (3,686 / 4,167 tok/s), p90 +7 % at
+  0.5 req/s (met). The loop is more careful than its target: its error signal (10-s median TPOT
+  against the phase baseline at the estimated arrival rate) reads high whenever requests overlap.
+- **`c1_slow5`, partly met.** Predicted: the allowance settles near 40–45 GB/s, decode median
+  +4–6 % at both rates, range within a factor 2. Measured: the allowance sat at or near its floor
+  at 1 req/s (median 10–16 GB/s per phase; 21 GB/s at 0.5 req/s; factor 1.1–3.1), decode median +3 / +4 %,
+  tenant 2,622 / 1,442 tok/s. The target is held at both rates, which the fast loop did not do
+  (+11.2 % and +2.8 % on Nov 9), at the price of tenant work.
+- **`c2a`, met at 1 req/s, just above at 0.5.** Predicted: same tokens/s as `c1_fix`, decode's
+  mean slowdown down from +5.3–6.3 % to about +3.0–4.0 %, p90 within 2 points of the median.
+  Measured: +4.3 / +4.0 % against +5.6 / +6.3 % (−23 % and −37 %), p90 +4 / +2 %. The compiled
+  tenant computes 42–44 % of the time against 54–62 %. Two restrictions I added on the night, after
+  a test on GPU 1 (03:18–03:22) showed a 46-s stall when a shape is first compiled in mid-run: the
+  compiled tenant compiles its two fitting shapes at start (34 s) and uses only those, and it does
+  not run the shapes with offload. So at 2 req/s it pauses where `c1_fix` runs a slow shape:
+  1,502 against 1,809 tok/s, and decode +2.5 % against +7.3 %.
+- **`c2b`, not met at 0.5 req/s, half met at 1 req/s.** Same tenant tokens/s as `c1_fix`; decode
+  +5.6 / +4.8 % against +5.6 / +6.3 %. The saving seen on the synthetic step (R3: −30 to −36 %)
+  shows only at 1 req/s (−24 %).
+
+**The load served within the SLO** (my proposed targets: TPOT ≤ 20 ms and TTFT ≤ 500 ms per
+request; requests/s within both over the whole schedule): baseline 1.07; `tpot_slo15` 0.97;
+`green_dyn2` 1.03; `c1_fix` 1.01; `c1_fine` 1.02; `c1_slow15` 1.01; `c1_slow5` 1.02; `c2a` 1.03;
+`c2b` 0.98. All requests meet the targets at 0.5 and 1 req/s in every scheme; the differences
+come from 2 req/s (baseline 91 %; `tpot_slo15` 78 %; `c1_fix` 82 %; `c2a` and `c1_slow5` 88 %) and
+3 req/s, where the engine alone already misses them for two thirds of the requests.
+
+**What this decides.** C1 is kept in its first method with a fixed or slowly moving allowance;
+the second method is not worth its cost on this engine. C2 holds on the real engine for the
+compiled tenant; for the top-4-layers tenant the gain is small at these rates. C1 + C2
+(`c2a`) costs decode 1.1–1.2 % per 1 k tenant tok/s against 1.2–1.5 % for `green_dyn2` and
+2.8–3.2 % for `tpot_slo15`, with the smallest tail of all schemes that train.
+
+## D27. R5 outcome — every shape under the same allowance, real engine at 1 req/s (04:14–04:43)
+
+Tenant on a 32-SM green context with the 50 GB/s allowance, engine KV limit 3 GiB, 120 s per
+shape, two passes in opposite order, three no-tenant windows (mean token gap 12.53 / 12.36 /
+12.70 ms). `../results_o3/probe2_summary.md`, `../analyze_probe2.py`.
+
+**Prediction:** while the tenant runs, decode +8–12 % with every shape; the fastest shape computes
+50–65 % of the time, the three slow ones all the time and below the allowance; decode on average
++5–6 % with the fastest shape and +8–12 % with the slow ones at less than half the tokens.
+Whether a slow shape's GB/s predicts its cost: no basis.
+
+| Shape (both passes) | MB per token (R2) | Tenant tok/s | Share computing | GB/s while computing | Decode, mean token gap | per 1 k tok/s | per 100 GB/s |
+|---|---|---|---|---|---|---|---|
+| 4 micro-batches | 13.5 | 3,701 | 62 % | 80 | +6.0 % | 1.6 % | 12 % |
+| 8 micro-batches | 14.9 | 3,321 | 75 % | 66 | +7.5 % | 2.3 % | 15 % |
+| + activations in host RAM | 15.2 | 2,086 | 100 % | 32 | +10.0 % | 4.8 % | 32 % |
+| + 12 layers in host RAM | 16.6 | 1,818 | 100 % | 30 | +14.0 % | 7.7 % | 46 % |
+| + 20 layers in host RAM | 17.6 | 1,670 | 100 % | 29 | +13.0 % | 7.8 % | 44 % |
+
+**Outcome: the shares and the fastest shape as predicted; the slow shapes a little worse
+(+10–14 %), and bytes do not explain them.** The slow shapes move 29–32 GB/s, four tenths of the
+fast shapes' traffic, and slow decode by more: three to four times the cost per byte. A byte
+allowance therefore does not charge them correctly; they stay under any allowance a fast shape
+would be given. What they do besides moving bytes on the GPU: copies between host RAM and GPU
+memory for every block, and many small kernels; which of these decode pays for is not measured.
+Next to the engine they also run a third slower than alone (2.1 k / 1.8 k / 1.7 k against 3.2 k /
+2.6 k / 2.4 k tok/s in R2). The two passes differ by up to 4.5 points for one slow shape
+(+11.7 and +16.2 %), so the order among the three slow shapes is not resolved.
+**Decision:** the shape rule inside C2 is "next to decode, do not run a shape with offload; pause
+instead" (R4's `c2a` did this at 2 req/s: decode +2.5 % against +7.3 %, tenant tokens −17 %).
+
+## D28. R7 outcome — prefill tenant on scheduler-driven green contexts: not obtained (04:43–05:40)
+
+**Prediction (Nov 10):** decode's cost does not change, because this tenant is limited by GPU
+memory; its own prefill slows down. **Outcome: no result; the mechanism faults.**
+
+- `pf_mps` (reference, 04:43–04:57) ran normally.
+- `pf_green_dyn` (04:57–05:10): the tenant engine built its five green contexts, ran its start-up
+  steps on the default stream, and at the first step of the load moved to the 128-SM context.
+  At that moment (05:00:01) the driver logged Xid 31 (MMU fault); the fault took the decode engine
+  down too (both are clients of one MPS server), and every request of the run failed.
+- My first reading was that CUDA graphs captured on the default stream cannot be replayed on a
+  green context. I repeated both arms with the tenant engine in `--enforce-eager`
+  (`pf_mps_eager` 05:12–05:25 ran normally; `pf_green_dyn_eager` 05:25–05:40). **The fault came
+  back at the first switch** (54 of 588 requests succeeded), so CUDA graphs are not the cause, or
+  not the only one.
+- What is known: on Nov 9 an engine that was on one green context from its first step ran without
+  fault (`pf_split`); the fine-tune tenant switches between prebuilt green contexts without fault.
+  What differs here is an engine that leaves the stream it started on. Untested next step: put the
+  engine on the largest prebuilt context from its very first step and switch only among green
+  contexts.
+- No other run of the night was affected; GPU 0 was released after each failed run.
