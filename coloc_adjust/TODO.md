@@ -1,6 +1,6 @@
 # TODO: colocation interference (what happens, why, how to improve)
 
-Started Nov 9 2026. From here on the reports (`report/REPORT.md`, `report/REPORT_zh.md`) concentrate
+Started Nov 9 2026. From here on the reports (since Nov 16: `../reports/`, four reports in English and Chinese) concentrate
 on three questions about colocation, and every item below feeds one of them:
 
 - **A. What happens** when the decode step and the tenant share the GPU.
@@ -9,7 +9,7 @@ on three questions about colocation, and every item below feeds one of them:
 
 Nothing below has been run unless it is listed under "Evidence so far". Results go into both reports
 when an item is done (next free figure number: Figure 7 / 图 7). Background reading:
-`report/RELATED_bandwidth.md`.
+`../reports/3_c1_c2.md` section 8 and appendix B (related work).
 
 Rules for every run: either GPU may be used (GPU 1 only was lifted on Nov 9); check that the GPU
 is free first (another project's vLLM tests used both on Nov 9); one MPS daemon and pipe directory
@@ -149,7 +149,7 @@ Evidence so far
 - Decode slowdown per 1 k tenant tokens/s: 1.3–2.4 % on shared SMs, 1.1–2.3 % on disjoint SMs
   (`results/knee_corun*.csv`, two runs).
 - Published: Llama-3.1-8B decode on its own 64 SMs slows up to 1.3× next to a copy kernel on the
-  other SMs (Elvinger et al.); see `report/RELATED_bandwidth.md` §2.4.
+  other SMs (Elvinger et al.); see `../reports/3_c1_c2.md` section 8.
 
 Experiments
 - [ ] **E1.1 Same traffic, two knobs.** Bring the tenant to the same tokens/s (so the same GB/s)
@@ -320,7 +320,7 @@ What the idea rests on, and what is not known:
 
 No GPU needed
 - [x] **D0.1 Related work, targeted.** Done Nov 15 by an automated search (not re-read by me):
-  `report/RELATED_bandwidth.md` section 5. Closest: Harli (same setting, SM split as the lever) and
+  `../reports/3_c1_c2.md` section 8. Closest: Harli (same setting, SM split as the lever) and
   LoRAFusion (fused LoRA kernels, GPU-memory traffic −34–37 %, no co-runner). The position looks
   open; Harli, LoRAFusion and ConCo have to be read in full before it is claimed. Original item: The Nov 9 survey did not look for work that changes the
   neighbour's own execution to use less shared bandwidth. Search for it (bandwidth-aware or
@@ -358,7 +358,7 @@ GPU needed (report to Jiaxuan before each run; one card, engine not needed unles
 ## E. Main line, order of work (updated Nov 15)
 
 > **Nov 16: the runs of this section and of section D were done in one night** (`PLAN_overnight3.md`,
-> `report/DECISIONS.md` D20–D28, `report/REPORT.md` section 5.7). In short: E1.1 and C1's first
+> `report/DECISIONS.md` D20–D28, `../reports/3_c1_c2.md`). In short: E1.1 and C1's first
 > method hold (same tenant work at half the decode cost of `tpot_slo15`, no tail); the slow loop
 > holds its target but is more careful than asked; C1's second method shows nothing on the real
 > engine; C2 holds for the compiled tenant (41 % fewer bytes per token, decode +4.3 / +4.0 %
@@ -415,7 +415,7 @@ After the hypotheses are tested, the colocation part of both reports is organise
 3. Improvement: C1 and C2 against the SM limit, at equal tenant throughput.
 Each figure uses the quantities the text argues with: tenant GB/s and decode slowdown.
 
-Done on Nov 9: the standalone report `report/REPORT_bandwidth.md` and `report/REPORT_bandwidth_zh.md`
+Done on Nov 9: the standalone report `report/REPORT_bandwidth.md` and `report/REPORT_bandwidth_zh.md` (since Nov 16: `../reports/2_bandwidth.md`)
 (for non-experts; Diagrams 08–10, figures from `plot_bw_report.py`: `bw_tenant`, `bw_knee`,
 `bw_slowdown`, `bw_modes`). The main reports do not carry these results yet.
 
@@ -425,4 +425,4 @@ Done on Nov 9: the standalone report `report/REPORT_bandwidth.md` and `report/RE
 - [ ] Commit the aggressor work (`bw_aggr.py`, `aggr_corun.py`, `analyze_aggr.py`,
   `analyze_modes.py`, `plot_bw_report.py`, results), Diagrams 08–10 and the standalone report.
 - [ ] Commit the co-run probe (`knee_corun.py`, `run_knee_corun.sh`, results), this file,
-  `report/RELATED_bandwidth.md`, and the `HF_HOME` lines in `kvcached_validation/scripts/`.
+  the related-work notes (now `../reports/3_c1_c2.md`), and the `HF_HOME` lines in `kvcached_validation/scripts/`.

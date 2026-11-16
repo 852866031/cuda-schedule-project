@@ -1,7 +1,7 @@
 # Colocation VRAM-adjust prototype
 
 Design: [DESIGN.md](DESIGN.md). Run log with predictions and outcomes: [report/DECISIONS.md](report/DECISIONS.md).
-Report: [report/REPORT.md](report/REPORT.md) (English) and [report/REPORT_zh.md](report/REPORT_zh.md) (Chinese, plain language); figures and the rendered diagrams in `report/figures/`. Environment: `../kvcached_validation/.venv-main` (vLLM 0.30 +
+Reports (English and Chinese) are in [`../reports/`](../reports/): 1 KV budget and colocation schemes, 2 bandwidth interference, 3 C1/C2, 4 prefill tenant. Figures and the rendered diagrams they use are in `report/figures/`. Environment: `../kvcached_validation/.venv-main` (vLLM 0.30 +
 kvcached main + peft).
 
 | file | role |
@@ -35,3 +35,16 @@ for arm in green32 green_dyn engine_green green_opt; do bash run_eval3.sh $arm; 
 ```
 Do not quote the process-name patterns used by the scripts (`vllm serve`, `ft_worker.py`, …) in
 the command line that launches them: `pkill -f` inside the scripts would match that shell.
+
+## Environment traps (read before running anything)
+
+- Model weights are only under `/mnt/storage/huggingface`; tool shells do not read `~/.profile`, so every launcher must `export HF_HOME` itself.
+- Check that the GPUs are idle first (other projects use them); one MPS daemon and one pipe directory per GPU.
+- Too much pinned host RAM freezes the machine; keep LMCache's pinned L1 to a few GiB. `/dev/shm` is 31 GiB, and both engines' host-RAM tiers must fit in it together.
+- `stop.sh` kills every vLLM; `pgrep -f` / `pkill -f` match their own shell. A cleanup that runs `pkill -f ft_worker.py` on one card also kills a tenant on the other card (it did on Nov 16): the launchers now spare `corun2_` / `tenant_bytes` processes.
+- Turn the FlashInfer sampler off (`VLLM_USE_FLASHINFER_SAMPLER=0`); the LMCache server uses port 5556; vLLM sleep needs `VLLM_SERVER_DEV_MODE=1`.
+- With KV offload use kvcached main and set `KVCACHED_MAX_CACHED_TOKENS=-1`.
+- The decode baseline on a "remaining" green context sits on one of two levels; compare small differences (50–100 GB/s, 1–3 %) across restarts.
+- A compiled tenant (`--compile`) stalls for about 46 s inside a step when it meets a shape for the first time; it compiles the shapes that fit at start and uses only those.
+- A vLLM engine that moves from the stream it started on to a green context faults (Xid 31) and takes the other MPS client down with it, with CUDA graphs on or off (reports/4, section 5).
+- Do not push to Overleaf; do not touch `proposal/` or `project_summary/`.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Draw the SVG diagrams of the next-steps section (12, 15, 16, 17) and render them to ../report/figures.
   python3 diagrams/make_svg.py        (needs google-chrome and Pillow; network for the web font)
-Numbers in the diagrams come from results/knee_bw2_summary.md, results/overlap_summary.md and tiers.json."""
+Numbers in the diagrams come from results/knee_bw2_summary.md, results/overlap_summary.md , tiers.json and results_o3 (Nov 16: r1_table.md)."""
 import os, subprocess, tempfile
 from PIL import Image, ImageChops
 HERE = os.path.dirname(os.path.abspath(__file__)); FIG = os.path.join(HERE, "..", "report", "figures")
@@ -22,25 +22,25 @@ X = lambda t: X0 + (X1 - X0) * t / WIN
 y0 = 56; b = f'<rect x="{X0}" y="18" width="14" height="12" {O}/><text class="d-m" x="{X0+20}" y="29">the tenant\'s GPU-memory traffic</text>'
 b += (f'<text class="d-b" x="10" y="{y0+22}">Today: fewer SMs</text><text class="d-m" x="10" y="{y0+41}">8 SMs · always running</text><path d="M{X0} {y0+44}H{X1}" {GL}/>'
       f'<rect x="{X0}" y="{y0+44-12.6:.1f}" width="{X1-X0}" height="12.6" {O}/><text class="d-t" x="{X0+6}" y="{y0+22}">moving all the time, about 37 GB/s</text>'
-      f'<text class="d-m" x="640" y="{y0+14}">decode slowdown</text><text class="d-b" x="640" y="{y0+34}" style="font-size:15px">+5.4–7.5 %</text><text class="d-g" x="640" y="{y0+52}">measured</text>')
+      f'<text class="d-m" x="640" y="{y0+14}">decode slowdown</text><text class="d-b" x="640" y="{y0+34}" style="font-size:15px">+3.9–6.9 %</text><text class="d-g" x="640" y="{y0+52}">measured</text>')
 y0 = 156; bw = X(470) - X(0)
 b += (f'<text class="d-b" x="10" y="{y0+22}">C1: an allowance</text><text class="d-m" x="10" y="{y0+41}">32 SMs · run, then pause</text><path d="M{X0} {y0+44}H{X1}" {GL}/>'
       + "".join(f'<rect x="{X(t):.1f}" y="{y0+4}" width="{bw:.1f}" height="40" {O}/>' for t in (100, 1675))
       + f'<path d="M{X0} {y0+44-12.6:.1f}H{X1}" stroke="{INK}" stroke-width="1.4" stroke-dasharray="6 4" fill="none"/>'
       f'<text class="d-b" x="{X(2180):.0f}" y="{y0+22}" style="font-size:12.5px">allowance (average)</text>'
       f'<text class="d-m" x="{X(335):.0f}" y="{y0-4}" text-anchor="middle">run: 0.47 s</text><text class="d-m" x="{X(1120):.0f}" y="{y0+22}" text-anchor="middle">pause: 1.1 s</text>'
-      f'<text class="d-m" x="640" y="{y0+14}">decode slowdown</text><text class="d-t" x="640" y="{y0+34}">to be measured</text><text class="d-m" x="640" y="{y0+52}">experiment E1.1</text>')
+      f'<text class="d-m" x="640" y="{y0+14}">decode slowdown</text><text class="d-b" x="640" y="{y0+34}" style="font-size:15px">+2.5–5.7 %</text><text class="d-g" x="640" y="{y0+52}">measured</text>')
 ya = 232
 b += f'<path class="d-ln" d="M{X0} {ya}H{X1}" stroke-width="1"/>' + "".join(f'<path class="d-ln" d="M{X(t):.1f} {ya}v6"/><text class="d-m" x="{X(t):.1f}" y="{ya+20}" text-anchor="middle">{int(t/1000)} s</text>' for t in (0, 1000, 2000, 3000))
 D["12_c1_budget"] = svg(780, 262, b)
 
 # ---- 15: from the measurements to the ideas
-b = (f'<rect class="d-soft" x="10" y="12" width="300" height="86" rx="8"/><text class="d-b" x="24" y="36">Section 2.7: what to control</text><text class="d-t" x="24" y="60">decode\'s cost follows the tenant\'s bytes</text><text class="d-t" x="24" y="82">an SM limit is indirect and weak</text>'
-     f'<rect class="d-good" x="10" y="110" width="300" height="108" rx="8"/><text class="d-b" x="24" y="134">Section 2.2: how to control it</text><text class="d-t" x="24" y="158">decode is at baseline while it pauses</text><text class="d-t" x="24" y="180">cost grows with the time it runs</text><text class="d-t" x="24" y="202">cheapest per token on 16–64 SMs</text>'
+b = (f'<rect class="d-soft" x="10" y="12" width="300" height="86" rx="8"/><text class="d-b" x="24" y="36">Stage 3: what to control</text><text class="d-t" x="24" y="60">decode\'s cost follows the tenant\'s bytes</text><text class="d-t" x="24" y="82">an SM limit is indirect and weak</text>'
+     f'<rect class="d-good" x="10" y="110" width="300" height="108" rx="8"/><text class="d-b" x="24" y="134">Stage 2: how to control it</text><text class="d-t" x="24" y="158">decode is at baseline while it pauses</text><text class="d-t" x="24" y="180">cost grows with the time it runs</text><text class="d-t" x="24" y="202">cheapest per token on 16–64 SMs</text>'
      f'<path class="d-ln" d="M310 55C335 55 335 92 358 96" marker-end="url(#arr)"/><path class="d-ln" d="M310 164C335 164 335 140 358 136" marker-end="url(#arr)"/>'
      f'<rect class="d-warn" x="360" y="36" width="230" height="160" rx="8"/><text class="d-b" x="374" y="62">C1 byte budget</text><text class="d-t" x="374" y="88">quantity: GB per second</text><text class="d-t" x="374" y="112">means: run, then pause</text>'
-     f'<text class="d-t" x="374" y="136">SMs: enough, 16–32</text><text class="d-t" x="374" y="160">allowance: steady</text><text class="d-m" x="374" y="182">two methods · not built</text>'
-     f'<path class="d-ln" d="M590 116H636" marker-end="url(#arr)"/><rect class="d-box" x="638" y="76" width="132" height="80" rx="8"/><text class="d-b" x="704" y="102" text-anchor="middle">First: E1.1</text><text class="d-m" x="704" y="122" text-anchor="middle">tests this pairing</text><text class="d-m" x="704" y="140" text-anchor="middle">about 15 min GPU</text>'
+     f'<text class="d-t" x="374" y="136">SMs: enough, 16–32</text><text class="d-t" x="374" y="160">allowance: steady</text><text class="d-m" x="374" y="182">two methods · measured Nov 16</text>'
+     f'<path class="d-ln" d="M590 116H636" marker-end="url(#arr)"/><rect class="d-good" x="638" y="76" width="132" height="80" rx="8"/><text class="d-b" x="704" y="102" text-anchor="middle">Measured</text><text class="d-m" x="704" y="122" text-anchor="middle">decode cost halved</text><text class="d-m" x="704" y="140" text-anchor="middle">no tail</text>'
      f'<text class="d-m" x="10" y="238">another idea, the finer method of C1, and one idea that the measurements rule out</text>'
      f'<rect class="d-warn" x="10" y="246" width="246" height="46" rx="8"/><text class="d-b" x="22" y="266" style="font-size:13px">C2 a tenant that uses less</text><text class="d-m" x="22" y="284">same work, fewer bytes moved</text>'
      f'<rect class="d-warn" x="267" y="246" width="246" height="46" rx="8"/><text class="d-b" x="279" y="266" style="font-size:13px">C1, finer method</text><text class="d-m" x="279" y="284">one burst spans about 30 decode steps</text>'

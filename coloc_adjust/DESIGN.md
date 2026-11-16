@@ -3,7 +3,7 @@
 Date: 2026-11-05. Successor of `branches/vram-limit/reports/report_colocation_ft.md` §2 ("the
 view"): the decode node's VRAM has an elastic region that follows the request rate, and a
 preemptable fine-tuning tenant lives in whatever that region leaves free. The old report could
-only propose the resize (vLLM 0.15 had no runtime budget API); `kvcached_validation/REPORT.md`
+only propose the resize (vLLM 0.15 had no runtime budget API); `reports/1_kv_budget_and_schemes.md` (stage 1)
 established that kvcached main on vLLM 0.30 resizes a running engine's KV budget live at no
 measurable cost, with vLLM's native DRAM offload. This document designs the loop around it.
 
@@ -21,7 +21,7 @@ snapshot interval of work.
 
 | piece | choice | why |
 |---|---|---|
-| decode node | vLLM 0.30.0 + kvcached main (`9106e0f`) + `--kv-offloading-size 28 --kv-offloading-backend native`, **prefix caching off** | the "decode-only emulation" of `kvcached_validation/REPORT.md` §7: GPU holds only in-flight KV, every prefix comes from the DRAM store (stands in for the prefill GPU); live budget change = static restart at every budget |
+| decode node | vLLM 0.30.0 + kvcached main (`9106e0f`) + `--kv-offloading-size 28 --kv-offloading-backend native`, **prefix caching off** | the "decode-only emulation" of `reports/1_kv_budget_and_schemes.md` (stage 1) §7: GPU holds only in-flight KV, every prefix comes from the DRAM store (stands in for the prefill GPU); live budget change = static restart at every budget |
 | budget knob | `kvctl limit <ipc> <bytes>` (visible in ~1.3 s; pages released as requests finish; new admissions wait rather than preempt) | measured in Experiment A |
 | tenant | Qwen2.5-0.5B, LoRA r=16 on q/k/v/o, bf16, batch 8×512 tokens per optimizer step, AdamW + cosine schedule, synthetic deterministic batches | the trainer of the colocation-ft study, in a 1-step-per-budget-check loop |
 | compute sharing | MPS daemon on, idle-window gate: engine publishes its busy window to `/dev/shm`, the trainer issues each transformer block's kernels only while decode is idle, with a 1-block CUDA-event fence (gate v1.1, the frontier scheme of the colocation-ft study: TTFT at 1×, TPOT +41 %, no knob) | best inference protection measured; MPS lets kernels co-reside instead of time-slicing |

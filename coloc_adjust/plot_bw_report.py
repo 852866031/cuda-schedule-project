@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Data figures of report/REPORT_bandwidth.md (one message per figure).
+"""Data figures of reports/2_bandwidth.md (one message per figure).
     python plot_bw_report.py            -> report/figures/bw_*.png
   bw_knee.png        decode alone: read rate against the SMs it gets (results/knee_probe.csv)
   bw_slowdown.png    decode slowdown against the reader's GB/s, one line per reader SM count (results/aggr_corun.csv)

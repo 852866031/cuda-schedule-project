@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Round-2 summary tables for the report (markdown to stdout and report/round2_tables.md):
+"""Round-2 summary tables for the report (markdown to stdout and results/round2_tables.md):
   1. baseline 600 W vs 500 W (TPOT, queue) per phase
   2. decode per scheme (TPOT p50 / queue wait) and tenant per scheme (tok/s)
   3. accounting metrics per scheme from the VRAM scheduler log: time the tenant held more than its budget,
@@ -13,7 +13,7 @@ from arm_names import NAMES
 
 ap = argparse.ArgumentParser(); ap.add_argument("--dir", default="results"); ap.add_argument("--old", default="results_600w")
 ap.add_argument("--schemes", nargs="+", default=["adjust_notenant", "static_split", "static_split_gate", "adjust", "adjust_nogate", "adjust_mps20", "green_split", "tpot_slo5", "tpot_slo15", "green_dyn2", "pf_base", "pf_mps", "pf_mps20", "pf_split"])
-ap.add_argument("--out", default="report/round2_tables.md")
+ap.add_argument("--out", default="results/round2_tables.md")
 args = ap.parse_args()
 TOTAL, FIXED_OLD = 31.3536, 17.7
 L = []

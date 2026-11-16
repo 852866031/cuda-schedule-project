@@ -9,7 +9,7 @@ questions the research proposal depends on:
 2. Does kvcached coexist with LMCache's multi-process connector doing asynchronous KV
    offload/load to host RAM at the same time?
 
-Results: [`REPORT.md`](REPORT.md). Run-by-run predictions and outcomes: [`DECISIONS.md`](DECISIONS.md).
+Results: [`../reports/1_kv_budget_and_schemes.md`](../reports/1_kv_budget_and_schemes.md), part 1 (Chinese: `_zh`). Run-by-run predictions and outcomes: [`DECISIONS.md`](DECISIONS.md).
 
 ## Environment
 

@@ -1,6 +1,8 @@
 # CUDA scheduling project
 
-Every branch of this repository, gathered in one place. Each directory under `branches/`
+Every branch of this repository, gathered in one place.
+
+**Nov 2026 work on this branch (KV budget, colocation, bandwidth interference, C1/C2, prefill tenant):** four reports in [`reports/`](reports/), each in English and Chinese. Each directory under `branches/`
 is the full tree of the branch of the same name, merged with its history, so
 `git log -- branches/<name>/` and the original branches both remain usable.
 
