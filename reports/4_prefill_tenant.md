@@ -4,11 +4,13 @@
 engine does not need at low load. Can that tenant be a second inference engine that only does
 prefill (the prefill node of a disaggregated pair), instead of a LoRA fine-tune job?
 
-**Answer.** It follows the VRAM scheduler's budget with no change to vLLM, but its fixed GPU-memory
-footprint (4.5 GiB) is too large: it fits beside the decode engine only at ≤ 1 req/s and sleeps
-through every phase of 2 req/s or more. It is limited by GPU memory, not by compute. A second
-attempt (Nov 16), with the tenant's SM share following the VRAM scheduler on prebuilt green
-contexts, gave no result: the engine faulted at its first switch.
+**Answer.** It follows the VRAM scheduler's budget with no change to vLLM. In these runs it worked
+almost only at ≤ 1 req/s and slept through nearly every phase of 2 req/s or more: what limited it
+was GPU memory, not compute. But the runs booked its fixed footprint (4.5 GiB) twice, which left
+4.8–5.8 GiB instead of 9.4 GiB for both engines' KV (found in the review of Nov 16, section 1.3).
+Whether it fits at 2 req/s with the footprint booked once was not measured. A second attempt
+(Nov 16), with the tenant's SM share following the VRAM scheduler on prebuilt green contexts, gave
+no result: the engine faulted at its first switch.
 
 This report compares against the fine-tune tenant schemes of
 [1_kv_budget_and_schemes.md](1_kv_budget_and_schemes.md). Why a tenant slows decode at all is in
@@ -21,7 +23,7 @@ This report compares against the fine-tune tenant schemes of
 |---|---|
 | GPU | RTX 5090, 31.35 GiB GPU memory, 170 SMs, GPU 0, power capped at 500 W |
 | host | 60 GiB host RAM; vLLM's host-RAM KV tiers live in /dev/shm (31 GiB) |
-| decode engine | Llama-3-8B, vLLM 0.30 + kvcached main (instance `vllm_b`), native host-RAM KV offload, prefix caching off |
+| decode engine | Llama-3-8B, vLLM 0.30 + kvcached main (instance `vllm_a`), native host-RAM KV offload, prefix caching off |
 | tenant engine | Qwen2.5-3B fp8, second vLLM 0.30 engine, own kvcached instance `vllm_c` |
 | dates | Nov 9 2026 (four schemes, results below); Nov 16 2026 (green-context attempt, no result) |
 | decisions | [DECISIONS.md](../coloc_adjust/report/DECISIONS.md) D14 (bring-up), D19 (outcome), D28 (Nov 16) |
@@ -33,6 +35,18 @@ engine's kvcached KV limit from the router's exact KV demand and publishes what 
 tenant's *budget*. *Adapter*: `pf_tenant.py`, which turns the budget into the tenant engine's
 actions. *Scheme*: one way of running the pair (tenant, compute sharing, memory policy). *Phase*:
 one interval of constant decode arrival rate in the reference schedule.
+
+*Prefill*: the pass over the prompt that builds its KV cache (the per-token attention state);
+*decode*: the token-by-token generation after it. *Tenant*: the second job that shares the GPU with
+the decode engine. *TPOT*: time per output token (p50 = median). *SM*: streaming multiprocessor,
+the GPU's compute unit (170 on this card). *MPS*: NVIDIA Multi-Process Service, which lets two
+processes run on one GPU at the same time and can cap a process's share of the SMs. *Green
+context*: a CUDA context bound to a fixed subset of the SMs. *CUDA stream*: the queue on which a
+process submits GPU work; each green context has its own. *CUDA graph*: a recorded sequence of GPU
+kernels that vLLM replays instead of launching them one by one. *kvcached*: the library that maps
+the engine's KV memory on demand, under a limit that can be changed while the engine runs. *NVML*:
+NVIDIA's management library, used here to read used GPU memory. *Xid 31*: an NVIDIA driver error
+code for a GPU memory-access (MMU) fault. *fp8*: weights stored as 8-bit floating point.
 
 ## 1. What was built
 
@@ -68,7 +82,7 @@ Every 100 ms the adapter reads the budget file and moves between three states.
 |---|---|---|
 | running | budget ≥ 0.5 GiB | sets the 3B's kvcached limit to the budget (256 MiB steps, at most 8 GiB); in-flight prompts are bounded by it |
 | holding | budget < 0.5 GiB | new prompts wait at the adapter; in-flight ones finish; limit at its 256 MiB floor; admission resumes as soon as the budget is back |
-| asleep | 3 s of holding with nothing in flight | calls vLLM `/sleep?level=1` (weights to host RAM, KV discarded; needs `VLLM_SERVER_DEV_MODE=1`): 4.5 → 1.4 GiB on the GPU in ≈ 260 ms; `/wake_up` (≈ 260 ms) when the budget is back above 1.5 GiB (0.5 GiB + 1 GiB wake margin) |
+| asleep | 3 s of holding with nothing in flight | calls vLLM `/sleep?level=1` (weights to host RAM, KV discarded; needs `VLLM_SERVER_DEV_MODE=1`): 4.5 → 1.3 GiB on the GPU in ≈ 260 ms; `/wake_up` (≈ 260 ms) when the budget is back above 1.5 GiB (0.5 GiB + 1 GiB wake margin) |
 
 It writes its footprint (fixed + kvcached mapped) to the state file the VRAM scheduler reads.
 
@@ -80,15 +94,27 @@ It writes its footprint (fixed + kvcached mapped) to the state file the VRAM sch
 ### 1.3 Memory accounting
 
 The runner measures the tenant engine's fixed footprint by NVML right after the engine starts (used
-memory before vs after): **4.50 GiB** (fp8 weights, CUDA context, kvcached segment). It passes
-this to the VRAM scheduler. The budget is then
+memory before vs after): 4.50 GiB in `pf_mps`, 4.05 GiB in `pf_mps20`, 4.54 GiB in `pf_split` (fp8
+weights, CUDA context, kvcached segment). It passes this to the VRAM scheduler. The intended budget
+was
 
 `31.35 − 16.97 (8B fixed) − 4.50 (3B fixed) − 0.5 (safety) − 8B KV limit` GiB,
 
-so the 8B's KV and the 3B's KV share a pool of **9.4 GiB**. The 8B's limit is capped at memory that
-is actually free, so the GPU was never oversubscribed (0 s in any run).
+a pool of 9.4 GiB for the 8B's KV limit plus the 3B's KV.
 
-### 1.4 Schemes (`run_eval_pf.sh`)
+**The runs did not use that pool.** The VRAM scheduler measures the decode engine's fixed footprint
+itself at its own start (NVML used memory minus the 8B's mapped KV). In these runs it started after
+the tenant engine, so that number already contained the tenant: 21.46 / 21.02 / 21.50 GiB instead
+of 16.97. The tenant's footprint was then subtracted a second time. The pool on every tick of the
+runs was **4.89 GiB** (`pf_mps`), **5.79 GiB** (`pf_mps20`) and **4.82 GiB** (`pf_split`)
+(`limit_gib + ft_budget_gib` in `../coloc_adjust/results/pf_*_controller.csv`), about 4.5 GiB less
+than intended. NVML showed 7.5–8.0 GiB free (median over each run). This was found on Nov 16, in
+the review of this report; the Nov 16 runs of section 5 have the same double count.
+
+The 8B's limit is capped at memory that is actually free, so the GPU was never oversubscribed (0 s
+in any run).
+
+### 1.4 Schemes (`run_eval_pf.sh`; `pf_base` has no tenant engine)
 
 | scheme | compute sharing | memory |
 |---|---|---|
@@ -109,7 +135,8 @@ first 10 s of each phase.
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | req/s | 1 | 2 | 3 | 1 | 4 | 0.5 | 2 | 3 | 2 | 1 | 1 |
 
-Decode is judged on TPOT p50 and the VRAM scheduler's queue wait. The tenant is judged on delivered
+Decode is judged on TPOT p50 and on the queue wait inside the decode engine (vLLM's
+`request_queue_time`: how long a request waits before the engine schedules it). The tenant is judged on delivered
 prompt tokens/s, prompt latency at the adapter (adapter queueing included), failures, and the share
 of each phase it spends asleep.
 
@@ -127,21 +154,25 @@ at 3 and 4 req/s in ms; tenant throughput in k prompt tok/s at 0.5 / 1 / 2 req/s
 | `pf_mps20` | 12.5 (+4 %) | 13.7 (+8 %) | 16.4 (+1 %) | 21.4 (+0 %) | 25.3 (−8 %) | 240 / 2176 | 8.9 / 7.1 / 0.6 |
 | `pf_split` | 12.6 (+4 %) | 13.4 (+6 %) | 16.3 (+0 %) | 21.3 (−0 %) | 25.4 (−8 %) | 262 / 6659 | 9.3 / 6.9 / 0.0 |
 
-0 failed requests in every run. `pf_base` equals the main baseline of report 1 (TPOT within 0.2 ms,
-except 27.5 vs 26.1 ms at 4 req/s; queue identical), so shrinking the 8B's host-RAM tier from 28 to
-25.5 GiB cost nothing.
+0 failed requests in every run. `pf_base` is close to the main baseline of report 1: TPOT within
+0.1 ms at 0.5–2 req/s, 21.3 vs 20.8 ms at 3 req/s and 27.5 vs 26.1 ms at 4 req/s; queue wait
+219 / 1303 ms vs 214 / 1292 ms. Each is one run, so the differences at 3 and 4 req/s are not
+explained; the 8B's host-RAM tier is 25.5 GiB here against 28 GiB there.
 
 ![schemes](../coloc_adjust/report/figures/arms_pf.png)
 
 *Figure 3 — the three tenant schemes against `pf_base` (`plot_arms.py --pf`): (a) decode TPOT,
 (b) queue wait, (c) delivered prompt tok/s, per arrival rate (marker = mean over phases, bar =
-min..max). The three tenant lines nearly coincide.*
+min..max). The three tenant lines nearly coincide in (a). In (b) they differ at 4 req/s
+(2.2–6.7 s), and `pf_split` reads 469 ms at 0.5 req/s (others 97–110 ms), the phase right after its
+4 req/s backlog.*
 
 ![tradeoff](../coloc_adjust/report/figures/arms_pf_tradeoff.png)
 
 *Figure 4 — decode slowdown over `pf_base` against tenant prompt tok/s, one point per scheme and
-phase. The three compute mechanisms lie on one line, with a slope of ≈ 1 % per 1k prompt tok/s.
-The fine-tune tenant's slope is 2.2 % per 1k tok/s (report 1).*
+phase. The three compute mechanisms are not separated. The dashed line is a fit through the
+origin, +0.7 % per 1k prompt tok/s (the legend's "FT tok/s" means prompt tok/s); single phases lie
+several points off it. The fine-tune tenant's slope is 2.2 % per 1k tok/s (report 1).*
 
 ### 3.2 By phase
 
@@ -171,8 +202,8 @@ Full per-phase tables with queue wait, KV limit and budget:
 rate; shaded = 2 req/s or more (`../coloc_adjust/plot_recap_figs.py`, from `../coloc_adjust/results/pf_*_phases.csv`).
 Top: delivered prompt tok/s (dotted line: the 3.1k offered). Middle: share of the phase the engine
 is awake. Bottom: prompt latency p50 at the adapter (log scale). In the shaded phases the tenant
-does almost no work; in the others it delivers more than is offered because it drains its backlog.
-The schemes differ mainly in when they wake, not in compute.*
+does almost no work. In most of the others it delivers more than is offered because it drains its
+backlog; in the last phase `pf_mps` and `pf_split` deliver 2.6k and 3.0k, below the offered 3.1k.*
 
 ### 3.3 Over time
 
@@ -180,54 +211,68 @@ The schemes differ mainly in when they wake, not in compute.*
 
 *Figure 6 — the tenant under `pf_mps` over the run (`analyze_pf.py`). Top: delivered prompt tok/s in
 5-s bins. Middle: latency of every prompt, adapter queueing included (the ≈ 70 ms floor is the
-prefill itself). Bottom: the tenant's KV limit, with holding (light) and asleep (dark) spans. The
-2, 3 and 4 req/s phases are asleep from end to end. Throughput comes in bursts of up to 50k tok/s
+prefill itself). Bottom: the tenant's KV limit, with holding (light, "paused" in the legend) and
+asleep (dark) spans. The 2, 3 and 4 req/s phases are asleep for the whole measured part (first 10 s
+skipped). Throughput comes in bursts of up to 50k tok/s
 when the engine wakes and drains the prompts that queued while it slept.*
 
 ![pf_split timeline](../coloc_adjust/report/figures/pf_split_pf.png)
 
-*Figure 7 — the same for `pf_split`. In the 4 req/s phase (360–420 s) the budget came back briefly,
-the engine woke and prefilled 2.0k tok/s, and the 8B's queue wait in that phase was 6.7 s against
-3.4 s under `pf_mps`.*
+*Figure 7 — the same for `pf_split`. The engine woke at 317 s, in the 1 req/s phase, with 220
+prompts queued. When the 4 req/s phase began (360 s), 72 of them were still in flight. The budget
+was 0 for almost the whole phase: the adapter held new prompts, the in-flight ones finished, and
+the engine slept at 378 s. It delivered 2.0k tok/s in that phase; the 8B's queue wait there was
+6.7 s against 3.4 s under `pf_mps`.*
 
 ## 4. What this shows
 
-1. **Memory sets the limit, compute does not.** The 4.5 GiB fixed footprint leaves 9.4 GiB for both
-   engines' KV. From 2 req/s on, the 8B's own demand exceeds that pool. The budget falls to zero,
-   the adapter holds prompts, and the engine sleeps for the whole phase. The tenant works only in the
-   0.5 and 1 req/s phases, and under `pf_mps` it is still asleep 33–57 % of each 1 req/s phase
-   (Section 3.2).
-2. **So the three compute mechanisms are indistinguishable.** MPS, a 20 % MPS cap and a disjoint
-   128/42 SM split give the same decode cost (+4–8 % at 0.5–1 req/s, 0 % from 2 req/s on) and the
-   same tenant throughput. Compute never became the limit.
+1. **In these runs memory set the limit, not compute; and the memory was booked too small.** The
+   scheduler's booking left 4.8–5.8 GiB for both engines' KV (Section 1.3). From 2 req/s on, the
+   8B's KV limit (7.5–8.0 GiB at 2 req/s) exceeds that pool. The budget falls to zero, the adapter
+   holds prompts, and the engine sleeps. The tenant works almost only in the 0.5 and 1 req/s phases
+   (two exceptions in Section 3.2: `pf_mps20` at 480 s, `pf_split` at 360 s), and under `pf_mps` it
+   is still asleep 33–57 % of each 1 req/s phase: its median budget in three of the four 1 req/s
+   phases was 0.39 GiB, below the adapter's 0.5 GiB hold threshold. With the footprint booked once
+   the pool would be 9.4 GiB; where the tenant then stops fitting was not measured.
+2. **The three compute mechanisms cost decode the same; the tenant's own speed differs.** MPS, a
+   20 % MPS cap and a disjoint 128/42 SM split give the same decode cost (+4–8 % at 0.5–1 req/s,
+   0 % at 2 and 3 req/s). The tenant's prefill is slower under the cap and the split: the fastest
+   prompt took 67 ms under `pf_mps`, 257 ms under `pf_mps20` and 213 ms under `pf_split`. Per phase
+   the delivered tokens are similar, because the offered 3.1k tok/s is below all three rates.
 3. **Delivered throughput is backlog, not steady state.** The offered load is 3.1k prompt tok/s.
-   The 6–13k tok/s in the awake phases are prompts that queued during sleep, drained in bursts
-   (Figure 6). This is also why prompt latency at the adapter is 45–190 s (median) in the sleeping
-   phases and ≈ 70 ms when the engine is awake and idle.
-4. **The tenant's footprint costs decode at high load.** The 8B's maximum KV limit is 12.0 GiB
-   (`pf_mps`, `pf_split`) or 12.5 GiB (`pf_mps20`) against 12.65 GiB in `pf_base`. At 4 req/s the
+   In the 0.5 and 1 req/s phases it delivers 2.6–13.4k tok/s (Section 3.2); what exceeds 3.1k is
+   prompts that queued during sleep, drained in bursts (Figure 6). This is also why prompt latency
+   at the adapter is 23–187 s (median per phase) in the sleeping phases and ≈ 70 ms under `pf_mps`
+   when the engine is awake and idle.
+4. **The tenant's footprint costs decode at high load.** In the 3 and 4 req/s phases the 8B's KV
+   limit (phase median) is 12.0 GiB (`pf_mps`, `pf_split`) or 12.5 GiB (`pf_mps20`) against
+   12.65 GiB, the scheduler's ceiling, in `pf_base`. At 4 req/s the
    8B therefore queues longer: 2.2–6.7 s against 1.3 s. Its TPOT is 8–9 % lower there for the same
    reason: fewer requests in the batch. Smaller batch and longer queue is a cost, not a gain.
-5. **Per prompt token, prefill is a cheap tenant.** +6 % decode for 6–7k prompt tok/s is ≈ 1 % per
-   1k tok/s, against 2.2 % for the fine-tune tenant. A prefill batch of up to 8k tokens reads the
-   weights once, so it moves fewer bytes per token than a training step. This matches the relation
-   found for the fine-tune tenant: decode's cost follows the bytes the tenant moves per token
-   ([2_bandwidth.md](2_bandwidth.md)).
+5. **Per prompt token, prefill is a cheap tenant.** +6 % decode for 6–7k prompt tok/s is 0.7–1 %
+   per 1k tok/s, against 2.2 % for the fine-tune tenant. A prefill batch of up to 8k tokens reads
+   the weights once. If it therefore moves fewer bytes per token than a training step, this is
+   consistent with the relation found for the fine-tune tenant ([2_bandwidth.md](2_bandwidth.md)).
+   The prefill tenant's bytes per token were not measured.
 6. **The mechanism works without changing vLLM.** An adapter, the kvcached limit and vLLM's sleep
    mode are enough to make a prefill engine follow the budget; leaving the GPU takes ≈ 260 ms.
    Nothing failed and the GPU was never oversubscribed.
 
-### 4.1 Two accounting gaps found
+### 4.1 Three accounting gaps found
 
-Both make the tenant look worse than it has to be.
+All three make the tenant look worse than it has to be.
 
-- **The sleeping footprint is not credited back.** Asleep, the engine holds 1.4 GiB, but the VRAM
-  scheduler keeps booking the 4.5 GiB measured at start. About 3 GiB sit idle in every phase of
-  2 req/s or more. The 8B's KV could have used them to queue less at 4 req/s.
+- **The fixed footprint is booked twice** (Section 1.3). This is the largest of the three: 4.5 GiB.
+- **The sleeping footprint is not credited back.** Asleep, the engine holds 1.3 GiB (D14:
+  1377 MiB), but the VRAM scheduler keeps booking the 4.5 GiB measured at start. The booking lowers
+  only the tenant's own budget. The 8B's KV limit is capped by the memory NVML reports free: at
+  4 req/s that cap held it at 12.0–12.5 GiB (12.65 GiB requested) with 1.6–1.9 GiB free on the GPU
+  (`pf_base`: 1.6 GiB).
 - **The wake margin is below the wake cost.** The adapter wakes when the budget exceeds 1.5 GiB
-  (0.5 GiB + 1 GiB margin). Waking puts about 3.1 GiB of weights back on the GPU within 260 ms.
-  In `pf_split` this let the engine wake inside the 4 req/s phase, and the 8B's queue wait doubled
-  (Figure 7). This is a defect of the adapter, not of the disjoint SM split.
+  (0.5 GiB + 1 GiB margin); a wake puts 3.5 GiB back on the GPU within 260 ms (D14: 1377 →
+  4945 MiB). No run shows what this gap costs. The doubled queue wait of `pf_split` at 4 req/s
+  coincides with something else: the engine was still finishing 72 in-flight prompts when the phase
+  began and slept 18 s into it (Figure 7).
 
 ## 5. Nov 16: tenant SM share following the VRAM scheduler — no result
 
@@ -237,16 +282,20 @@ Both make the tenant look worse than it has to be.
 because this tenant is limited by GPU memory, and the tenant's own prefill slows down. It was not
 tested.
 
-**What happened.** The engine ran its start-up steps on its default stream. At the first step of
-the load it moved to the 128-SM green context, and at that moment the driver logged Xid 31 (MMU
-fault). The fault also took down the decode engine, because both engines are clients of one MPS
-server. Every request of the run failed.
+**What happened** (`pf_green_dyn`, 04:57–05:10). The engine ran its start-up steps on its default
+stream. At the first step of the load it moved to the 128-SM green context, and at that moment
+(05:00:01) the driver logged Xid 31 (MMU fault). The fault also took down the decode engine; both
+engines are clients of one MPS server. Every request sent after the fault failed: 54 of the 1,217
+decode requests were answered, all before it, and none of the tenant's 715 prompts.
 
-**The first diagnosis was wrong.** It was that CUDA graphs captured on the default stream cannot be
-replayed on a green context. The run was repeated with the tenant engine in `--enforce-eager` (no
-CUDA graphs). The fault came back at the first switch. So CUDA graphs are not the cause, or not
-the only one. The reference runs of the same night (`pf_mps`, `pf_mps_eager`) ran normally. Data of
-the two faulted runs is not reported.
+**The first diagnosis did not hold.** It was that CUDA graphs captured on the default stream cannot
+be replayed on a green context. The run was repeated with the tenant engine in `--enforce-eager`
+(no CUDA graphs; `pf_green_dyn_eager`, 05:25–05:40). The fault came back at the first switch
+(05:28:05), with the same counts: 54 of 1,217 decode requests answered and none of the tenant's
+714 prompts. So CUDA graphs are not the cause, or not the only one. The reference runs of the same
+night (`pf_mps`, `pf_mps_eager`) completed without a fault. All four runs of that night had the
+tenant's sleep state off (`PF_SLEEP` unset), unlike Nov 9, so their numbers are not comparable with
+Section 3. Data of the two faulted runs is not reported.
 
 **What is known.**
 
@@ -254,11 +303,14 @@ the two faulted runs is not reported.
 |---|---|---|
 | prefill engine on one green context from its first step (`pf_split`, Nov 9) | none | no fault |
 | fine-tune tenant switching between prebuilt green contexts (report 1) | between green contexts | no fault |
-| prefill engine, CUDA graphs on (`pf_green_dyn`, Nov 16) | default stream → green context | Xid 31 at first switch |
-| prefill engine, CUDA graphs off (`pf_green_dyn_eager`, Nov 16) | default stream → green context | Xid 31 at first switch |
+| prefill engine, CUDA graphs on (`pf_green_dyn`, Nov 16) | default stream → green context, then between green contexts | Xid 31 at first switch |
+| prefill engine, CUDA graphs off (`pf_green_dyn_eager`, Nov 16) | default stream → green context, then between green contexts | Xid 31 at first switch |
 
-The one difference left is an engine that leaves the stream it started on. Whether that is the
-cause is **an open question**. Untested next step: put the engine on the largest prebuilt green
+Both faulted runs have a vLLM engine that leaves the stream it started on. That is not the only
+difference from the two fault-free setups: the tenant process holds five green contexts instead of
+one, and the decode engine ran on all SMs under MPS instead of on its own disjoint 128-SM green
+context. The fine-tune tenant also starts on the default stream and moves to a green context
+without fault. Which difference causes the fault is **an open question**. Untested next step: put the engine on the largest prebuilt green
 context from its very first step and switch only among green contexts.
 
 ## 6. Limits
@@ -269,21 +321,24 @@ context from its very first step and switch only among green contexts.
   (32 GiB) and one decode model (8B). The fit threshold (≤ 1 req/s) belongs to this combination.
 - The tenant's KV is a sink: written to host RAM and never read back. A real prefill–decode pair
   would also move that KV to a decode node; that traffic is not in these numbers.
-- The ≈ 1 % per 1k prompt tok/s slope comes from burst draining after sleep, not from a steady
+- The 0.7–1 % per 1k prompt tok/s slope comes from burst draining after sleep, not from a steady
   prefill stream.
-- Both accounting gaps (Section 4.1) were present in every tenant run, so the results show the
-  tenant with the larger booking and the smaller wake margin.
+- All three accounting gaps (Section 4.1) were present in every tenant run. In particular the
+  tenant's fixed footprint was booked twice, so "fits only at ≤ 1 req/s" holds for a pool of
+  4.8–5.8 GiB, not for the 9.4 GiB the card could give.
 - Section 5 produced no measurement.
 
 ## 7. Open questions and next steps
 
-- (a) Make the VRAM scheduler read the tenant's live footprint from the state file (1.4 GiB asleep)
-  instead of the fixed 4.5 GiB, and give the freed ≈ 3 GiB to the 8B's KV limit (less queueing at
-  4 req/s). Not implemented.
-- (b) Wake only when the budget exceeds the weights (≈ 3.1 GiB) plus the first prompt's KV, or let
+- (a) Book the tenant's footprint once (Section 1.3) and rerun: this is the first thing to do,
+  since it decides whether the tenant fits at 2 req/s. Then make the VRAM scheduler use the
+  tenant's footprint while asleep instead of the fixed 4.5 GiB; the state file reports a constant
+  for the sleeping engine (0.67 GiB), not a measurement. Not implemented; the effect on the queue
+  at 4 req/s is not known.
+- (b) Wake only when the budget exceeds the weights (≈ 3.5 GiB) plus the first prompt's KV, or let
   the VRAM scheduler grant the wake. Not implemented.
-- (c) A smaller fixed footprint, e.g. a 1.5B fp8 engine (≈ 2.5 GiB). The prediction was that it
-  fits up to 2 req/s; it was not tested.
+- (c) A smaller fixed footprint, e.g. a 1.5B fp8 engine. Its footprint was estimated at ≈ 2.5 GiB
+  and predicted to fit up to 2 req/s; neither was measured.
 - (d) The Xid 31 fault of Section 5: start the engine on the largest prebuilt green context and
   switch only among green contexts. Only after that can the SM share be made to follow the load.
 - (e) A real prefill–decode pair: the 3B's KV read back by a decode node instead of being a sink.

@@ -11,10 +11,11 @@ memory and compute must go to a tenant without hurting decode.
 **Answer in one sentence each.** Stage 1: kvcached changes a running vLLM engine's KV budget within
 about 1.3 s, kills no request, costs nothing per step, and at every budget the engine behaves as if
 it had been restarted at that budget. Stage 2: a router and a VRAM scheduler outside vLLM make the KV
-budget follow the load and hand the rest of GPU memory to a fine-tune tenant with 0 failures,
-0 preemptions and 0 s oversubscribed; the tenant's use of compute costs decode about +2.2 % TPOT per
-1 k tenant tokens/s, wherever the tenant's SMs are, and this cost was left unexplained at the end of
-stage 2.
+budget follow the load and hand the rest of GPU memory to a fine-tune tenant with 0 s oversubscribed
+in every run, and no failed or preempted request in seven of the nine runs (MPS 20 %: engine
+preemptions at 3–4 req/s; 5 % SLO: 1 failed request of 1,185); the tenant's use of compute costs
+decode about +2.2 % TPOT per 1 k tenant tokens/s, on shared SMs and on a disjoint 128/42 split
+alike, and this cost was left unexplained at the end of stage 2.
 
 **Terminology.** Two memories appear here and are kept apart by name. **GPU memory** is the card's own
 memory (31.35 GiB usable); "GPU memory bandwidth" is the path between the SMs and GPU memory, and
@@ -23,15 +24,24 @@ the KV offload tier, the tenant's offloaded activations, streamed weights and sn
 move over PCIe. "Scheme" is one way of sharing the GPU between the engine and the tenant. The "VRAM
 scheduler" is the process that sets the engine's KV limit and the tenant's budget (`controller.py`).
 
+**KV** is the per-request key-value cache of the model (128 KiB per token here); **kvcached** is a
+library that maps and unmaps vLLM's KV cache on demand. An **SM** (streaming multiprocessor) is one
+of the GPU's 170 compute units. **TTFT** is the time to the first output token, **ITL** the gap
+between two output tokens, **TPOT** the time per output token of a request after the first; p50 /
+p90 / p95 are percentiles. A **preemption** is vLLM dropping a running request's KV and recomputing
+it later. **MPS** (NVIDIA Multi-Process Service) lets two processes run on one GPU at the same time
+and can cap a client's share of SM threads. A **green context** is a CUDA context bound to a fixed
+subset of the SMs. **NVML** is NVIDIA's monitoring library.
+
 ## Platform
 
 | item | value |
 |---|---|
-| GPU | RTX 5090, 170 SMs, 31.35 GiB of GPU memory usable. Stage 1 on GPU 0. Stage 2 round 2 on GPU 0, both GPUs capped at 500 W (round 1: GPU 1, 600 W) |
+| GPU | RTX 5090, 170 SMs, 31.35 GiB of GPU memory usable. Stage 1 on GPU 0 (the Nov 9 LMCache retest: GPU 1). Stage 2 round 2 on GPU 0, both GPUs capped at 500 W (round 1: GPU 1, 600 W) |
 | host | 60 GiB host RAM, PCIe ≈ 14 GB/s, `/dev/shm` 31 GiB |
 | software | vLLM 0.30.0 with Model Runner V2 (`VLLM_USE_V2_MODEL_RUNNER=1`, required by kvcached on vLLM ≥ 0.29), torch 2.13.0+cu130, LMCache 0.5.6 |
-| kvcached | 0.1.6 (PyPI) for stage-1 experiments A and B; main `9106e0f` (2026-11-04) for the stage-1 sweeps and all of stage 2 |
-| inference model | Llama-3-8B bf16, 128 KiB of KV per token (a 6144-token prefix ≈ 0.77 GiB) |
+| kvcached | 0.1.6 (PyPI) for stage-1 experiments A (1.1) and B (1.2, the 0.1.6 rows); main `9106e0f` (2026-11-04) for the stage-1 sweeps and all of stage 2 |
+| inference model | Llama-3-8B bf16, 128 KiB of KV per token (a 6144-token prefix = 0.75 GiB; a request in flight ≈ 0.77 GiB) |
 | tenant | Qwen2.5-0.5B LoRA fine-tune (r = 16 on q/k/v/o, bf16, 8 × 512 tokens per optimizer step) |
 | engine flags | `--max-model-len 8192 --max-num-seqs 32`; `VLLM_USE_FLASHINFER_SAMPLER=0` in every run (FlashInfer's sampler JIT refuses sm_120 in this build; attention on FLASH_ATTN) |
 
@@ -45,21 +55,21 @@ engine reads from a shared-memory segment every 100 ms.
 
 ## 1.1 Shrink and grow under load (kvcached 0.1.6)
 
-kvcached at engine start: 13.7 GiB KV budget (104,704 tokens), 64 MiB mapped at idle. Prefix caching
+kvcached at engine start: 12.78 GiB KV budget (104,704 tokens), 64 MiB mapped at idle. Prefix caching
 off, so the only occupied pages belong to running requests. Load: Poisson stream of 6000-token random
-prompts, greedy, `ignore_eos`. A 100 ms sampler records NVML memory, kvcached's own counters and vLLM's
+prompts, greedy, `ignore_eos`. A 100 ms sampler records GPU memory in use (NVML), kvcached's own counters and vLLM's
 gauges; t = 0 of a resize is the first sample in which the new limit is visible.
 
 | run | load | result |
 |---|---|---|
-| A1 | 3.5 req/s × 128 output tokens, limit 12 G → 3 G → 12 G (above prefill capacity, so ~55 queued before the shrink) | 480/480 completed, 0 preemptions. At the shrink 15 requests ran; 7 after 1 s, 4 after 3 s, all by normal completion. NVML memory 29.66 → 20.66 GiB: first movement 0.5 s, within 2 % of the plateau after 2.7 s. Under the 3 G cap exactly 4 requests (4 × 0.75 GiB) were resident; ITL median 19.6 → 12.8 ms (smaller batches). Grow 3.0 → 11.9 GiB in 6.2 s, paced by 6k-token prefill admissions |
+| A1 | 3.5 req/s × 128 output tokens, limit 12 G → 3 G → 12 G (above prefill capacity, so ~55 queued before the shrink) | 480/480 completed, 0 preemptions. At the shrink 15 requests ran; 7 after 1 s, 4 after 3 s, all by normal completion. GPU memory in use (NVML) 29.66 → 20.66 GiB: first movement 0.5 s, within 2 % of the plateau after 2.7 s. Under the 3 G cap exactly 4 requests (4 × 0.75 GiB) were resident; ITL median 19.6 → 12.8 ms (smaller batches). Grow 3.0 → 11.9 GiB in 6.2 s, paced by 6k-token prefill admissions |
 | A2 | 1.2 req/s × 512 output tokens, same limits (~15 requests resident, KV grows during decode) | 160/160 completed with all 512 tokens. No request stopped at the shrink; kvcached used 11.5 → 4.1 GiB in 8 s, under 3 GiB only after 21 s (the resident requests' remaining lifetime). **15 preemptions**, 13 token-stream stalls of 1.7–7.0 s, the first 19.6 s after the shrink. Grow 2.4 → 11.9 GiB in 5.4 s |
 | A3 | 8 GiB budget, never binding; plain vLLM (`--kv-cache-memory-bytes`) against kvcached (`kvctl limit 8G`); 1 req/s × 6000-token prompts × 256 tokens, 120 s | decode step p50 / p90 14.03 / 16.17 ms plain, 14.03 / 16.18 ms kvcached; ITL p99 457.9 / 457.6 ms; TTFT p50 / p90 0.49 / 1.13 s against 0.49 / 1.14 s; greedy outputs of 8 fixed prompts byte-identical |
 
 ![A2: shrink and grow under load](../kvcached_validation/results/expA2.png)
 
 *Figure 1 — run A2. Top: GPU memory in use (NVML), kvcached's used bytes and limit. Middle: median ITL
-per 1-s bin. Bottom: running and waiting requests. Memory falls as resident requests finish, not at the
+per 1-s bin. Bottom: running and waiting requests. GPU memory falls as resident requests finish, not at the
 shrink instant.*
 
 **Mechanism.** kvcached enforces a limit by shrinking vLLM's *logical* block pool. Pages held by running
@@ -89,8 +99,10 @@ LMCache's multi-process (MP) mode runs the cache as a separate server. In the de
 
 **Mechanism of the crash.** On 0.1.6, kvcached orders its page releases against the worker's compute
 stream and pins pages only for vLLM's native `OffloadingConnector`. LMCache's store gather runs on its
-own copy stream in a background thread, so it can read a page after it was unmapped. kvcached main
-orders page unmaps behind the GPU's progress; the decision log (D13) reads the retest as that change
+own copy stream in a background thread and is covered by neither; it read a kvcached address with no
+page mapped. Whether the page had been released earlier or was never backed was not determined.
+kvcached main orders page unmaps behind the GPU's progress; the stage-2 decision log
+(`coloc_adjust/report/DECISIONS.md`, D13) reads the retest as that change
 closing the window. The pin layer written for LMCache was not needed.
 
 Two side observations from the 0.1.6 environment. The connector's own inline transport moved KV at
@@ -129,8 +141,9 @@ window; the last column is the run without offload.
   engine kept serving. From 13 to 4 GiB decode is untouched (ITL 12.6–13.1 ms, 244–277 tok/s). TTFT p50
   rises from 51 to 155 ms because GPU prefix hits fall from 76 % to 43 % and the host-RAM tier takes the
   rest (72 → 95 %); p95 stays under 0.8 s.
-- **The knee is the in-flight KV.** 2 QPS × ~1.8 s ≈ 3.7 requests in flight × 0.77 GiB. Below 4 GiB they
-  no longer fit, and the engine queues: TTFT p50 3.2 s at 3 GiB and 18 s at 2 GiB, with no preemption.
+- **The knee is the in-flight KV.** The in-flight set averages 2 QPS × ~1.8 s ≈ 3.7 requests ×
+  0.77 GiB ≈ 2.9 GiB, with a p95 of ~5.4 GiB. At 3 GiB and below it no longer fits, and the engine
+  queues: TTFT p50 3.2 s at 3 GiB and 18 s at 2 GiB, with no preemption.
   Study 1 found the same knee and flat region with restarts.
 - **Without offload** an evicted prefix must be recomputed (~0.4 s of prefill for 6144 tokens). The knee
   moves up to where the Zipf hot set stops fitting: TTFT p50 is 0.5 s at 8 GiB and 3.5 s at 5 GiB.
@@ -158,17 +171,17 @@ sets of points coincide.*
 
 | GPU KV | live: TTFT p50 / queue wait / TPOT / tok/s / preempt | static (restart): TTFT p50 / queue wait / TPOT / tok/s / preempt |
 |---|---|---|
-| 13 GiB | 51 ms / 27 ms / 13.1 ms / 258 / 0 | 52 ms / 23 ms / 13.1 ms / 258 / 0 |
+| 13 GiB | 51 ms / 27 ms / 13.1 ms / 258 / 0 | 51 ms / 23 ms / 13.1 ms / 258 / 0 |
 | 10 | 55 / 37 / 13.1 / 258 / 0 | 55 / 33 / 13.1 / 258 / 0 |
-| 8 | 58 / 42 / 13.2 / 258 / 0 | 58 / 41 / 13.1 / 258 / 0 |
-| 6 | 67 / 66 / 13.1 / 258 / 0 | 68 / 65 / 13.1 / 258 / 0 |
+| 8 | 58 / 42 / 13.2 / 258 / 0 | 57 / 41 / 13.1 / 258 / 0 |
+| 6 | 67 / 65 / 13.1 / 258 / 0 | 68 / 65 / 13.1 / 258 / 0 |
 | 5 | 137 / 92 / 13.1 / 257 / 0 | 136 / 91 / 13.1 / 257 / 0 |
 | 4 | 154 / 151 / 13.1 / 257 / 2 | 155 / 153 / 13.1 / 257 / 2 |
 | 3 | 2 333 / 2 050 / 12.3 / 252 / 0 | 2 451 / 2 154 / 12.3 / 252 / 0 |
 | 2 | 32 153 / 22 981 / 11.8 / 179 / 0 | 32 134 / 22 996 / 11.8 / 179 / 0 |
 
 On the same timeline the two are indistinguishable: TTFT p50 within 1–2 ms above the knee, TPOT within
-0.1 ms, queue wait within 4 ms, the same 2 preemptions at 4 GiB, the same throughput, and the same deep
+0.1 ms, queue wait within 4 ms from 13 to 4 GiB, the same 2 preemptions at 4 GiB, the same throughput, and the same deep
 queue below the knee. Study 1's preempt-recompute spiral and stall below the knee did not recur here
 even with a static budget: vLLM 0.30's scheduler queues instead.
 
@@ -192,8 +205,8 @@ TPOT is 13.2–13.4 ms from 13 GiB down to 4 GiB in both runs; the GPU holds onl
 at any budget. The 110–150 ms of queue wait in the flat region is the KV fetch itself (0.77 GiB per
 request). From 6 GiB the in-flight set's p95 (~5.4 GiB) starts to touch the limit and queueing grows
 (156 → 375 ms at 6 → 4 GiB). Below 4 GiB the engine is capacity-bound and delivers 226, then 158, of the
-258 tok/s offered, with no failure and no preemption. Live and static agree within 5 ms of queue wait
-and 0.2 ms of TPOT.
+258 tok/s offered, with no failure and no preemption. From 13 to 4 GiB live and static agree within 5 ms of queue wait
+and 0.2 ms of TPOT; below that within 1 %.
 
 ## 1.5 Stage-1 limits
 
@@ -233,7 +246,12 @@ LoRA fine-tune tenant. Nothing inside vLLM's scheduler is changed.
   reference for the current arrival rate and publishes a tokens/s cap for the tenant (multiplicative
   update every 2 s).
 - **Fine-tune tenant** (`ft_worker.py`). Before each optimizer step it reads its budget and picks the
-  highest configuration whose calibrated need fits (drop at once, climb after 3 s). A budget poll every
+  highest configuration whose calibrated need fits (drop at once, climb after 3 s). The
+  configurations form a ladder of tiers: full batch (tier 0); the same 8 × 512 tokens split into
+  k = 2, 4 or 8 micro-batches with accumulated gradients (tier 1); plus gradient checkpointing with
+  the saved activations kept in pinned host RAM, "activation offload" (tier 2); plus the frozen base
+  weights of 12 or 20 layers kept in host RAM and streamed in when used (tier 3); pause, with
+  everything snapshotted to host RAM (tier 4). A budget poll every
   50 ms inside the step preempts a step that no longer fits. The torch allocator cap follows the
   budget, so a mis-estimate OOMs the tenant, never the engine. LoRA weights, optimizer, scheduler, step
   and RNG are snapshotted to host RAM every 10 steps and before every configuration change. The tenant
@@ -287,7 +305,7 @@ tiers, then pause.
 | run | one continuous 11-minute run per scheme (`run_eval6.sh`); per-phase numbers skip the first 10 s of each phase |
 | decode metrics | TPOT, scheduler queue wait, delivered throughput, failures (TTFT here is fetch + 128-token prefill, ~160 ms, so it is not used) |
 | tenant metrics | tokens/s and configuration |
-| baseline | the engine alone with its KV limit following the load (`adjust_notenant`). The 500 W cap changed it by nothing measurable: TPOT within 0.3 ms of the 600 W run in every phase. The GPU draws 290–385 W per phase under this load |
+| baseline | the engine alone with its KV limit following the load (`adjust_notenant`). The 500 W cap changed it by nothing measurable: TPOT within 0.3 ms of the 600 W run in every phase. The GPU draws 284–378 W per phase under this load |
 
 | from (s) | 0 | 90 | 180 | 270 | 360 | 420 | 480 | 510 | 540 | 570 | 600–660 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -324,7 +342,8 @@ lost its tenant, and was rerun with prebuilt contexts as `green_dyn2` (D8–D9, 
 
 ![compute sharing](../coloc_adjust/report/figures/04_compute_sharing.png)
 
-*Diagram 4 — the compute-sharing mechanisms; the memory loop is the same in all of them.*
+*Diagram 4 — the compute-sharing mechanisms; the memory loop is the same in all of them. The
+fifth row (`engine_green`) is a round-1 run, in the table of 2.7.*
 
 ## 2.4 Results per scheme
 
@@ -347,7 +366,7 @@ a mark; the baseline does not take part; cells with several numbers are ranked n
 | 15 % latency SLO | D | ② 12.5 (+5 %) | ③ 14.0 (+11 %) | ③ 17.3 (+6 %) | 20.9 (+1 %) | 24.5 (−6 %) | 280 / ③ 2 277 | 3.8 / 4.0 / 1.5 | ① 1.1 / 2.8 |
 | 5 % latency SLO | D | ③ 12.8 (+7 %) | ② 13.1 (+3 %) | ② 16.9 (+4 %) | 20.8 (−0 %) | 22.3 (−14 %) | 306 / 2 425 | 3.8 / 1.2 / 0.4 | 1.8 / 3.3 |
 
-Three cautions. The idle gate holds ① in every decode column because its tenant did not run. The
+Three cautions. The idle gate holds ① in the TPOT columns and at queue @3 because its tenant did not run. The
 static split holds ① for tenant throughput because it never gives GPU memory back, and pays with
 +32–82 % TPOT and 5–13 s of queueing. The cost column is unstable for the two throttled schemes: their
 slowdown comes in bursts, so the median used here gives 1.1–3.3 % where the mean gives 2.3–2.9 %, and
@@ -359,15 +378,17 @@ same phase.
 *Figure 4 — baseline and the three schemes with the best latency/throughput trade-off: (a) decode TPOT,
 (b) queue wait, (c) tenant throughput, against the arrival rate (marker = mean, bar = min..max over the
 repeated phases). MPS 20 % (green) and dynamic green contexts (cyan) give the tenant 7–12k tok/s at
-0.5–1 req/s for +10–15 % TPOT; the green context gives 40–70 % more tenant throughput and is back on
-the baseline by 2 req/s. The 15 % SLO (pink) stays within its target at every rate and gives the tenant
+0.5–1 req/s for +10–15 % TPOT; the green context gives 40–70 % more tenant throughput at 0.5–1 req/s; at
+2 req/s both give the tenant 2.2–2.3k tok/s for +9–10 % TPOT, and from 3 req/s both lie on the
+baseline. The 15 % SLO (pink) stays within its target at every rate and gives the tenant
 1–5k tok/s. All schemes: [`arms.png`](../coloc_adjust/report/figures/arms.png).*
 
 ![trade-off](../coloc_adjust/report/figures/arms_tradeoff.png)
 
 *Figure 5 — one point per scheme and phase: decode slowdown against the tenant's throughput in that
-phase. MPS, MPS 20 %, the disjoint split and the SLO-capped runs fall on one line, about +2.2 % TPOT per
-1 000 tenant tok/s. Dynamic green contexts (cyan) sit under it (+14 % at 8–12k tok/s). The static
+phase. MPS, the disjoint split and the SLO-capped runs fall on one line, about +2.2 % TPOT per
+1 000 tenant tok/s. MPS 20 % (green, +10–11 % at 6–7k tok/s) and dynamic green contexts (cyan, +14 %
+at 8–12k tok/s) sit under it. The static
 split is off the line: its cost is KV starvation, not the tenant's speed.*
 
 Tenant throughput per phase (tok/s), the same runs:
@@ -410,9 +431,9 @@ against the baseline's p90, best three per column marked; the last column repeat
   dynamic green contexts. Their slowdown is even.
 - **For the two throttled schemes the median looks good at 0.5 req/s and the tail is as slow as with no
   throttle:** +5 % against +29 % (15 % SLO), +7 % against +28 % (5 % SLO); MPS without a cap is at +27 %.
-- **The cause is the feedback loop.** In that phase the cap swings between 500 and 20,000 tok/s; the
-  tenant's longest pause is 8 s and for the rest it runs near full speed. Requests that fall into a
-  full-speed stretch make up the tail.
+- **The tail coincides with swings of the cap.** In that phase the cap swings between 500 and
+  20,000 tok/s; the tenant's longest pause is 8 s and for the rest it runs near full speed. Requests
+  that fall into a full-speed stretch make up the tail (one 60-s phase, 32 requests).
 - **A fixed cap has no such tail.** The shape probe (2.8) uses a fixed 4k tok/s cap; the tenant runs
   0.35 s and pauses 0.67 s in a regular pattern: median +5 %, p90 +6 %. A request takes 1.5–2 s and so
   spans more than one cycle.
@@ -473,14 +494,15 @@ ladder runs unchanged alongside.*
 
 | scheme | decode at 1 / 2 req/s: TPOT, queue wait | tenant at 1 / 0.5 req/s | note |
 |---|---|---|---|
-| `green32` (tenant on 32 SMs; round 1, 600 W) | 14.4 / 16.6 ms, 119 / 132 ms | 6.3k / 7.3k tok/s | the same trade as MPS 20 % |
-| `green_split` (engine 128 SMs, tenant the other 42) | 16.2 / 18.6 ms, 123 / 150 ms | 11.6k / 13.7k | tenant throughput and decode cost both as with uncapped MPS: disjoint SMs alone do not remove the slowdown |
-| `green_dyn2` (prebuilt 128/96/64/32/16-SM contexts, stream switch only) | 14.5 / 17.8 ms, 115 / 134 ms | 9.3k / 11.9k | 898 steps, 174 switches, reserved ≤ 8.7 GiB under a ≤ 9.9 GiB budget: no leak. Half the decode cost of uncapped MPS at 80 % of its tenant throughput |
+| `green32` (tenant on 32 SMs; round 1, 600 W) | 13.9 / 17.6 ms, 118 / 133 ms | 6.4k / 7.3k tok/s | the same trade as MPS 20 % |
+| `engine_green` (the engine's steps on 128 of the 170 SMs; round 1, 600 W; its tenant died in the first phase, so the engine ran alone) | 12.9–13.2 / 15.2 ms | – | equal to the round-1 baseline: decode gives up a quarter of the SMs at no cost |
+| `green_split` (engine 128 SMs, tenant the other 42) | 16.2 / 18.6 ms, 120 / 147 ms | 11.6k / 13.7k | tenant throughput and decode cost both as with uncapped MPS: disjoint SMs alone do not remove the slowdown |
+| `green_dyn2` (prebuilt 128/96/64/32/16-SM contexts, stream switch only) | 14.5 / 17.8 ms, 113 / 135 ms | 9.3k / 11.9k | 898 steps, 174 switches, reserved ≤ 8.7 GiB under a ≤ 9.9 GiB budget: no leak. Half the decode cost of uncapped MPS at 80 % of its tenant throughput |
 
 The dynamic green context (64–96 SMs at 0.5–1 req/s) gives the tenant 9–12k tok/s for +14–15 % TPOT,
 where uncapped MPS on all SMs pays +29 % for 12–14k and the fixed 42-SM partition pays +28 % for 12–14k.
-Why it lies under the Figure-5 line was not identified in stage 2. A fixed partition does not change
-the cost; a share that falls with the load does.
+Why it lies under the Figure-5 line was not identified in stage 2. A fixed disjoint partition does not change
+the cost per token; MPS 20 % and the dynamic green context both lower it.
 
 ## 2.8 Reading the results
 
@@ -495,15 +517,18 @@ lies on the baseline; 5 s after the load falls the limit comes down and the tena
 k = 2 / k = 4. The same figure for every scheme: `coloc_adjust/results/<scheme>_timeline.png`.*
 
 - **Resizing costs decode nothing.** The engine alone with its limit following the load equals the
-  engine alone with a fixed 13 GiB limit in every phase (round 1, TPOT within 0.1 ms). Moving kvcached's
+  engine alone with a fixed 13 GiB limit in every phase (round 1, TPOT within 0.2 ms). Moving kvcached's
   limit between 2 and 12.65 GiB with the load is invisible to the engine.
 - **The memory loop holds, with honest accounting.** Round 2 measures the engine's footprint at start
   (16.97 GiB), reserves 2 GiB for the tenant's context, weights and optimizer and 0.5 GiB safety, and caps
   every grow at the memory actually free. Over every round-2 run, KV mapped + tenant + engine fixed never
-  exceeded the GPU (table below). The tenant's footprint exceeds its budget only while it is paused
-  (0.6 GiB of model and optimizer against a 0 GiB budget, inside the 2 GiB allowance). The price is
+  exceeded the GPU (table below). In four schemes the tenant is above its budget almost only while paused
+  (0.3–0.6 GiB held against a 0–0.4 GiB budget). In the disjoint split the paused tenant holds
+  1.2–1.3 GiB, and in the two SLO schemes it is above budget while not paused for 13 s and 26 s, at
+  times by more than the 2 GiB allowance (the footprint reading is noisy). The grow waits meanwhile
+  and the GPU is never oversubscribed. The price is
   capacity: at 3–4 req/s demand (12.65 GiB) is above what can be mapped with the tenant paused
-  (≈ 12.4 GiB), so the scheduler waits there (`grow_wait` for the whole 4 req/s phase). The KV limit
+  (≈ 12.4 GiB), so the VRAM scheduler waits there (`grow_wait` for the whole 4 req/s phase). The KV limit
   then stops at 11–12.5 GiB instead of 12.65 GiB, and the 4 req/s queue is longer than the baseline's
   (2.2–3.4 s against 1.3 s).
 
@@ -521,28 +546,31 @@ k = 2 / k = 4. The same figure for every scheme: `coloc_adjust/results/<scheme>_
 
   Engine fixed footprint 16.97 GiB in every run.
 - **A static split loses at both ends.** With the engine fixed at 6.69 GiB and the tenant running flat
-  out beside it (12–13k tok/s), decode pays +32–82 % TPOT at 0.5–2 req/s, queues 5–13 s at 3–4 req/s,
-  and the backlog is still 26 s deep when the load has dropped to 0.5 req/s. At low load 4–8 GiB of the
-  engine's budget sit unused.
+  out beside it (11–13k tok/s), decode pays +32–82 % TPOT at 0.5–2 req/s, queues 5–13 s at 3–4 req/s,
+  and the backlog is still 26 s deep when the load has dropped to 0.5 req/s. At 1 req/s without a backlog the engine
+  uses 1.6–1.7 GiB of its 6.69 GiB; about 5 GiB sit unused.
 - **Taking turns gives the tenant nothing.** The idle gate protects decode (+1 %) and the tenant trains
-  nothing: while any request runs, the Model Runner V2 engine issues one decode step after another and
+  almost nothing (2 steps in 11 minutes): while any request runs, the Model Runner V2 engine issues one decode step after another and
   the GPU is busy 93–100 % of the time, so there is no gap to fill (D5). The two jobs have to run at the
   same time.
-- **Running together, the cost follows how much the tenant runs, not where.** MPS, MPS 20 %, the
-  disjoint split and the SLO-capped runs share one line, +2.2 % TPOT per 1k tenant tok/s (Figure 5).
+- **Running together, a disjoint partition does not change the cost per tenant token; a smaller SM
+  share lowers it.** MPS, the disjoint split and the SLO-capped runs share one line, +2.2 % TPOT per
+  1k tenant tok/s (Figure 5); MPS 20 % and dynamic green contexts lie under it at 1.2–1.7 %.
   MPS 20 % gives +10–11 % for ~55 % of the uncapped tenant throughput; the disjoint 128/42 split
   gives the uncapped cost (+28 %) for the uncapped throughput (MPS +29 %).
-- **A latency SLO can be enforced directly.** The 15 % scheme stays within +0–14 % in every phase
-  (+5 / +6 / +10 / +5 / +10 / +14 / +14 % in the 0.5–2 req/s phases) with the tenant at 1.3–5.3k tok/s, on
-  the Figure-5 line: the cap only moves the tenant along the line. The 5 % scheme holds +2–7 % but mostly
+- **A latency SLO can be enforced directly.** The 15 % scheme stays at or under +14 % in every phase
+  (+5 / +6 / +10 / +5 / +11 / +3 / +14 / +14 % in the eight 0.5–2 req/s phases) with the tenant at
+  1.3–5.3k tok/s in seven of them (0.2k in the eighth), on the Figure-5 line: the cap only moves the
+  tenant along the line. The 5 % scheme holds +1–8 % but mostly
   pins the tenant at its 500 tok/s floor, because a 5 % target is inside the ±4 % noise of a 10-s TPOT
   window. These are medians; the tail is in 2.5.
 - **The tenant's shape sets the cost of a token.** The shape probe (`run_probe.sh`, `analyze_probe.py`)
   runs the engine at 1 req/s with a fixed 3 GiB KV limit and the tenant at a fixed 7.5 GiB budget and the
   same 4k tok/s cap, one 60-s window per shape (Figure 8). Decode slowdown per 1k tenant tok/s: 1.3 %
   with k = 4 micro-batches, 2.6 % with k = 8, 5.9 % with activation offload, 9.2 / 8.2 % with 12 / 20
-  streamed layers. Smaller micro-batches re-read the weights more often per token, and the offload
-  shapes add host↔GPU copies: per tenant token, the shapes that move more data cost decode more.
+  streamed layers. Stage 2 did not measure why. The Nov 16 runs (report 3; D22, D27) found that these
+  shapes move only 10–31 % more bytes per token than k = 4, so bytes do not explain the 2–7×
+  difference.
 - **NVML's GPU-memory-controller busy does not separate the two users.** It reads 55–75 % whether the
   tenant runs at 0 or 14k tok/s, and the decode slowdown does not follow it; in the shape probe it falls
   for the copy-heavy shapes while their cost rises (Figure 8d). It is not a usable feedback signal; the
@@ -552,11 +580,11 @@ k = 2 / k = 4. The same figure for every scheme: `coloc_adjust/results/<scheme>_
 
 *Figure 8 — the shape probe. (a) Tenant speed: the two micro-batch shapes reach the 4k cap, the others
 reach 2.8k, 2.3k and 2.0k tok/s. (b) Decode slowdown against the engine alone: +5.2 % to +20.8 %. (c) Their
-ratio, the slowdown per 1k tenant tok/s. (d) NVML's memory-controller busy, engine-alone level dotted.*
+ratio, the slowdown per 1k tenant tok/s. (d) NVML's GPU-memory-controller busy, engine-alone level dotted.*
 
 Two parts of stage 2 are reported elsewhere: the prefill engine as tenant in
 [4_prefill_tenant.md](4_prefill_tenant.md), and the host↔GPU transfer records (PCIe is not the
-bottleneck) in [2_bandwidth.md](2_bandwidth.md) and [4_prefill_tenant.md](4_prefill_tenant.md).
+bottleneck) in [2_bandwidth.md](2_bandwidth.md), section 2.
 
 ## 2.9 What stage 2 left unexplained
 
@@ -566,12 +594,12 @@ not a cause:
 
 - Disjoint SMs cost decode as much as shared SMs (+28 % against +29 %). The two jobs are not competing
   for SMs.
-- The cost tracks the tenant's token rate (+2.2 % per 1k tok/s), and at the same token rate it tracks
-  the tenant's shape: the shapes that move more data per token cost more, by up to 7×.
+- The cost tracks the tenant's token rate (+2.2 % per 1k tok/s), and at the same token rate it
+  depends on the tenant's shape, by up to 7×; the cause was not measured.
 - Dynamic green contexts sit under the line, and why is not known.
 - NVML's GPU-memory-controller busy cannot tell the two users apart.
 
-Stage 3 asks what the two jobs share. It finds that decode is limited by the path between the SMs and
+Stage 3 asks what the two jobs share. It infers from byte counts that decode is limited by the path between the SMs and
 GPU memory, and that what the tenant moves on that path, decode loses:
 [2_bandwidth.md](2_bandwidth.md). Controlling the tenant's bytes directly (a byte allowance) and making
 the tenant move fewer bytes are in [3_c1_c2.md](3_c1_c2.md).
@@ -588,10 +616,11 @@ the tenant move fewer bytes are in [3_c1_c2.md](3_c1_c2.md).
 4. kvcached 0.1.6 and LMCache's MP connector crash together under store traffic; on kvcached main the
    `engine_driven` mode works with live resizing. The zero-copy modes need a change in LMCache.
 5. A router and a VRAM scheduler outside vLLM make the KV limit follow the load and give the rest to a
-   tenant that moves along a ladder of configurations: 0 failures, 0 preemptions, 0 s oversubscribed
-   over 11 minutes at 0.5–4 req/s. A static split loses at both ends.
+   tenant that moves along a ladder of configurations: 0 s oversubscribed in every 11-minute run at
+   0.5–4 req/s, and no failed or preempted request in seven of the nine runs (MPS 20 %: engine
+   preemptions at 3–4 req/s; 5 % SLO: 1 failed request of 1,185). A static split loses at both ends.
 6. Taking turns gives the tenant nothing on this engine. Running together costs about +2.2 % TPOT per 1k
-   tenant tok/s whatever SMs the tenant uses. Fewer SMs (MPS 20 %, dynamic green contexts) lower the
+   tenant tok/s on shared SMs and on a disjoint 128/42 split alike. Fewer SMs (MPS 20 %, dynamic green contexts) lower the
    slowdown at every moment and per token (1.5–1.7 % per 1k tok/s), with tail = median. A TPOT-driven
    cap shortens the overlap without lowering the slowdown during it, holds the median, and leaves a
    +28–29 % p90 at 0.5 req/s because the loop swings the cap. While the tenant pauses, decode is at

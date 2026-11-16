@@ -678,11 +678,13 @@ memory; its own prefill slows down. **Outcome: no result; the mechanism faults.*
 - `pf_green_dyn` (04:57–05:10): the tenant engine built its five green contexts, ran its start-up
   steps on the default stream, and at the first step of the load moved to the 128-SM context.
   At that moment (05:00:01) the driver logged Xid 31 (MMU fault); the fault took the decode engine
-  down too (both are clients of one MPS server), and every request of the run failed.
+  down too (both are clients of one MPS server), and every request sent after the fault failed
+  (54 of the 1,217 decode requests were answered, all before it; none of the tenant's 715 prompts).
 - My first reading was that CUDA graphs captured on the default stream cannot be replayed on a
   green context. I repeated both arms with the tenant engine in `--enforce-eager`
   (`pf_mps_eager` 05:12–05:25 ran normally; `pf_green_dyn_eager` 05:25–05:40). **The fault came
-  back at the first switch** (54 of 588 requests succeeded), so CUDA graphs are not the cause, or
+  back at the first switch** (again 54 of 1,217 decode requests answered, none of the tenant's 714
+  prompts; corrected on Nov 16 from the load files, the earlier "54 of 588" was wrong), so CUDA graphs are not the cause, or
   not the only one.
 - What is known: on Nov 9 an engine that was on one green context from its first step ran without
   fault (`pf_split`); the fine-tune tenant switches between prebuilt green contexts without fault.
@@ -690,3 +692,24 @@ memory; its own prefill slows down. **Outcome: no result; the mechanism faults.*
   engine on the largest prebuilt context from its very first step and switch only among green
   contexts.
 - No other run of the night was affected; GPU 0 was released after each failed run.
+
+## D29. Review of the four reports (Nov 16, afternoon): the prefill tenant's footprint was booked twice
+
+Found while reviewing `reports/4_prefill_tenant.md` against the scheduler logs; no new run.
+
+- In every prefill-tenant run (Nov 9: `pf_mps`, `pf_mps20`, `pf_split`; Nov 16: the four `pf_*` runs)
+  the VRAM scheduler started after the tenant engine and measured "engine fixed" itself, so that
+  number already contained the tenant (21.46 / 21.02 / 21.50 GiB on Nov 9 instead of 16.97), and then
+  subtracted the tenant's fixed footprint (4.50 / 4.05 / 4.54 GiB) again. The pool for the 8B's KV
+  limit plus the 3B's KV was 4.89 / 5.79 / 4.82 GiB on every tick (`limit_gib + ft_budget_gib` in
+  `results/pf_*_controller.csv`), not the 9.4 GiB written in D19 and in the report.
+- Consequence: D19's "the prefill tenant fits only at ≤ 1 req/s" was measured with a pool about
+  4.5 GiB too small. Where it stops fitting with the footprint booked once is not measured. The
+  conclusion "limited by GPU memory, not by compute" stands for these runs; the threshold does not.
+- Cause in the code: `run_eval_pf.sh` starts the tenant engine before `controller.py`, whose
+  start-up measurement assumes the decode engine is alone on the GPU. Not fixed yet.
+- Other corrections of the same review are in the reports themselves: report 1 (MPS 20 % had engine
+  preemptions at 3–4 req/s and the 5 % SLO run one failed request, so "0 failures, 0 preemptions"
+  holds for seven of nine runs; the first KV budget is 12.78 GiB, not 13.7), report 2 (the transfer
+  table had mixed the Nov 6 tenant rows with the Nov 9 trace; overlapping loads are 7 % slower in
+  the median, not unchanged).

@@ -9,8 +9,9 @@
 
 **各用一句话回答。** 阶段一：kvcached 能在约 1.3 秒内改掉运行中 vLLM 引擎的 KV 预算，不杀请求，每步零开销，
 而且在每个预算点上，引擎的表现都和重启到这个预算时一样。阶段二：在 vLLM 外面加一个 router 和一个
-VRAM scheduler，就能让 KV 预算跟着负载走，把剩下的显存交给一个微调 tenant，0 失败、0 抢占、0 秒超订；
-tenant 用算力的代价是每 1k tenant tok/s 让 decode TPOT 慢约 2.2 %，不管 tenant 用的是哪些 SM。这个代价
+VRAM scheduler，就能让 KV 预算跟着负载走，把剩下的显存交给一个微调 tenant：所有运行都是 0 秒超订；
+九次运行里七次没有失败也没有抢占（MPS 限 20 %：3–4 req/s 时引擎有抢占；5 % SLO：1,185 个请求里失败 1 个）；
+tenant 用算力的代价是每 1k tenant tok/s 让 decode TPOT 慢约 2.2 %，共用 SM 和不相交的 128/42 划分都一样。这个代价
 的原因在阶段二结束时还没有解释。
 
 **用词约定。** 这里有两种内存，用名字分开。**显存**是卡上自己的内存（可用 31.35 GiB）；"显存带宽"指 SM
@@ -18,15 +19,22 @@ tenant 用算力的代价是每 1k tenant tok/s 让 decode TPOT 慢约 2.2 %，�
 KV 的 offload 层、tenant 卸载出去的激活、流式读取的权重和快照都放在那里，经 PCIe 传输。"scheme"指引擎和
 tenant 分 GPU 的一种方式。"VRAM scheduler"是设定引擎 KV 上限和 tenant 预算的那个进程（`controller.py`）。
 
+**KV** 是模型给每个请求保存的 key-value 缓存（这里每 token 128 KiB）；**kvcached** 是让 vLLM 的 KV cache 按需
+映射和解除映射的库。**SM**（streaming multiprocessor）是 GPU 的计算单元，这张卡有 170 个。**TTFT** 是到第一个
+输出 token 的时间，**ITL** 是相邻两个输出 token 的间隔，**TPOT** 是一个请求第一个 token 之后平均每个输出 token
+的时间；p50 / p90 / p95 是分位数。**抢占**指 vLLM 丢掉一个在跑请求的 KV、之后重算。**MPS**（NVIDIA
+Multi-Process Service）让两个进程同时在一张 GPU 上跑，并能限制一个客户端可用的 SM 线程比例。**green context**
+是绑定到一部分固定 SM 上的 CUDA context。**NVML** 是 NVIDIA 的监控库。
+
 ## 平台
 
 | 项 | 值 |
 |---|---|
-| GPU | RTX 5090，170 个 SM，可用显存 31.35 GiB。阶段一在 GPU 0。阶段二第 2 轮在 GPU 0，两张卡都限 500 W（第 1 轮：GPU 1，600 W） |
+| GPU | RTX 5090，170 个 SM，可用显存 31.35 GiB。阶段一在 GPU 0（11 月 9 日的 LMCache 重测在 GPU 1）。阶段二第 2 轮在 GPU 0，两张卡都限 500 W（第 1 轮：GPU 1，600 W） |
 | 主机 | 60 GiB 主机内存，PCIe 约 14 GB/s，`/dev/shm` 31 GiB |
 | 软件 | vLLM 0.30.0，Model Runner V2（`VLLM_USE_V2_MODEL_RUNNER=1`，vLLM ≥ 0.29 时 kvcached 要求它），torch 2.13.0+cu130，LMCache 0.5.6 |
-| kvcached | 阶段一的实验 A 和 B 用 0.1.6（PyPI）；阶段一的扫描和整个阶段二用 main `9106e0f`（2026-11-04） |
-| 推理模型 | Llama-3-8B bf16，每 token 128 KiB KV（6144-token 前缀约 0.77 GiB） |
+| kvcached | 阶段一的实验 A（1.1）和 B（1.2 中 0.1.6 的几行）用 0.1.6（PyPI）；阶段一的扫描和整个阶段二用 main `9106e0f`（2026-11-04） |
+| 推理模型 | Llama-3-8B bf16，每 token 128 KiB KV（6144-token 前缀 = 0.75 GiB；一个在途请求约 0.77 GiB） |
 | tenant | Qwen2.5-0.5B LoRA 微调（r = 16，作用于 q/k/v/o，bf16，每个优化器步 8 × 512 token） |
 | 引擎参数 | `--max-model-len 8192 --max-num-seqs 32`；所有运行都设 `VLLM_USE_FLASHINFER_SAMPLER=0`（这个 build 里 FlashInfer 采样器的 JIT 不认 sm_120；attention 用 FLASH_ATTN） |
 
@@ -39,7 +47,7 @@ tenant 分 GPU 的一种方式。"VRAM scheduler"是设定引擎 KV 上限和 te
 
 ## 1.1 带负载缩和扩（kvcached 0.1.6）
 
-引擎启动时 kvcached 的 KV 预算是 13.7 GiB（104,704 个 token），空闲时只映射 64 MiB。prefix caching 关，
+引擎启动时 kvcached 的 KV 预算是 12.78 GiB（104,704 个 token），空闲时只映射 64 MiB。prefix caching 关，
 所以被占用的页只属于正在跑的请求。负载：6000-token 随机 prompt 的 Poisson 流，贪心、`ignore_eos`。
 100 ms 的采样器记录 NVML 显存、kvcached 自己的计数和 vLLM 的指标；每次调整的 t = 0 是采样器第一次看到
 新上限的那一行。
@@ -78,8 +86,9 @@ LMCache 的多进程（MP）模式把缓存放在单独的 server 进程里。�
 | main + 可导出的页 | `lmcache_driven` + `use_vmm_api` | 仍然失败：LMCache 每个张量只导入一个句柄，而 kvcached 用很多 2 MiB 的页拼一个张量。要改的是 LMCache 一侧 |
 
 **崩溃的机制。** 在 0.1.6 上，kvcached 只按 worker 的计算 stream 给页的释放排序，只为 vLLM 原生的
-`OffloadingConnector` 钉住页。LMCache 的 store gather 在后台线程里、在它自己的拷贝 stream 上跑，所以可能在页
-被解除映射之后才去读。kvcached main 把页的解除映射排在 GPU 的进度之后；决策日志（D13）把这次重测的结果解读为
+`OffloadingConnector` 钉住页。LMCache 的 store gather 在后台线程里、在它自己的拷贝 stream 上跑，两种保护都管不到它；
+它读到了一个没有映射物理页的 kvcached 地址。这个页是之前被释放了，还是从来没有映射过，没有查明。kvcached main
+把页的解除映射排在 GPU 的进度之后；阶段二的决策日志（`coloc_adjust/report/DECISIONS.md`，D13）把这次重测的结果解读为
 这个改动堵上了那个时间窗。为 LMCache 写的钉页层没有用上。
 
 0.1.6 环境里的两个附带观察。connector 自己的 inline 传输，加载时只有 5–6k token/s，存储时约 1k token/s；
@@ -114,7 +123,8 @@ connector 改变了 8 条贪心输出里的 4 条；在 kvcached main 的环境�
 - **带 offload 时**，每次 `kvctl limit` 都把缓存的前缀逐出到恰好等于新上限，引擎一直在服务。13 到 4 GiB 之间
   decode 不受影响（ITL 12.6–13.1 ms，244–277 tok/s）。TTFT p50 从 51 ms 升到 155 ms，因为 GPU 前缀命中从 76 %
   降到 43 %，剩下的由主机内存层接住（72 → 95 %）；p95 一直低于 0.8 s。
-- **拐点就是在途的 KV。** 2 QPS × 约 1.8 s ≈ 3.7 个在途请求 × 0.77 GiB。低于 4 GiB 就放不下了，引擎开始排队：
+- **拐点就是在途的 KV。** 在途请求平均 2 QPS × 约 1.8 s ≈ 3.7 个 × 0.77 GiB ≈ 2.9 GiB，p95 约 5.4 GiB。到
+  3 GiB 及以下就放不下了，引擎开始排队：
   3 GiB 时 TTFT p50 3.2 s，2 GiB 时 18 s，没有抢占。study 1 用重启的办法找到的是同一个拐点、同一段平坦区。
 - **不带 offload 时**，被逐出的前缀必须重算（6144 个 token 约 0.4 s 的 prefill）。拐点上移到 Zipf 热集放不下
   的地方：8 GiB 时 TTFT p50 已经是 0.5 s，5 GiB 时 3.5 s。
@@ -138,16 +148,16 @@ connector 改变了 8 条贪心输出里的 4 条；在 kvcached main 的环境�
 
 | GPU KV | 在线：TTFT p50 / 排队 / TPOT / tok/s / 抢占 | 静态（重启）：TTFT p50 / 排队 / TPOT / tok/s / 抢占 |
 |---|---|---|
-| 13 GiB | 51 ms / 27 ms / 13.1 ms / 258 / 0 | 52 ms / 23 ms / 13.1 ms / 258 / 0 |
+| 13 GiB | 51 ms / 27 ms / 13.1 ms / 258 / 0 | 51 ms / 23 ms / 13.1 ms / 258 / 0 |
 | 10 | 55 / 37 / 13.1 / 258 / 0 | 55 / 33 / 13.1 / 258 / 0 |
-| 8 | 58 / 42 / 13.2 / 258 / 0 | 58 / 41 / 13.1 / 258 / 0 |
-| 6 | 67 / 66 / 13.1 / 258 / 0 | 68 / 65 / 13.1 / 258 / 0 |
+| 8 | 58 / 42 / 13.2 / 258 / 0 | 57 / 41 / 13.1 / 258 / 0 |
+| 6 | 67 / 65 / 13.1 / 258 / 0 | 68 / 65 / 13.1 / 258 / 0 |
 | 5 | 137 / 92 / 13.1 / 257 / 0 | 136 / 91 / 13.1 / 257 / 0 |
 | 4 | 154 / 151 / 13.1 / 257 / 2 | 155 / 153 / 13.1 / 257 / 2 |
 | 3 | 2 333 / 2 050 / 12.3 / 252 / 0 | 2 451 / 2 154 / 12.3 / 252 / 0 |
 | 2 | 32 153 / 22 981 / 11.8 / 179 / 0 | 32 134 / 22 996 / 11.8 / 179 / 0 |
 
-同一条时间线上，两者分不出来：拐点以上 TTFT p50 差 1–2 ms，TPOT 差 ≤ 0.1 ms，排队差 ≤ 4 ms，4 GiB 时都是
+同一条时间线上，两者分不出来：拐点以上 TTFT p50 差 1–2 ms，TPOT 差 ≤ 0.1 ms，13 到 4 GiB 排队差 ≤ 4 ms，4 GiB 时都是
 2 次抢占，吞吐相同，拐点以下的排队也一样深。study 1 在拐点以下看到的"抢占–重算"螺旋和卡死，这里即使用静态
 预算也没有再出现：vLLM 0.30 的调度器改为排队。
 
@@ -169,7 +179,7 @@ connector 改变了 8 条贪心输出里的 4 条；在 kvcached main 的环境�
 13 GiB 到 4 GiB，两组的 TPOT 都在 13.2–13.4 ms；任何预算下 GPU 上都只有约 3 GiB 在途 KV。平坦区里 110–150 ms
 的"排队"就是取 KV 本身（每个请求 0.77 GiB）。从 6 GiB 起，在途请求集合的 p95（约 5.4 GiB）开始碰到上限，
 排队增加（6 → 4 GiB 时 156 → 375 ms）。低于 4 GiB 引擎受容量限制，供给 258 tok/s 只交付 226，再到 158，
-没有失败，没有抢占。在线和静态的排队差 ≤ 5 ms，TPOT 差 ≤ 0.2 ms。
+没有失败，没有抢占。13 到 4 GiB，在线和静态的排队差 ≤ 5 ms，TPOT 差 ≤ 0.2 ms；再往下差 1 % 以内。
 
 ## 1.5 阶段一的限制
 
@@ -203,7 +213,9 @@ connector 改变了 8 条贪心输出里的 4 条；在 kvcached main 的环境�
   拿最近 10 s 的 decode TPOT 和当前到达率下没有 tenant 时的参考值比，给 tenant 发布一个 tokens/s 上限（每 2 s
   乘性调整一次）。
 - **微调 tenant**（`ft_worker.py`）。每个优化器步之前读自己的预算，挑校准需求能放下的最高配置（要降立刻降，
-  要升等 3 s）。step 里每 50 ms 查一次预算，放不下了就在 step 中途放弃。torch 分配器的上限跟着预算走，所以
+  要升等 3 s）。这些配置排成一个分档的阶梯：整批（0 档）；同样的 8 × 512 token 拆成 k = 2、4 或 8 个 micro-batch
+  并累积梯度（1 档）；再加梯度检查点，保存的激活放到 pinned 主机内存，即"激活 offload"（2 档）；再把 12 或 20 层
+  冻结的基座权重放在主机内存、用到时流式读入（3 档）；暂停，全部快照到主机内存（4 档）。step 里每 50 ms 查一次预算，放不下了就在 step 中途放弃。torch 分配器的上限跟着预算走，所以
   估错时 OOM 的是 tenant，不是引擎。LoRA 权重、优化器、学习率调度、步数和随机数状态每 10 步、每次换配置之前
   快照到主机内存。tenant 通过每步之后 sleep 来遵守 tokens/s 上限；带 `--green-prebuilt` 时，它在启动时建好
   128/96/64/32/16 个 SM 的 green context，步与步之间只切 stream。
@@ -252,7 +264,7 @@ offload 档，然后暂停。
 | 运行 | 每个 scheme 一次连续 11 分钟的运行（`run_eval6.sh`）；每个阶段去掉前 10 s |
 | decode 指标 | TPOT、调度排队时间、交付吞吐、失败数（这里的 TTFT 是取 KV + 128-token prefill，约 160 ms，所以不用） |
 | tenant 指标 | tokens/s 和所处的配置 |
-| 基线 | 引擎单独跑，KV 上限跟着负载调（`adjust_notenant`）。500 W 的上限对它没有可测的影响：每个阶段 TPOT 和 600 W 那次差 ≤ 0.3 ms。这个负载下 GPU 每个阶段只用 290–385 W |
+| 基线 | 引擎单独跑，KV 上限跟着负载调（`adjust_notenant`）。500 W 的上限对它没有可测的影响：每个阶段 TPOT 和 600 W 那次差 ≤ 0.3 ms。这个负载下 GPU 每个阶段只用 284–378 W |
 
 | 从第几秒 | 0 | 90 | 180 | 270 | 360 | 420 | 480 | 510 | 540 | 570 | 600–660 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -285,7 +297,7 @@ offload 档，然后暂停。
 
 ![算力共享](../coloc_adjust/report/figures/04_compute_sharing.png)
 
-*图示 4：试过的算力共享机制；显存环路在所有 scheme 里相同。*
+*图示 4：试过的算力共享机制；显存环路在所有 scheme 里相同。第五行（`engine_green`）是第 1 轮的运行，见 2.7 的表。*
 
 ## 2.4 各 scheme 的结果
 
@@ -306,7 +318,7 @@ offload 档，然后暂停。
 | 15 % 延迟 SLO | D | ② 12.5 (+5 %) | ③ 14.0 (+11 %) | ③ 17.3 (+6 %) | 20.9 (+1 %) | 24.5 (−6 %) | 280 / ③ 2 277 | 3.8 / 4.0 / 1.5 | ① 1.1 / 2.8 |
 | 5 % 延迟 SLO | D | ③ 12.8 (+7 %) | ② 13.1 (+3 %) | ② 16.9 (+4 %) | 20.8 (−0 %) | 22.3 (−14 %) | 306 / 2 425 | 3.8 / 1.2 / 0.4 | 1.8 / 3.3 |
 
-读这张表要注意三点。decode 那几列的 ① 都是空闲门，因为它的 tenant 没跑成。tenant 吞吐那列静态划分拿了 ①，因为
+读这张表要注意三点。TPOT 各列和 3 req/s 排队的 ① 都是空闲门，因为它的 tenant 没跑成。tenant 吞吐那列静态划分拿了 ①，因为
 它从不把显存让回去，代价是 TPOT 慢 32–82 %、排队 5–13 s。限速那两行的代价一列不稳：它们的变慢是一阵一阵的，
 用这里的中位数算是 1.1–3.3 %，用均值算是 2.3–2.9 %；5 % 目标在 1 req/s 的 +3 % 落在基线同一阶段重复之间 ±4 %
 的噪声里。
@@ -315,14 +327,15 @@ offload 档，然后暂停。
 
 *图 4：基线和延迟/吞吐权衡最好的三个 scheme：(a) decode TPOT，(b) 排队，(c) tenant 吞吐，横轴都是到达率（点 =
 均值，误差线 = 重复阶段的最小到最大）。MPS 限 20 %（绿）和动态 green context（青）在 0.5–1 req/s 给 tenant
-7–12k tok/s，TPOT +10–15 %；green context 的 tenant 吞吐高 40–70 %，到 2 req/s 就回到基线上。15 % SLO（粉）在
+7–12k tok/s，TPOT +10–15 %；0.5–1 req/s 时 green context 的 tenant 吞吐高 40–70 %；2 req/s 时两者都给 tenant
+2.2–2.3k tok/s，TPOT +9–10 %；3 req/s 起都回到基线上。15 % SLO（粉）在
 每个到达率都守在目标内，给 tenant 1–5k tok/s。所有 scheme：[`arms.png`](../coloc_adjust/report/figures/arms.png)。*
 
 ![权衡](../coloc_adjust/report/figures/arms_tradeoff.png)
 
-*图 5：每个 scheme 每个阶段一个点：decode 变慢对该阶段的 tenant 吞吐。MPS 混跑、MPS 限 20 %、不相交 SM 和
-SLO 限速的点落在一条线上，每 1 000 tenant tok/s 约 +2.2 % TPOT。动态 green context（青）在线下方（8–12k tok/s
-时 +14 %）。静态划分不在线上：它的代价来自 KV 不够，不是 tenant 的速度。*
+*图 5：每个 scheme 每个阶段一个点：decode 变慢对该阶段的 tenant 吞吐。MPS 混跑、不相交 SM 和 SLO 限速的点落在
+一条线上，每 1 000 tenant tok/s 约 +2.2 % TPOT。MPS 限 20 %（绿，6–7k tok/s 时 +10–11 %）和动态 green context
+（青，8–12k tok/s 时 +14 %）在线下方。静态划分不在线上：它的代价来自 KV 不够，不是 tenant 的速度。*
 
 同一批运行里 tenant 每个阶段的吞吐（tok/s）：
 
@@ -364,8 +377,8 @@ SLO 限速的点落在一条线上，每 1 000 tenant tok/s 约 +2.2 % TPOT。�
   均匀的。
 - **限速的两种，0.5 req/s 时中位数好看，尾部却和不限速一样：** 15 % SLO 是 +5 % 对 +29 %，5 % SLO 是 +7 % 对
   +28 %；不限速的 MPS 混跑是 +27 %。
-- **原因在反馈环。** 那个阶段上限在 500 和 20 000 tok/s 之间来回摆；tenant 最长一次歇了 8 s，其余时候接近全速。
-  赶上全速那几段的请求就构成了尾部。
+- **尾部和上限的来回摆同时出现。** 那个阶段上限在 500 和 20 000 tok/s 之间来回摆；tenant 最长一次歇了 8 s，
+  其余时候接近全速。赶上全速那几段的请求就构成了尾部（只有一个 60 s 阶段、32 个请求）。
 - **上限固定时没有这个尾巴。** 形状探测（2.8）用固定的 4k tok/s 上限，tenant 规律地干 0.35 s、歇 0.67 s：中位数
   +5 %，p90 +6 %。一个请求要 1.5–2 s，跨过不止一个周期。
 
@@ -415,13 +428,14 @@ token 间隔的均值，2.4 的表用的是每个请求 TPOT 的中位数，所�
 
 | scheme | 1 / 2 req/s 时的 decode：TPOT，排队 | 1 / 0.5 req/s 时的 tenant | 说明 |
 |---|---|---|---|
-| `green32`（tenant 用 32 个 SM；第 1 轮，600 W） | 14.4 / 16.6 ms，119 / 132 ms | 6.3k / 7.3k tok/s | 和 MPS 限 20 % 的权衡一样 |
-| `green_split`（引擎 128 个 SM，tenant 用另外 42 个） | 16.2 / 18.6 ms，123 / 150 ms | 11.6k / 13.7k | tenant 吞吐和 decode 代价都和不限速的 MPS 混跑一样：光把 SM 分开去不掉变慢 |
-| `green_dyn2`（预建 128/96/64/32/16 个 SM 的 context，只切 stream） | 14.5 / 17.8 ms，115 / 134 ms | 9.3k / 11.9k | 898 步，174 次切换，预算 ≤ 9.9 GiB 时保留显存 ≤ 8.7 GiB：没有泄漏。decode 代价是 MPS 混跑的一半，tenant 吞吐是它的 80 % |
+| `green32`（tenant 用 32 个 SM；第 1 轮，600 W） | 13.9 / 17.6 ms，118 / 133 ms | 6.4k / 7.3k tok/s | 和 MPS 限 20 % 的权衡一样 |
+| `engine_green`（引擎的 step 跑在 170 个 SM 中的 128 个上；第 1 轮，600 W；tenant 在第一个阶段就挂了，引擎等于单独跑） | 12.9–13.2 / 15.2 ms | – | 和第 1 轮基线相同：decode 让出四分之一的 SM 没有代价 |
+| `green_split`（引擎 128 个 SM，tenant 用另外 42 个） | 16.2 / 18.6 ms，120 / 147 ms | 11.6k / 13.7k | tenant 吞吐和 decode 代价都和不限速的 MPS 混跑一样：光把 SM 分开去不掉变慢 |
+| `green_dyn2`（预建 128/96/64/32/16 个 SM 的 context，只切 stream） | 14.5 / 17.8 ms，113 / 135 ms | 9.3k / 11.9k | 898 步，174 次切换，预算 ≤ 9.9 GiB 时保留显存 ≤ 8.7 GiB：没有泄漏。decode 代价是 MPS 混跑的一半，tenant 吞吐是它的 80 % |
 
 动态 green context（0.5–1 req/s 时 64–96 个 SM）给 tenant 9–12k tok/s，代价 +14–15 % TPOT；MPS 在全部 SM 上混跑
 是 12–14k 换 +29 %，固定 42 个 SM 的划分是 12–14k 换 +28 %。它为什么落在图 5 那条线的下方，阶段二没有找到原因。
-固定的划分不改变代价；随负载下降的份额会。
+固定的不相交划分不改变每 token 的代价；MPS 限 20 % 和动态 green context 都能降低它。
 
 ## 2.8 读出来的东西
 
@@ -434,11 +448,12 @@ token 间隔的均值，2.4 的表用的是每个请求 TPOT 的中位数，所�
 同样的图：`coloc_adjust/results/<scheme>_timeline.png`。*
 
 - **调整本身对 decode 零代价。** 引擎单独跑、上限跟着负载调，和引擎单独跑、上限固定 13 GiB，每个阶段都一样（第 1 轮，
-  TPOT 差 ≤ 0.1 ms）。kvcached 的上限跟着负载在 2 到 12.65 GiB 之间变，引擎察觉不到。
+  TPOT 差 ≤ 0.2 ms）。kvcached 的上限跟着负载在 2 到 12.65 GiB 之间变，引擎察觉不到。
 - **显存环路守得住，账是实的。** 第 2 轮在启动时实测引擎的固定占用（16.97 GiB），给 tenant 的 context、权重和
   优化器留 2 GiB，再留 0.5 GiB 余量，每次涨都不超过真正空闲的显存。第 2 轮所有运行里，已映射的 KV + tenant + 引擎
-  固定部分从来没有超过 GPU（见下表）。tenant 的占用只在暂停时超过它的预算（模型和优化器 0.6 GiB 对 0 GiB 预算，在
-  2 GiB 的余量之内）。代价是容量：3–4 req/s 时需求（12.65 GiB）超过 tenant 暂停后能映射的量（约 12.4 GiB），调度器
+  固定部分从来没有超过 GPU（见下表）。四个 scheme 里 tenant 几乎只在暂停时超出预算（持有 0.3–0.6 GiB，预算
+  0–0.4 GiB）。不相交 SM 里暂停的 tenant 持有 1.2–1.3 GiB；两个 SLO scheme 里 tenant 在没有暂停时超出预算 13 s 和
+  26 s，有时超过 2 GiB 的余量（占用的读数有噪声）。这期间涨上限在等，GPU 从未超订。代价是容量：3–4 req/s 时需求（12.65 GiB）超过 tenant 暂停后能映射的量（约 12.4 GiB），VRAM scheduler
   就在那里等（4 req/s 整个阶段都是 `grow_wait`）。于是 KV 上限停在 11–12.5 GiB 而不是 12.65 GiB，4 req/s 的排队比
   基线长（2.2–3.4 s 对 1.3 s）。
 
@@ -455,22 +470,24 @@ token 间隔的均值，2.4 的表用的是每个请求 TPOT 的中位数，所�
   | 动态 green context | 12.00 | 175.8 | 0.0 | 98.4 | 29 | 898 (24) |
 
   每次运行引擎的固定占用都是 16.97 GiB。
-- **静态划分两头都输。** 引擎固定 6.69 GiB，tenant 在旁边全速跑（12–13k tok/s），decode 在 0.5–2 req/s 时 TPOT 慢
-  32–82 %，3–4 req/s 时排队 5–13 s，负载降到 0.5 req/s 时积压还有 26 s 深。低负载时引擎预算里有 4–8 GiB 闲着。
-- **轮流用 GPU，tenant 什么也得不到。** 空闲门保护了 decode（+1 %），tenant 一步都没训练：只要有请求在跑，
+- **静态划分两头都输。** 引擎固定 6.69 GiB，tenant 在旁边全速跑（11–13k tok/s），decode 在 0.5–2 req/s 时 TPOT 慢
+  32–82 %，3–4 req/s 时排队 5–13 s，负载降到 0.5 req/s 时积压还有 26 s 深。1 req/s 且没有积压时，引擎只用了 6.69 GiB 里的
+  1.6–1.7 GiB，约 5 GiB 闲着。
+- **轮流用 GPU，tenant 什么也得不到。** 空闲门保护了 decode（+1 %），tenant 几乎没有训练（11 分钟完成 2 步）：只要有请求在跑，
   Model Runner V2 引擎就一步接一步地 decode，GPU 有 93–100 % 的时间在忙，没有空隙可插（D5）。两个任务只能同时跑。
-- **同时跑时，代价跟着 tenant 跑多少走，不跟着它在哪跑。** MPS 混跑、MPS 限 20 %、不相交 SM 和 SLO 限速落在同一条
-  线上，每 1k tenant tok/s +2.2 % TPOT（图 5）。MPS 限 20 % 用约 55 % 的不限速 tenant 吞吐换 +10–11 %；不相交 128/42
+- **同时跑时，不相交的划分不改变每个 tenant token 的代价；SM 份额小一些则会降低它。** MPS 混跑、不相交 SM 和
+  SLO 限速落在同一条线上，每 1k tenant tok/s +2.2 % TPOT（图 5）；MPS 限 20 % 和动态 green context 在线下方，
+  1.2–1.7 %。MPS 限 20 % 用约 55 % 的不限速 tenant 吞吐换 +10–11 %；不相交 128/42
   的代价（+28 %）和吞吐都和不限速（MPS 混跑 +29 %）一样。
-- **延迟 SLO 可以直接执行。** 15 % 的 scheme 每个阶段都守在 +0–14 %（0.5–2 req/s 各阶段 +5 / +6 / +10 / +5 / +10 /
-  +14 / +14 %），tenant 1.3–5.3k tok/s，点落在图 5 的线上：上限只是让 tenant 沿着这条线移动。5 % 的 scheme 守在
-  +2–7 %，但 tenant 大多被压在 500 tok/s 的下限，因为 5 % 的目标落在 10 s TPOT 窗口 ±4 % 的噪声里。这些是中位数；
+- **延迟 SLO 可以直接执行。** 15 % 的 scheme 每个阶段都不超过 +14 %（0.5–2 req/s 的八个阶段依次 +5 / +6 / +10 /
+  +5 / +11 / +3 / +14 / +14 %），其中七个阶段 tenant 在 1.3–5.3k tok/s（另一个 0.2k），点落在图 5 的线上：上限只是
+  让 tenant 沿着这条线移动。5 % 的 scheme 守在 +1–8 %，但 tenant 大多被压在 500 tok/s 的下限，因为 5 % 的目标落在 10 s TPOT 窗口 ±4 % 的噪声里。这些是中位数；
   尾部见 2.5。
 - **tenant 的形状决定一个 token 有多贵。** 形状探测（`run_probe.sh`，`analyze_probe.py`）让引擎在 1 req/s、KV 上限
   固定 3 GiB，tenant 预算固定 7.5 GiB、上限都是 4k tok/s，每种形状一个 60 s 窗口（图 8）。每 1k tenant tok/s 的
-  decode 变慢：k = 4 micro-batch 1.3 %，k = 8 2.6 %，激活 offload 5.9 %，12 / 20 层流式 9.2 / 8.2 %。micro-batch 越小，
-  每个 token 重读权重的次数越多；offload 形状还多了主机↔GPU 拷贝：按每个 tenant token 算，搬数据越多的形状让 decode
-  付得越多。
+  decode 变慢：k = 4 micro-batch 1.3 %，k = 8 2.6 %，激活 offload 5.9 %，12 / 20 层流式 9.2 / 8.2 %。阶段二没有测
+  原因。11 月 16 日的实验（报告 3；D22、D27）发现这些形状每 token 搬的字节只比 k = 4 多 10–31 %，字节解释不了
+  2–7 倍的差别。
 - **NVML 的显存控制器忙碌度分不出两个用户。** tenant 跑 0 还是 14k tok/s，它都在 55–75 %，decode 的变慢也不跟着它
   走；形状探测里，拷贝多的形状读数反而下降，代价却上升（图 8d）。它不能当反馈信号；tenant 的 token 速率和形状可以。
   流量本身在报告 2 里测量。
@@ -481,8 +498,8 @@ token 间隔的均值，2.4 的表用的是每个请求 TPOT 的中位数，所�
 (b) decode 比引擎单独跑慢多少：+5.2 % 到 +20.8 %。(c) 两者之比，每 1k tenant tok/s 的变慢。(d) NVML 的显存控制器
 忙碌度，虚线是引擎单独跑的水平。*
 
-阶段二有两部分写在别处：prefill 引擎当 tenant，见 [4_prefill_tenant.md](4_prefill_tenant.md)；主机↔GPU 拷贝的记录
-（PCIe 不是瓶颈），见 [2_bandwidth.md](2_bandwidth.md) 和 [4_prefill_tenant.md](4_prefill_tenant.md)。
+阶段二有两部分写在别处：prefill 引擎当 tenant，见 [4_prefill_tenant_zh.md](4_prefill_tenant_zh.md)；主机↔GPU 拷贝的
+记录（PCIe 不是瓶颈），见 [2_bandwidth_zh.md](2_bandwidth_zh.md) 第 2 节。
 
 ## 2.9 阶段二没解释的
 
@@ -490,14 +507,14 @@ token 间隔的均值，2.4 的表用的是每个请求 TPOT 的中位数，所�
 （少给 SM，或按 TPOT 限速），但还没有原因：
 
 - 不相交的 SM 和共用 SM 让 decode 付的代价一样（+28 % 对 +29 %）。两个任务抢的不是 SM。
-- 代价跟着 tenant 的 token 速率走（每 1k tok/s +2.2 %）；同样的 token 速率下，又跟着 tenant 的形状走：每个 token
-  搬数据越多的形状越贵，最多差 7 倍。
+- 代价跟着 tenant 的 token 速率走（每 1k tok/s +2.2 %）；同样的 token 速率下，又跟着 tenant 的形状走，
+  最多差 7 倍；原因没有测。
 - 动态 green context 落在线的下方，原因不知道。
 - NVML 的显存控制器忙碌度分不出两个用户。
 
-阶段三问的是两个任务到底共用什么。它发现 decode 卡在 SM 到显存的那条通道上，tenant 在这条通道上搬多少，decode
-就少多少：[2_bandwidth.md](2_bandwidth.md)。直接管 tenant 的字节（字节额度），以及让 tenant 少搬字节，见
-[3_c1_c2.md](3_c1_c2.md)。
+阶段三问的是两个任务到底共用什么。它从字节计数推断：decode 卡在 SM 到显存的那条通道上，tenant 在这条通道上搬多少，decode
+就少多少：[2_bandwidth_zh.md](2_bandwidth_zh.md)。直接管 tenant 的字节（字节额度），以及让 tenant 少搬字节，见
+[3_c1_c2_zh.md](3_c1_c2_zh.md)。
 
 ## 这说明了什么
 
@@ -508,9 +525,10 @@ token 间隔的均值，2.4 的表用的是每个请求 TPOT 的中位数，所�
 4. kvcached 0.1.6 配 LMCache 的 MP connector 在 store 流量下会崩；kvcached main 上 `engine_driven` 模式配在线调整
    能用。零拷贝模式要 LMCache 那边改。
 5. vLLM 外面的 router 和 VRAM scheduler 让 KV 上限跟着负载走，把剩下的交给沿配置阶梯上下移动的 tenant：11 分钟、
-   0.5–4 req/s，0 失败、0 抢占、0 秒超订。静态划分两头都输。
-6. 在这个引擎上，轮流用 GPU 时 tenant 什么也得不到。同时跑的代价约为每 1k tenant tok/s +2.2 % TPOT，和 tenant 用
-   哪些 SM 无关。少给 SM（MPS 限 20 %、动态 green context）降低每一刻的变慢，按 token 算也更便宜（每 1k tok/s
+   0.5–4 req/s，所有运行都是 0 秒超订，九次运行里七次没有失败也没有抢占（MPS 限 20 %：3–4 req/s 时引擎有抢占；
+   5 % SLO：1,185 个请求里失败 1 个）。静态划分两头都输。
+6. 在这个引擎上，轮流用 GPU 时 tenant 什么也得不到。同时跑的代价约为每 1k tenant tok/s +2.2 % TPOT，共用 SM 和
+   不相交的 128/42 划分都一样。少给 SM（MPS 限 20 %、动态 green context）降低每一刻的变慢，按 token 算也更便宜（每 1k tok/s
    1.5–1.7 %），尾部和中位数一样。按 TPOT 限速缩短的是重叠的时间，不降低重叠时的变慢，守得住中位数；因为反馈环让
    上限来回摆，0.5 req/s 时 p90 是 +28–29 %。tenant 歇着时 decode 回到基线。
 
