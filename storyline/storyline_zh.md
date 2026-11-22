@@ -131,18 +131,39 @@ TTFT p50 从 51 ms 升到 154 ms；3 GiB 时 TTFT p50 2.3 s；2 GiB 时 32 s。
 
 ## 5. VRAM scheduler 怎么定预算，tenant 怎么适应预算
 
-**VRAM scheduler（报告 1 的 2.1 节）。**
+**VRAM scheduler（报告 1 的 2.1 节；数字是 `coloc_adjust/controller.py` 的默认值）。**
 
-![图 5-1](figures/03_controller_loop.png)
+![图 5-1](figures/story_03_scheduler.png)
 
-*图 5-1：VRAM scheduler 每 100 ms 做的一轮判断。图里的文字还是原来给报告 1 用的版本。*
+*图 5-1：VRAM scheduler 每 100 ms 检查一次时做的事（新画的，由 `make_scheduler_fig.py` 生成）。*
 
+每 100 ms 检查一次，每次做四件事：
 
-- 所有请求都经过 router，所以每个在跑和排队的请求要多少 KV 是精确知道的（prompt 长度、最多生成多少 token）。
-- 每 100 ms 算一次：`需求 = 在跑和排队的请求最终要的 KV + 未来 1 秒预计到达的请求的 KV（λ × 1 s × 0.78 GiB）+ 0.5 GiB 余量`。
-- 需求超过当前上限：**立刻涨**（推理优先）。需求比上限低 1 GiB 以上并持续 5 秒：才缩，而且不低于在跑请求已经占的量。
-- tenant 的显存预算 = 整卡 31.35 GiB − 引擎权重和运行时 17.0 GiB − tenant 自己的固定开销 2.0 GiB − 余量 0.5 GiB − KV 上限。
-  上限涨时预算立刻降；上限降了、显存真的腾出来之后预算才升。
+1. **读 router 的表。** 所有请求都经过 router，所以每个在跑和排队的请求的 prompt 长度、最多生成多少 token、已经生成了多少，都是精确知道的。
+   同时算到达率 λ = 最近 5 秒到达的请求数 ÷ 5 秒。
+2. **算需求：`需求 = D + A + H`。**
+
+   | 项 | 含义 | 怎么算 |
+   |---|---|---|
+   | D | 所有在跑和排队的请求，**长到最终长度时**要的 KV | 每个请求 ⌈(prompt + 最多输出的 token) ÷ 16⌉ 个 block，每个 block 2 MiB，求和 |
+   | A | 未来 1 秒内预计会到的请求要的 KV。1 秒是 tenant 把显存让出来需要的时间 | λ × 1 s × 表里请求的平均最终 KV（这个负载下是 0.78 GiB） |
+   | H | 余量 | 0.5 GiB |
+
+   算完向上取整到 0.5 GiB 的倍数，并限制在 2.0 到 12.65 GiB 之间。
+3. **需求 > 当前上限：涨，看到的第一次检查就动手。**
+   - 先把 tenant 的预算降下来（立刻发布）。
+   - 把 KV 上限往需求涨，但只能涨到**现在真正空着**的显存为止：已经映射的 KV + 整卡空闲显存 − 0.5 GiB。
+   - 空闲的还不够（tenant 还没让出来）：之后每次检查都再试，直到涨到位；如果这期间需求自己降回去了，就放弃这次涨。
+4. **需求 < 当前上限 − 1 GiB，并且连续 50 次检查（5 秒）都是这样：缩。**
+   - 上限降到需求，但不低于：在跑请求已经占的 KV + 排队请求的 prompt 要的 KV + 0.5 GiB。
+   - tenant 的预算要等引擎实际映射的 KV 降到新上限以下才涨（每次检查都看一眼）。
+   - 中间只要有一次检查需求又高了，5 秒重新计。
+
+两个方向不对称的原因：涨是为了保护 decode，所以一次检查就够；缩只对 tenant 有好处，所以要等 5 秒、还留 1 GiB 的差，
+免得上限跟着每一个请求来回动。
+
+tenant 的显存预算 = 整卡 31.35 GiB − 引擎权重和运行时（约 17 GiB，启动时实测）− tenant 自己的固定开销 2.0 GiB − 余量 0.5 GiB − KV 上限，
+写在一个共享文件里，tenant 每 50 ms 读一次。
 
 **tenant 怎么适应。** 每一步之前读预算，选放得下的最快配置：
 
@@ -178,27 +199,25 @@ TTFT p50 从 51 ms 升到 154 ms；3 GiB 时 TTFT p50 2.3 s；2 GiB 时 32 s。
 
 1. **负载的形状**：图 6-1，`figures/workload.png`（已有）。(a) 11 分钟里到达率怎么变（1 → 2 → 3 → 1 → 4 → 0.5 → 2 → 3 → 2 → 1 → 1 req/s），
    (b) 32 个 session 的热度分布。
-2. **两种做法在这个负载上的时间线**（已有，各一张）：
-   - 显存给满：图 6-2，`figures/baseline_full_memory_timeline.png`（原文件 `coloc_adjust/results_600w/decode_alone_timeline.png`）
-   - 跟着负载调：图 6-3，`figures/baseline_follow_load_timeline.png`（原文件 `coloc_adjust/results_600w/adjust_notenant_timeline.png`）
+2. **两种做法在这个负载上的时间线，放在同一张图里**：图 6-2，`figures/baseline_compare_timeline.png`（新画的，由 `make_baseline_fig.py`
+   从两次已有的运行生成，没有新实验）。从上到下：
+   - 到达率；
+   - Run A（显存给满）的显存：KV 上限是一条平线；
+   - Run B（跟着负载调）的显存：KV 上限跟着用量起伏，上限以上的浅橙色就是没有留给 decode 的显存；
+   - decode 的 TPOT，两次运行画在同一个坐标里，两条线重合；
+   - 排队时间，同样画在一起，两条线重合。
 
-   每张从上到下是：到达率、显存（绿色是 KV 实际用量，红线是 KV 上限）、decode 的 TPOT、排队时间。两张图里 TPOT 和排队两栏看起来一样，
-   唯一的区别是红线：一张是一条平线，一张跟着绿色起伏。红线和整卡上限之间的空白，就是能给 tenant 的显存。
-
-   现有两张图的毛病：下面各有两栏是空的（"no fine-tune tenant"）；两张分开放，TPOT 要靠眼睛来回比。
-   更好的版本是合成一张：显存一栏并排或上下放两种做法，TPOT 和排队各一栏、两条线叠在一起。这要改画图脚本，等"启动"。
+   最后两栏的图例里写了整次运行的平均差别：**TPOT 平均 18.61 ms 对 18.62 ms，B 比 A +0.07 %**（1,185 个请求）；
+   **排队时间平均 349 ms 对 351 ms，B 比 A +0.8 %**。
 
 ![图 6-1](figures/workload.png)
 
 *图 6-1：负载。(a) 到达率随时间的变化，(b) session 的热度。*
 
-![图 6-2](figures/baseline_full_memory_timeline.png)
+![图 6-2](figures/baseline_compare_timeline.png)
 
-*图 6-2：只有 decode，KV 上限固定 13 GiB（显存给满）。*
-
-![图 6-3](figures/baseline_follow_load_timeline.png)
-
-*图 6-3：只有 decode，KV 上限由 VRAM scheduler 跟着负载调。*
+*图 6-2：只有 decode、没有 tenant 的两次运行。Run A：KV 上限固定 13 GiB（显存给满）。Run B：KV 上限由 VRAM scheduler 跟着负载调。
+数据是第 1 轮（11 月 5 日，GPU 1，600 W），原文件在 `coloc_adjust/results_600w/` 下的 `decode_alone_*` 和 `adjust_notenant_*`。*
 
 **每个阶段的数字。**
 
@@ -228,7 +247,7 @@ TTFT p50 从 51 ms 升到 154 ms；3 GiB 时 TTFT p50 2.3 s；2 GiB 时 32 s。
   只跑了"跟着调"的基线，没有重跑"给满"的那次。两轮"跟着调"的基线每个阶段 TPOT 差 ≤ 0.3 ms。
 - 最后一列是第 1 轮的值。第 2 轮同样的上限下这个数小约 0.8 GiB（例如 1 req/s 时 6.88 GiB），应该是因为预留给 tenant 固定开销的量
   改大了（我的推断，没有回查代码历史）。
-- 这组对比没有写进之前任何一份报告，也**没有一张把两者放在一起的图**（见上面"要出的图"第 2 条）。合成一张不需要新实验，但要改画图脚本。
+- 这组对比没有写进之前任何一份报告。
 
 ---
 
@@ -239,6 +258,5 @@ TTFT p50 从 51 ms 升到 154 ms；3 GiB 时 TTFT p50 2.3 s；2 GiB 时 32 s。
 | 第 0 步用哪张图（或两张都用） | 你定 |
 | 第 1 步是否点明"原型用的是 vLLM 自带的 offload，不是 LMCache" | 你定 |
 | 原型图是否要加算力的部分 | 你定 |
-| 第 6 步：把两张时间线合成一张（去掉空栏，TPOT 和排队叠在一起） | 改画图脚本，不需要新实验；等"启动"。在那之前先用现有的两张 |
 | 第 6 步是否在 500 W 的设置下重跑"给满"的那次 | 新实验，约 15 分钟 GPU；等"启动" |
 | 第 6 步之后的故事（问题 2 的方法、问题 3） | 等你继续讲 |
