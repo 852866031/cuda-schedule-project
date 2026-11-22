@@ -6,7 +6,6 @@ import json, os
 import numpy as np, pandas as pd
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 
@@ -29,13 +28,10 @@ tt = np.arange(0, END, 1.0)
 def rolling_tpot(R, win=10.0):
     d = R[R.ok].sort_values("t_send")
     return np.array([d[(d.t_send > t - win) & (d.t_send <= t)].tpot.median() * 1e3 for t in tt])
-def queue_wait(samp):
-    q, qc = num(samp, "queue_sum"), num(samp, "queue_count")
-    return ((q.diff() / qc.diff()) * 1e3).rolling(20, min_periods=1).mean()
 
 runs = {"full": load("decode_alone"), "follow": load("adjust_notenant")}
-fig, ax = plt.subplots(5, 1, figsize=(12, 11.5), sharex=True, gridspec_kw=dict(height_ratios=[0.6, 1.5, 1.5, 1.3, 1.1], hspace=0.30))
-fig.subplots_adjust(top=0.955, bottom=0.05, left=0.075, right=0.775)
+fig, ax = plt.subplots(4, 1, figsize=(12, 9.6), sharex=True, gridspec_kw=dict(height_ratios=[0.6, 1.5, 1.5, 1.3], hspace=0.30))
+fig.subplots_adjust(top=0.948, bottom=0.06, left=0.075, right=0.775)
 def title(a, s): a.set_title(s, loc="left", fontsize=10.5, fontweight="bold", pad=5)
 def legend(a, handles): a.legend(handles=handles, loc="center left", bbox_to_anchor=(1.01, 0.5), frameon=False, fontsize=9, handlelength=1.6)
 
@@ -72,18 +68,8 @@ def in_run(R): return R[R.ok & (R.t_send >= 0) & (R.t_send < END)]
 mA, mB = in_run(runs["full"][0]).tpot.mean() * 1e3, in_run(runs["follow"][0]).tpot.mean() * 1e3
 legend(ax[3], two + [note(f"mean over all {len(in_run(runs['full'][0])):,} requests:\nA {mA:.2f} ms, B {mB:.2f} ms\nB against A: {(mB / mA - 1) * 100:+.2f} %")])
 
-# (5) queue wait, both runs on one axis
-ax[4].plot(runs["full"][1].rel, queue_wait(runs["full"][1]), color=C_FULL, lw=4.0, solid_capstyle="round")
-ax[4].plot(runs["follow"][1].rel, queue_wait(runs["follow"][1]), color=C_FOL, lw=1.3)
-ax[4].set_yscale("log"); ax[4].yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}")); ax[4].set_ylim(50, 5000)
-ax[4].set_ylabel("queue wait (ms)"); title(ax[4], "Scheduler queue wait, 2-s mean: the two runs on one axis")
-def mean_queue(samp):   # the engine's own counters: total queue time / requests scheduled, over the 660 s
-    w = samp[(samp.rel >= 0) & (samp.rel <= END)]; q, qc = num(w, "queue_sum").dropna(), num(w, "queue_count").dropna()
-    return (q.iloc[-1] - q.iloc[0]) / (qc.iloc[-1] - qc.iloc[0]) * 1e3
-qA, qB = mean_queue(runs["full"][1]), mean_queue(runs["follow"][1])
-legend(ax[4], two + [note(f"mean over the run:\nA {qA:.0f} ms, B {qB:.0f} ms\nB against A: {(qB / qA - 1) * 100:+.1f} %")])
-print(f"TPOT mean A {mA:.3f} B {mB:.3f} ({(mB / mA - 1) * 100:+.3f} %), n {len(in_run(runs['full'][0]))}/{len(in_run(runs['follow'][0]))}; queue mean A {qA:.1f} B {qB:.1f} ({(qB / qA - 1) * 100:+.2f} %)")
-ax[4].set_xlabel("time since the end of warm-up (s)"); ax[4].set_xlim(0, END)
+ax[3].set_xlabel("time since the end of warm-up (s)"); ax[3].set_xlim(0, END)
+print(f"TPOT mean A {mA:.3f} B {mB:.3f} ({(mB / mA - 1) * 100:+.3f} %), n {len(in_run(runs['full'][0]))}/{len(in_run(runs['follow'][0]))}")
 
 for a in ax:
     a.grid(True, axis="y", alpha=0.25); a.spines[["top", "right"]].set_visible(False)
