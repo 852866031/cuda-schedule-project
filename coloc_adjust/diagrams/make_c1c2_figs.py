@@ -102,15 +102,15 @@ def build():
         o += [T(x + 12, y + 42 + 18 * k, ln, "d-m") for k, ln in enumerate(lines)]
         return "".join(o)
     b += [box(10, 10, 210, 84, "d-soft", "Starting point", ["decode pays for the tenant's bytes;", "an SM limit controls them weakly"]),
-          box(260, 10, 240, 84, "d-warn", "C1: a byte allowance", ["a GB/s allowance for the tenant;", "it runs, then pauses"]),
-          box(540, 10, 240, 84, "d-good", "C1, conclusion", ["decode's cost halves (about 6 %),", "the tail disappears"]),
+          box(260, 10, 240, 84, "d-warn", "BWS: schedule its bandwidth", ["a GB/s allowance for the tenant;", "it runs, then pauses"]),
+          box(540, 10, 240, 84, "d-good", "BWS-Budget, conclusion", ["decode's cost halves (about 6 %),", "the tail disappears"]),
           P("M220 52H258", INK2, 1.5, marker=True), P("M500 52H538", INK2, 1.5, marker=True),
-          box(260, 108, 240, 46, "d-box", "Pause more finely?", []), T(272, 146, "nothing more on the real engine", "d-m"),
-          box(540, 108, 240, 46, "d-box", "Who sets the allowance?", []), T(552, 146, "a slow loop: holds, but too careful", "d-m"),
+          box(260, 108, 240, 46, "d-box", "BWS-Budget-Slicing", []), T(272, 146, "nothing more on the vLLM engine", "d-m"),
+          box(540, 108, 240, 46, "d-box", "SLO-aware BWS", []), T(552, 146, "holds the SLO target, too careful", "d-m"),
           P("M660 156V176H115V190", INK2, 1.5, marker=True), T(388, 171, "with the limit in place decode is still about 6 % slower", "d-m", "middle"),
           box(10, 192, 210, 84, "d-soft", "What is left to lower", ["the allowance cannot go to zero;", "each token has to cost less"]),
-          box(260, 192, 240, 84, "d-warn", "C2: a lighter tenant", ["the same training, fewer bytes;", "compiled: 41 % fewer per token"]),
-          box(540, 192, 240, 84, "d-good", "C2, conclusion", ["at the same tenant work, decode", "is down to about 4 %; needs C1"]),
+          box(260, 192, 240, 84, "d-warn", "BWR: reduce its bandwidth", ["the same training, fewer bytes;", "compiled: 41 % fewer per token"]),
+          box(540, 192, 240, 84, "d-good", "BWR-Compile, conclusion", ["at the same tenant work, decode", "is down to about 4 %; needs BWS"]),
           P("M220 234H258", INK2, 1.5, marker=True), P("M500 234H538", INK2, 1.5, marker=True),
           box(260, 290, 240, 46, "d-box", "Shapes with offload", []), T(272, 328, "cost more than their bytes", "d-m"),
           box(540, 290, 240, 46, "d-box", "The floor", []), T(552, 328, "3–5 % even with no bytes moved", "d-m")]
@@ -118,8 +118,8 @@ def build():
 
     # ---- the two benches
     b = []
-    for k, (zone, dec, d1, d2, m1, m2) in enumerate([("Synthetic bench · GPU 1", "Synthetic decode step", "replays one Llama-3-8B step", "138 SMs · batch 1 / 4 / 8", "Measured: the time of every decode step", "20 s per point, run forwards and backwards"),
-                                                      ("Real-engine bench · GPU 0", "vLLM + kvcached", "Llama-3-8B, real requests", "11 minutes · 0.5–4 req/s", "Measured: each request's TPOT, token gaps", "one run per scheme, against the engine alone")]):
+    for k, (zone, dec, d1, d2, m1, m2) in enumerate([("Simulated decode · GPU 1", "Simulated decode step", "replays one Llama-3-8B step", "138 SMs · batch 1 / 4 / 8", "Measured: the time of every decode step", "20 s per point, run forwards and backwards"),
+                                                      ("vLLM engine · GPU 0", "vLLM + kvcached", "Llama-3-8B, real requests", "11 minutes · 0.5–4 req/s", "Measured: each request's TPOT, token gaps", "one run per scheme, against the engine alone")]):
         x = 10 + k * 392
         b += [f'<rect class="d-zone" x="{x}" y="6" width="376" height="248" rx="12"/>', T(x + 14, 30, zone, "d-b"),
               f'<rect class="d-soft" x="{x + 14}" y="44" width="208" height="72" rx="8"/>', T(x + 118, 68, dec, "d-b", "middle"), T(x + 118, 88, d1, "d-m", "middle"), T(x + 118, 105, d2, "d-m", "middle"),
@@ -149,36 +149,36 @@ def build():
     add("c1c2_sm_cost", "Fewer SMs for the tenant: its work falls faster than decode's slowdown", 790, 296, "".join(b))
 
     # ---- C1, synthetic: three ways to limit
-    meth = [("8 SMs, running all the time", [3.9, 6.9, 5.9], [5.4, 7.9, 8.2], GRAY), ("32 SMs, pause after each step (C1)", [2.5, 5.7, 5.5], [5.8, 11.8, 11.0], BLUE),
+    meth = [("8 SMs, running all the time", [3.9, 6.9, 5.9], [5.4, 7.9, 8.2], GRAY), ("32 SMs, pause after each step (BWS-Budget)", [2.5, 5.7, 5.5], [5.8, 11.8, 11.0], BLUE),
             ("all SMs shared, pause after each step", [4.6, 7.0, 6.5], [12.7, 20.0, 19.0], GRAY)]
     b = [R(250, 4, 14, 10, INK2), T(270, 14, "mean", "d-m"), R(320, 4, 14, 10, INK2, 0.4), T(340, 14, "p90 of single steps", "d-m")]; sc = 5.4
-    for k, pn in enumerate(["next to 1 request", "4 requests", "8 requests"]):
+    for k, pn in enumerate(["batch of 1 request", "4 requests", "8 requests"]):
         x0 = 250 + k * 180; b += [T(x0, 44, pn, "d-b", style="font-size:13px"), P(f"M{x0} 52V182")]
         for m, (name, mean, p90, col) in enumerate(meth):
             y = 62 + m * 40
             if k == 0: b.append(T(10, y + 16, name, "d-s"))
             b += [R(x0, y, mean[k] * sc, 11, col), T(x0 + mean[k] * sc + 5, y + 10, p1(mean[k]), "d-s"), R(x0, y + 13, p90[k] * sc, 11, col, 0.4), T(x0 + p90[k] * sc + 5, y + 23, p1(p90[k]), "d-m")]
-    b.append(T(10, 200, "Tenant work is the same in all three rows: 2.4 / 2.8 / 2.9 k tok/s next to 1 / 4 / 8 requests.", "d-m"))
-    add("c1c2_c1_synthetic", "The same tenant work limited three ways: decode slowdown per step (synthetic bench)", 790, 208, "".join(b))
+    b.append(T(10, 200, "Columns: requests generated at the same time by the simulated decode (batch size), not req/s. Same tenant work in every row.", "d-m"))
+    add("c1c2_c1_synthetic", "The same tenant work limited three ways: decode slowdown per step (simulated decode)", 790, 208, "".join(b))
 
     # ---- C1, synthetic: running against pausing
     run, pau = [8.1, 14.0, 13.5], [0.7, 3.0, 2.7]
     b = [R(170, 4, 14, 10, RED), T(190, 14, "while the tenant runs", "d-m"), R(340, 4, 14, 10, RED, 0.4), T(360, 14, "while the tenant pauses", "d-m"),
          P("M530 2v14", INK, 1.6, "4 3"), T(538, 14, "assumed in the proposal: 0 while it pauses", "d-m")]; sc = 30
-    for k, pn in enumerate(["next to 1 request", "4 requests", "8 requests"]):
+    for k, pn in enumerate(["batch of 1 request", "4 requests", "8 requests"]):
         y = 36 + k * 42
         b += [T(10, y + 17, pn, "d-t"), R(170, y, run[k] * sc, 12, RED), T(170 + run[k] * sc + 6, y + 11, p1(run[k]), "d-s"), R(170, y + 14, pau[k] * sc, 12, RED, 0.4), T(170 + pau[k] * sc + 6, y + 25, p1(pau[k]), "d-s")]
     b.append(P("M170 30V158", INK, 1.6, "4 3"))
-    add("c1c2_c1_pause", "Decode slowdown while the tenant runs and while it pauses (synthetic bench, tenant on 32 SMs)", 790, 164, "".join(b))
+    add("c1c2_c1_pause", "Decode slowdown while the tenant runs and while it pauses (simulated decode, tenant on 32 SMs)", 790, 164, "".join(b))
 
     # ---- C1, real engine: what the tenant moved
     x0, w, y0, y1 = 96, 664, 54, 224
     b = bands(x0, w, y0, y1)
     Y = series_panel(b, x0, w, y0, y1, [(S["tpot_slo15"]["t"], S["tpot_slo15"]["gbps"], GRAY, 2, None), (S["c1_fix"]["t"], S["c1_fix"]["gbps"], BLUE, 2.6, None)])
     b += [T(x0 - 8, y0 - 24, "GB/s", "d-m", "end"), P(f"M{x0} {Y(50):.1f}H{x0 + w}", INK, 1.4, "6 4"),
-          P("M96 10h26", GRAY, 2), T(128, 14, "tpot_slo15 (control): moved by the tenant", "d-m"), P("M400 10h26", BLUE, 2.6), T(432, 14, "C1: moved by the tenant", "d-m"),
-          P("M600 10h26", INK, 1.4, "6 4"), T(632, 14, "C1's allowance, 50 GB/s", "d-m")] + xaxis(x0, w, y1)
-    add("c1c2_c1_tenant_rate", "What the tenant moved, 10-s averages (real engine, 11-minute schedule)", 790, 250, "".join(b))
+          P("M96 10h26", GRAY, 2), T(128, 14, "earlier SLO method: moved by the tenant", "d-m"), P("M372 10h26", BLUE, 2.6), T(404, 14, "BWS-Budget: moved by the tenant", "d-m"),
+          P("M628 10h26", INK, 1.4, "6 4"), T(660, 14, "its budget, 50 GB/s", "d-m")] + xaxis(x0, w, y1)
+    add("c1c2_c1_tenant_rate", "What the tenant moved, 10-s averages (vLLM engine, 11-minute schedule)", 790, 250, "".join(b))
 
     # ---- real-engine bar pairs
     def real(name, title, A, B):
@@ -190,32 +190,32 @@ def build():
                 if k == 0: b.append(T(10, y + 17, mn, "d-s"))
                 b += [R(x0, y, va * sc, 12, A[1]), T(x0 + va * sc + 5, y + 11, fm(va), "d-s"), R(x0, y + 14, vb * sc, 12, B[1]), T(x0 + vb * sc + 5, y + 25, fm(vb), "d-s")]
         add(name, title, 790, 188, "".join(b))
-    real("c1c2_c1_real", "Real engine: decode against the engine alone, at nearly the same tenant work",
-         ("tpot_slo15 (control): all SMs, fast loop", GRAY, (3769, 3953), (12.2, 11.0), (7, 10), (28, 15)), ("C1: 32 SMs, fixed 50 GB/s", BLUE, (3524, 3670), (5.6, 6.3), (6, 6), (6, 4)))
-    real("c1c2_c2_real", "Real engine: the same allowance setting, only the tenant differs",
-         ("C1 + the usual tenant", BLUE, (3524, 3670), (5.6, 6.3), (6, 6), (6, 4)), ("C1 + the compiled tenant (C2)", GREEN, (3524, 3688), (4.3, 4.0), (5, 4), (4, 2)))
+    real("c1c2_c1_real", "vLLM engine: decode against the engine alone, at nearly the same tenant work",
+         ("earlier SLO method: all SMs, fast loop", GRAY, (3769, 3953), (12.2, 11.0), (7, 10), (28, 15)), ("BWS-Budget: 32 SMs, fixed 50 GB/s", BLUE, (3524, 3670), (5.6, 6.3), (6, 6), (6, 4)))
+    real("c1c2_c2_real", "vLLM engine: the same allowance setting, only the tenant differs",
+         ("BWS-Budget, usual tenant", BLUE, (3524, 3670), (5.6, 6.3), (6, 6), (6, 4)), ("BWS-Budget + BWR-Compile", GREEN, (3524, 3688), (4.3, 4.0), (5, 4), (4, 2)))
 
     # ---- slices
-    b = [T(10, 14, "Synthetic bench, next to 4 requests: each decode step", "d-b", style="font-size:13px"), R(196, 26, 14, 10, BLUE), T(216, 36, "mean", "d-m"), R(262, 26, 14, 10, BLUE, 0.4), T(282, 36, "p90 of single steps", "d-m")]
+    b = [T(10, 14, "Simulated decode, batch of 4 requests: each decode step", "d-b", style="font-size:13px"), R(196, 26, 14, 10, BLUE), T(216, 36, "mean", "d-m"), R(262, 26, 14, 10, BLUE, 0.4), T(282, 36, "p90 of single steps", "d-m")]
     for m, (n, mean, p90) in enumerate([("pause after each step", 5.7, 11.8), ("slices of 48 blocks", 5.8, 11.8), ("slices of 8 blocks", 5.9, 10.3), ("slices of 1 block (2.4 ms)", 5.8, 5.5)]):
         y = 50 + m * 36; b += [T(10, y + 16, n, "d-s"), R(196, y, mean * 12, 11, BLUE), T(196 + mean * 12 + 5, y + 10, p1(mean), "d-s"), R(196, y + 13, p90 * 12, 11, BLUE, 0.4), T(196 + p90 * 12 + 5, y + 23, p1(p90), "d-m")]
-    b += [P("M424 6V196", LINE2, 1, "4 4"), T(444, 14, "Real engine: p90 of single token gaps", "d-b", style="font-size:13px"),
+    b += [P("M424 6V196", LINE2, 1, "4 4"), T(444, 14, "vLLM engine: p90 of single token gaps", "d-b", style="font-size:13px"),
           R(444, 26, 14, 10, BLUE), T(464, 36, "pause after each step", "d-m"), R(606, 26, 14, 10, GREEN), T(626, 36, "slices of 1 block", "d-m")]
     for k, (pn, a, c) in enumerate([("0.5 req/s", 8.2, 7.9), ("1 req/s", 14.7, 14.3)]):
         y = 54 + k * 44; b += [T(444, y + 17, pn, "d-s"), R(524, y, a * 11, 12, BLUE), T(524 + a * 11 + 5, y + 11, p1(a), "d-s"), R(524, y + 14, c * 11, 12, GREEN), T(524 + c * 11 + 5, y + 25, p1(c), "d-s")]
     b += [T(444, 158, "tenant work: 3,524 / 3,670 tok/s with pauses after a step,", "d-m"), T(444, 176, "3,195 / 3,348 tok/s with slices (9 % less)", "d-m")]
-    add("c1c2_slices", "Slices inside a step: the tail of single steps on the synthetic bench, and on the real engine", 790, 200, "".join(b))
+    add("c1c2_slices", "Slices inside a step: the tail of single steps on the simulated decode, and on the vLLM engine", 790, 200, "".join(b))
 
     # ---- slow loop, measured
     x0, w = 96, 664
-    b = [P("M96 10h26", BLUE, 2.6), T(128, 14, "moved by the tenant (10-s averages)", "d-m"), P("M400 10h26", GRAY, 1.4), T(432, 14, "allowance given by the loop", "d-m")]
+    b = [P("M96 10h26", BLUE, 2.6), T(128, 14, "moved by the tenant (10-s averages)", "d-m"), P("M400 10h26", GRAY, 1.4), T(432, 14, "budget given by the loop", "d-m")]
     for k, (key, name) in enumerate([("c1_slow15", "Target: decode at most 15 % slower"), ("c1_slow5", "Target: decode at most 5 % slower")]):
         y0 = 70 + k * 178; y1 = y0 + 124
         b += bands(x0, w, y0, y1, labels=(k == 0))
         series_panel(b, x0, w, y0, y1, [(S[key]["t"], S[key]["loop"], GRAY, 1.4, None), (S[key]["t"], S[key]["gbps"], BLUE, 2.6, None)])
         b += [T(x0, y0 - 24, name, "d-b", style="font-size:13px"), T(x0 - 8, y0 - 24, "GB/s", "d-m", "end")]
         b += xaxis(x0, w, y1) if k == 1 else [P(f"M{x0} {y1}H{x0 + w}", INK2)]
-    add("c1c2_slow_loop", "The slow loop: what the tenant moved, and the allowance the loop gave (real engine)", 790, 400, "".join(b))
+    add("c1c2_slow_loop", "SLO-aware BWS: what the tenant moved, and the budget the loop gave (vLLM engine)", 790, 400, "".join(b))
 
     # ---- torch.compile on one layer
     ops = [("to float32", "3.67 MB", 1), ("square", "3.67 MB", 1), ("mean", "4 KB", 0), ("add ε", "4 KB", 0), ("rsqrt", "4 KB", 0), ("multiply", "3.67 MB", 1), ("to bf16", "1.84 MB", 1), ("× weight", "1.84 MB", 1)]
@@ -254,11 +254,11 @@ def build():
     # ---- C2 synthetic
     a, c = [8.1, 13.9, 13.7], [5.3, 9.7, 9.2]
     b = [R(170, 4, 14, 10, ORANGE), T(190, 14, "usual tenant", "d-m"), R(290, 4, 14, 10, GREEN), T(310, 14, "compiled tenant, paced to the same tokens/s", "d-m")]
-    for k, (pn, tk) in enumerate([("next to 1 request", "8.0 k tok/s"), ("4 requests", "9.2 k tok/s"), ("8 requests", "9.4 k tok/s")]):
+    for k, (pn, tk) in enumerate([("batch of 1 request", "8.0 k tok/s"), ("4 requests", "9.2 k tok/s"), ("8 requests", "9.4 k tok/s")]):
         y = 34 + k * 44
         b += [T(10, y + 12, pn, "d-t"), T(10, y + 28, "tenant " + tk, "d-m"), R(170, y, a[k] * 32, 13, ORANGE), T(170 + a[k] * 32 + 6, y + 11, p1(a[k]), "d-s"),
               R(170, y + 15, c[k] * 32, 13, GREEN), T(170 + c[k] * 32 + 6, y + 26, p1(c[k]), "d-s"), T(170 + c[k] * 32 + 62, y + 26, f"{round((1 - c[k] / a[k]) * 100)} % less", "d-g")]
-    add("c1c2_c2_synthetic", "The same tenant work with fewer bytes per token: decode slowdown per step (synthetic bench)", 790, 166, "".join(b))
+    add("c1c2_c2_synthetic", "The same tenant work with fewer bytes per token: decode slowdown per step (simulated decode)", 790, 166, "".join(b))
 
     # ---- shapes
     rows = [("4 micro-batches", 3701, 80, 6.0), ("8 micro-batches", 3321, 66, 7.5), ("8 micro-batches + activations in host RAM", 2086, 32, 10.0), ("+ 12 layers of weights in host RAM", 1818, 30, 14.0), ("+ 20 layers of weights in host RAM", 1670, 29, 13.0)]
@@ -269,7 +269,7 @@ def build():
         b += [T(10, y + 14, n, "d-s"), R(290, y, tk * 0.03, 18, GREEN), T(290 + tk * 0.03 + 6, y + 14, f"{tk:,}", "d-s"), R(450, y, gb * 1.4, 18, ORANGE), T(450 + gb * 1.4 + 6, y + 14, str(gb), "d-s"),
               R(630, y, sl * 7, 18, RED), T(630 + sl * 7 + 6, y + 14, p1(sl), "d-s")]
     b.append(P("M10 109H780", LINE2, 1, "4 4"))
-    add("c1c2_shapes", "Every tenant shape under the same 50 GB/s allowance (real engine, 1 req/s)", 790, 212, "".join(b))
+    add("c1c2_shapes", "Every tenant shape under the same 50 GB/s allowance (vLLM engine, 1 req/s)", 790, 212, "".join(b))
 
     # ---- floor
     b = []
@@ -293,14 +293,14 @@ def build():
                       (BLUE, (2622, 3.5), (1442, 2.6)), (GREEN, (3524, 4.3), (3688, 4.0))]:
         b += [P(f"M{X(p[0]):.1f} {Y(p[1]):.1f}L{X(q[0]):.1f} {Y(q[1]):.1f}", col, 1.6), f'<circle cx="{X(p[0]):.1f}" cy="{Y(p[1]):.1f}" r="5" fill="{col}" stroke="#fff" stroke-width="2"/>',
               f'<rect x="{X(q[0]) - 4.5:.1f}" y="{Y(q[1]) - 4.5:.1f}" width="9" height="9" fill="{col}" stroke="#fff" stroke-width="2"/>']
-    b += [T(X(3953) + 12, Y(11.6) + 4, "tpot_slo15 (control)", "d-s"), T(X(10300), Y(13.6) + 24, "green_dyn2 (control)", "d-s", "middle"), T(X(4167) + 12, Y(6.2) + 1, "C1: fixed, sliced, slow loop +15 %", "d-s"),
-          T(X(3688) + 12, Y(4.0) + 8, "C1 + compiled tenant (C2)", "d-g"), T(X(2622) + 4, Y(2.2) + 12, "C1: slow loop +5 %", "d-s")]
+    b += [T(X(3953) + 12, Y(11.6) + 4, "earlier SLO method (tpot_slo15)", "d-s"), T(X(10300), Y(13.6) + 24, "green_dyn2 (control)", "d-s", "middle"), T(X(4167) + 12, Y(6.2) + 1, "BWS-Budget, -Slicing; SLO-aware BWS 15 %", "d-s"),
+          T(X(3688) + 12, Y(4.0) + 8, "BWS-Budget + BWR-Compile", "d-g"), T(X(2622) + 4, Y(2.2) + 12, "SLO-aware BWS 5 %", "d-s")]
     lx = 618
     b += [f'<circle cx="{lx + 6}" cy="52" r="5" fill="{INK2}"/>', T(lx + 18, 56, "0.5 req/s", "d-m"), f'<rect x="{lx + 1.5}" y="69.5" width="9" height="9" fill="{INK2}"/>', T(lx + 18, 78, "1 req/s", "d-m"),
-          R(lx, 96, 12, 10, GRAY), T(lx + 18, 105, "controls", "d-m"), R(lx, 116, 12, 10, BLUE), T(lx + 18, 125, "C1", "d-m"), R(lx, 136, 12, 10, GREEN), T(lx + 18, 145, "C1 + C2", "d-m"),
+          R(lx, 96, 12, 10, GRAY), T(lx + 18, 105, "earlier methods", "d-m"), R(lx, 116, 12, 10, BLUE), T(lx + 18, 125, "BWS", "d-m"), R(lx, 136, 12, 10, GREEN), T(lx + 18, 145, "BWS + BWR", "d-m"),
           T(lx, 178, "Better towards the lower", "d-m"), T(lx, 196, "right: more tenant work,", "d-m"), T(lx, 214, "less decode slowdown.", "d-m"),
           T(lx, 244, "Dashed: decode slowdown", "d-m"), T(lx, 262, "per 1 k tenant tok/s.", "d-m")]
-    add("c1c2_tradeoff", "All schemes on the real engine: how much the tenant trains, and what decode pays", 790, 304, "".join(b))
+    add("c1c2_tradeoff", "All schemes on the vLLM engine: how much the tenant trains, and what decode pays", 790, 304, "".join(b))
 
 
 def render(only=None):

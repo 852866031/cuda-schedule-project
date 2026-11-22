@@ -16,7 +16,7 @@ def svg(w, h, body): return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0
 O = f'fill="{ORANGE}"'; GL = f'stroke="{LINE2}" stroke-width="1" fill="none"'
 D = {}
 
-# ---- 12: C1, a byte allowance (first method), to scale over 3.2 s
+# ---- 12: BWS, a byte allowance (first method), to scale over 3.2 s
 X0, X1, WIN = 170, 620, 3200.0
 X = lambda t: X0 + (X1 - X0) * t / WIN
 y0 = 56; b = f'<rect x="{X0}" y="18" width="14" height="12" {O}/><text class="d-m" x="{X0+20}" y="29">the tenant\'s GPU-memory traffic</text>'
@@ -24,7 +24,7 @@ b += (f'<text class="d-b" x="10" y="{y0+22}">Today: fewer SMs</text><text class=
       f'<rect x="{X0}" y="{y0+44-12.6:.1f}" width="{X1-X0}" height="12.6" {O}/><text class="d-t" x="{X0+6}" y="{y0+22}">moving all the time, about 37 GB/s</text>'
       f'<text class="d-m" x="640" y="{y0+14}">decode slowdown</text><text class="d-b" x="640" y="{y0+34}" style="font-size:15px">+3.9–6.9 %</text><text class="d-g" x="640" y="{y0+52}">measured</text>')
 y0 = 156; bw = X(470) - X(0)
-b += (f'<text class="d-b" x="10" y="{y0+22}">C1: an allowance</text><text class="d-m" x="10" y="{y0+41}">32 SMs · run, then pause</text><path d="M{X0} {y0+44}H{X1}" {GL}/>'
+b += (f'<text class="d-b" x="10" y="{y0+22}">BWS-Budget</text><text class="d-m" x="10" y="{y0+41}">32 SMs · run, then pause</text><path d="M{X0} {y0+44}H{X1}" {GL}/>'
       + "".join(f'<rect x="{X(t):.1f}" y="{y0+4}" width="{bw:.1f}" height="40" {O}/>' for t in (100, 1675))
       + f'<path d="M{X0} {y0+44-12.6:.1f}H{X1}" stroke="{INK}" stroke-width="1.4" stroke-dasharray="6 4" fill="none"/>'
       f'<text class="d-b" x="{X(2180):.0f}" y="{y0+22}" style="font-size:12.5px">allowance (average)</text>'
@@ -38,16 +38,16 @@ D["12_c1_budget"] = svg(780, 262, b)
 b = (f'<rect class="d-soft" x="10" y="12" width="300" height="86" rx="8"/><text class="d-b" x="24" y="36">Stage 3: what to control</text><text class="d-t" x="24" y="60">decode\'s cost follows the tenant\'s bytes</text><text class="d-t" x="24" y="82">an SM limit is indirect and weak</text>'
      f'<rect class="d-good" x="10" y="110" width="300" height="108" rx="8"/><text class="d-b" x="24" y="134">Stage 2: how to control it</text><text class="d-t" x="24" y="158">decode is at baseline while it pauses</text><text class="d-t" x="24" y="180">cost grows with the time it runs</text><text class="d-t" x="24" y="202">cheapest per token on 16–64 SMs</text>'
      f'<path class="d-ln" d="M310 55C335 55 335 92 358 96" marker-end="url(#arr)"/><path class="d-ln" d="M310 164C335 164 335 140 358 136" marker-end="url(#arr)"/>'
-     f'<rect class="d-warn" x="360" y="36" width="230" height="160" rx="8"/><text class="d-b" x="374" y="62">C1 byte budget</text><text class="d-t" x="374" y="88">quantity: GB per second</text><text class="d-t" x="374" y="112">means: run, then pause</text>'
+     f'<rect class="d-warn" x="360" y="36" width="230" height="160" rx="8"/><text class="d-b" x="374" y="62">BWS-Budget</text><text class="d-t" x="374" y="88">quantity: GB per second</text><text class="d-t" x="374" y="112">means: run, then pause</text>'
      f'<text class="d-t" x="374" y="136">SMs: enough, 16–32</text><text class="d-t" x="374" y="160">allowance: steady</text><text class="d-m" x="374" y="182">two methods · measured Nov 16</text>'
      f'<path class="d-ln" d="M590 116H636" marker-end="url(#arr)"/><rect class="d-good" x="638" y="76" width="132" height="80" rx="8"/><text class="d-b" x="704" y="102" text-anchor="middle">Measured</text><text class="d-m" x="704" y="122" text-anchor="middle">decode cost halved</text><text class="d-m" x="704" y="140" text-anchor="middle">no tail</text>'
-     f'<text class="d-m" x="10" y="238">another idea, the finer method of C1, and one idea that the measurements rule out</text>'
-     f'<rect class="d-warn" x="10" y="246" width="246" height="46" rx="8"/><text class="d-b" x="22" y="266" style="font-size:13px">C2 a tenant that uses less</text><text class="d-m" x="22" y="284">same work, fewer bytes moved</text>'
-     f'<rect class="d-warn" x="267" y="246" width="246" height="46" rx="8"/><text class="d-b" x="279" y="266" style="font-size:13px">C1, finer method</text><text class="d-m" x="279" y="284">one burst spans about 30 decode steps</text>'
+     f'<text class="d-m" x="10" y="238">another idea, BWS-Budget-Slicing, and one idea that the measurements rule out</text>'
+     f'<rect class="d-warn" x="10" y="246" width="246" height="46" rx="8"/><text class="d-b" x="22" y="266" style="font-size:13px">BWR: a tenant that uses less</text><text class="d-m" x="22" y="284">same work, fewer bytes moved</text>'
+     f'<rect class="d-warn" x="267" y="246" width="246" height="46" rx="8"/><text class="d-b" x="279" y="266" style="font-size:13px">BWS-Budget-Slicing</text><text class="d-m" x="279" y="284">one burst spans about 30 decode steps</text>'
      f'<rect class="d-box" x="524" y="246" width="246" height="46" rx="8"/><text class="d-b" x="536" y="266" style="font-size:13px">Timing: not pursued</text><text class="d-m" x="536" y="284">no gaps between decode steps</text>')
 D["15_measurements_to_ideas"] = svg(780, 300, b)
 
-# ---- 16: C1, the finer method, at the scale of single decode steps (1.6 s)
+# ---- 16: BWS, the finer method, at the scale of single decode steps (1.6 s)
 A0, A1, W3, STEP = 150, 760, 1600.0, 15.0
 XX = lambda t: A0 + (A1 - A0) * t / W3; n = int(W3 / STEP)
 NORM, FULL, PART = f'fill="{BLUE}" opacity=".28"', f'fill="{RED}"', f'fill="{RED}" opacity=".32"'

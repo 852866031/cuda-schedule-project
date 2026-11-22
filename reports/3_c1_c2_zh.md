@@ -1,14 +1,14 @@
-# C1 和 C2：限制 tenant 搬的字节，和让 tenant 少搬字节
+# 带宽调度（BWS）、SLO-aware BWS 和带宽削减（BWR）
 
 **问题。** 一个 LoRA 微调任务（下文叫 *tenant*）和 Llama-3-8B 的 decode 引擎共用一张 RTX 5090。
 报告 2 发现，tenant 在显存和 SM 之间每搬一个字节，decode 都要付出代价；而少给 tenant SM，
 只能很弱地控制这件事。能不能让 tenant 照常训练，同时让 decode 少受影响？
 
-**回答。** 能，有两种做法，而且可以叠加。**C1** 给 tenant 一个 GB/s 额度，让它在 32 个 SM 上全速干，
+**回答。** 能，有两种做法，而且可以叠加。**BWS** 给 tenant 一个 GB/s 额度，让它在 32 个 SM 上全速干，
 额度用完就歇。tenant 的进度和原来按延迟反馈的 scheme 相同时，decode 的代价减半（0.5 / 1 req/s 时
-+5.6 / +6.3 %，原来 +12.2 / +11.0 %），长尾消失（TPOT p90 +6 / +4 %，原来 +28 / +15 %）。**C2** 改 tenant
++5.6 / +6.3 %，原来 +12.2 / +11.0 %），长尾消失（TPOT p90 +6 / +4 %，原来 +28 / +15 %）。**BWR** 改 tenant
 本身，让同样的训练少搬字节：`torch.compile` 让每 token 的字节少 41 %，训练内容不变；同样的 tenant 进度下，
-decode 的代价再降到 +4.3 / +4.0 %。C1 的两种改进（歇得更细、额度跟着反馈调）在真引擎上没有带来更多。
+decode 的代价再降到 +4.3 / +4.0 %。BWS 的两种改进（歇得更细、额度跟着反馈调）在vLLM 服务上没有带来更多。
 decode 的代价里约有 3–5 % 根本不是字节造成的。
 
 本报告的数字都是 2026 年 11 月 16 日晚上测的；标明来自 11 月 9 日的（报告 1、2）除外。
@@ -20,10 +20,110 @@ decode 的代价里约有 3–5 % 根本不是字节造成的。
 **主机内存**是机器的内存，经 PCIe 访问。不用 DRAM 这个词。**tenant 进度**是 tenant 每秒训练的 token 数。
 **decode 变慢**一律是和同一晚、同样设置下 decode 单独跑相比。
 
+**名字。** **BWS**（bandwidth scheduling，带宽调度）：从外面限制 tenant 对显存通道的使用。它有两种方法：
+**BWS-Budget**（固定的字节额度；正文里叫「额度」，和 tenant 的显存预算区分开）和 **BWS-Budget-Slicing**。
+**SLO-aware BWS** 按 decode 的 SLO 来定这个额度。**BWR**（bandwidth reduction，带宽削减）：改 tenant 自己，让同样的
+训练需要更少的带宽；目前有效的方法只有 **BWR-Compile**。决策日志、TODO、运行计划和代码里用的是之前的名字：
+C1 = BWS（C1-A = BWS-Budget，C1-B = BWS-Budget-Slicing，C1-C = SLO-aware BWS），C2 = BWR（C2-A = BWR-Compile）。
+`c1_fix`、`c2a` 这些运行名没有改。
+
 ![路线](../coloc_adjust/report/figures/c1c2_route.png)
 
 *图 1 — 这份报告的路线（`../coloc_adjust/diagrams/make_c1c2_figs.py`，下面各图同）。黄框是提出的方案，绿框是测到的结论，白框是顺着查下去的问题。
-两个想法是同时提出的；先讲 C1，因为 C2 只能在 tenant 进度相同时比较。*
+两个想法是同时提出的；先讲 BWS，因为 BWR 只能在 tenant 进度相同时比较。*
+
+## 总览：做了什么，哪个方法最好
+
+这一节的数字全部来自 vLLM 服务（接真实请求），0.5 / 1 req/s 两档，和同一个引擎没有 tenant 时比。细节在第 3 到 6 节。
+
+### 第一层：三个部分，各改什么
+
+目标只有一个：tenant 照常训练，decode 尽量不变慢。
+
+- **带宽调度（BWS，bandwidth scheduling）** 管的是 tenant 什么时候用显存通道、用多少。tenant 的计算方式不变，从外面
+  给它一个字节额度。
+- **SLO-aware BWS** 不从额度出发，而从 decode 的 SLO 出发：目标是「decode 最多慢百分之几」，带宽调度是守住这个目标的
+  方法。它要对比的是之前那个同样看 SLO、但用 tok/s 上限来限制的方法。
+- **带宽削减（BWR，bandwidth reduction）** 改的是 tenant 怎么算，让同样的训练需要更少的带宽。
+
+BWS 和 BWR 可以叠加。SLO-aware BWS 架在 BWS 之上。
+
+### 第二层：具体方法
+
+| 属于 | 方法 | 具体做法 | 小节 |
+|---|---|---|---|
+| BWS | **BWS-Budget** | tenant 只用 32 个 SM，平均每秒最多搬 50 GB。它算完一步就歇，歇到平均不超额 | 3.1–3.4 |
+| BWS | **BWS-Budget-Slicing** | 同一个额度。不等一步算完，在一步中间每算几毫秒就歇一下 | 3.5 |
+| SLO-aware | **SLO-aware BWS** | 额度不固定。VRAM scheduler 盯着 decode 实测的 TPOT 慢慢调它，朝 SLO 目标走（decode 最多慢 15 %，或最多慢 5 %）。tenant 的行为和 BWS-Budget 一样 | 4 |
+| SLO-aware | 之前的 SLO 方法（`tpot_slo15`、`tpot_slo5`） | SLO-aware BWS 的对比对象：tenant 用全部 SM，只受一个 tok/s 上限限制，scheduler 按 TPOT 快速调这个上限 | 4 |
+| BWR | **BWR-Compile** | `torch.compile` 把一串小算子合成少数几个，中间结果不再写进显存：每 token 少搬 41 % 的字节 | 5 |
+| BWR | 改设置 | 换微批数、换 attention 的实现、只开梯度 checkpoint：没有省 | 5.3 |
+| BWR | 输出层分块 | 手写的，想省掉输出层的大张量：多搬 214 %，设计错了 | 5.3 |
+
+做带宽调度的三种方法只在两件事上不同：
+
+| | 额度是多少 | 谁定 | tenant 歇在哪 |
+|---|---|---|---|
+| BWS-Budget | 50 GB/s，不变 | 人定 | 每步之后：约干 0.7 秒、歇 0.4 秒 |
+| BWS-Budget-Slicing | 50 GB/s，不变 | 人定 | 一步中间：干 3.9 ms、歇 2.4 ms |
+| SLO-aware BWS | 10–150 GB/s，会变 | VRAM scheduler，按 decode 的 TPOT 和 SLO 目标 | 每步之后 |
+
+### 第三层：结果
+
+| 方法 | decode 平均慢 | decode 的 TPOT p90 | tenant 进度，tok/s |
+|---|---|---|---|
+| 之前的 SLO 方法，目标 15 % | +12.2 / +11.0 % | +28 / +15 % | 3.8k / 4.0k |
+| BWS-Budget | +5.6 / +6.3 % | +6 / +4 % | 3.5k / 3.7k |
+| BWS-Budget-Slicing | +5.7 / +5.9 % | +6 / +4 % | 3.2k / 3.3k |
+| SLO-aware BWS，目标 15 % | +5.5 / +6.2 % | +7 / +5 % | 3.7k / 4.2k |
+| SLO-aware BWS，目标 5 % | +3.5 / +2.6 % | +4 / +0 % | 2.6k / 1.4k |
+| **BWS-Budget + BWR-Compile** | **+4.3 / +4.0 %** | **+4 / +2 %** | 3.5k / 3.7k |
+
+平均慢 = token 间隔的平均值；p90 是各请求 TPOT 的 p90。
+
+### 第四层：哪个好，哪个不好，为什么
+
+**最好：BWS-Budget 加 BWR-Compile。**
+1. decode 平均只慢 +4.3 / +4.0 %，tenant 进度相同的方法里最小。
+2. 没有长尾：p90 是 +4 / +2 %。
+3. tenant 进度 3.5k / 3.7k tok/s，和单用 BWS-Budget 一样。
+
+原因是两件事叠加：额度稳定，tenant 不会一阵全速；每个 token 搬的字节少了四成。
+
+**好：单用 BWS-Budget。**
+1. decode 平均慢 +5.6 / +6.3 %，是之前 SLO 方法的一半。
+2. 长尾消失：p90 是 +6 / +4 %，之前是 +28 / +15 %。
+3. tenant 进度差不多。
+
+之前那个方法的上限在最低和最高之间来回摆，tenant 一阵接近停、一阵在全部 SM 上全速；全速那几段把 decode 拖得最慢。
+BWS-Budget 的额度不动，tenant 又只有 32 个 SM，干的时候对 decode 的影响也温和。
+
+**没有更好：BWS-Budget-Slicing。**
+1. decode 平均和 BWS-Budget 一样。
+2. 尾部也一样。
+3. tenant 少做 9 %。
+
+原因有三个。BWS-Budget 下 tenant 干的那一段本来就不重，没什么可摊匀的。最长的那 1 % token 间隔是引擎自己产生的：
+其中 95 % 发生在另一个请求结束前后 30 ms 之内，没有 tenant 时的占比（1.1 %）和两种方法下（1.2 %）一样。少掉的 9 %
+是时间表的缺陷，可以修（3.5 节）。
+
+**SLO-aware BWS 对比之前的 SLO 方法**（同一个目标，15 %）。
+1. decode 平均更小：+5.5 / +6.2 %，之前是 +12.2 / +11.0 %。
+2. 尾部小得多：p90 是 +7 / +5 %，之前是 +28 / +15 %。
+3. tenant 进度差不多：3.7k / 4.2k 对 3.8k / 4.0k tok/s。
+
+目标 5 % 时，它是这里唯一守住目标的方法（TPOT 中位数 +3 / +4 %，p90 +4 / +0 %）；代价是 tenant 进度，只有
+2.6k / 1.4k tok/s。和 BWS-Budget 比：目标 15 % 时没有多出好处（结果一样），目标 5 % 时 decode 的代价更低、训练更少。
+它判断「decode 慢了多少」的方式偏高，把请求之间互相造成的变慢也算了进去，所以比要求的更保守。它和之前的方法有
+三处同时不同（单位、步长、tenant 的 SM 数），没有逐个单独测（第 4 节）。
+
+**不好：之前的 SLO 方法。** decode 平均慢 +12.2 / +11.0 %，尾部最差（p90 +28 / +15 %），tenant 进度却不比
+BWS-Budget 多多少。
+
+**BWR 里不好的：** 改设置没有省字节；输出层分块搬了三倍的字节，因为每算一块都要重读一遍输出层的权重。
+
+两点提醒。每个方法在 vLLM 服务上只跑了一遍，1 个点左右的差别还不算确认。BWS-Budget-Slicing「没有更好」是当前这个
+设置下的结论，不代表换一个设置也一样。
 
 ## 1. 出发点
 
@@ -38,10 +138,10 @@ decode 的代价里约有 3–5 % 根本不是字节造成的。
 
 由此提出两个想法，11 月 15 日同时提出：
 
-- **C1，字节额度**：从外面限制 tenant，单位是 GB/s；让它在几十个 SM 上干一阵歇一阵来守住额度。
-- **C2，少搬字节的 tenant**：改 tenant 自己，让同样的训练在显存通道上的流量更少。
+- **BWS，字节额度**：从外面限制 tenant，单位是 GB/s；让它在几十个 SM 上干一阵歇一阵来守住额度。
+- **BWR，少搬字节的 tenant**：改 tenant 自己，让同样的训练在显存通道上的流量更少。
 
-下面先讲 C1，因为 C2 只能在 tenant 进度相同时比较，而固定进度靠的就是 C1。
+下面先讲 BWS，因为 BWR 只能在 tenant 进度相同时比较，而固定进度靠的就是 BWS。
 
 ![从测量到想法](../coloc_adjust/report/figures/15_measurements_to_ideas.png)
 
@@ -54,13 +154,14 @@ decode 的代价里约有 3–5 % 根本不是字节造成的。
 
 ## 2. 怎么测的
 
-两个实验台，在两张卡上同时跑。
+两个实验台，在两张卡上同时跑。**vLLM 服务**是真正的推理引擎，接真实请求；哪个方法更好，以它为准。**模拟 decode**
+是一个小程序，循环重放 decode 的一步，不接请求；它用来看机制，对每个请求的延迟和尾部给不出可靠的结论。
 
 ![实验台](../coloc_adjust/report/figures/c1c2_benches.png)
 
-*图 2 — 两个实验台。两边的 tenant 是同一个进程；decode 这一边，一个是重放的一步，一个是真引擎。*
+*图 2 — 两个实验台。两边的 tenant 是同一个进程；decode 这一边，一个是重放的一步，一个是vLLM 服务。*
 
-| | 合成实验台（GPU 1） | 真引擎实验台（GPU 0） |
+| | 模拟 decode（GPU 1） | vLLM 服务（GPU 0） |
 |---|---|---|
 | decode | 一个进程按 Llama-3-8B 的形状重放 decode 的一步（读一遍 15 GB 权重），批大小 1、4、8 | vLLM 0.30 + kvcached 跑 Llama-3-8B，前面是报告 1 的 router 和 VRAM scheduler |
 | tenant | 真的 LoRA 微调（Qwen2.5-0.5B，一步 8 条序列 × 512 个 token），和 GPU 0 上是同一份代码 | 同一个 tenant |
@@ -79,19 +180,19 @@ decode 的代价里约有 3–5 % 根本不是字节造成的。
 - **带宽计数器。** NVML 的显存带宽读数（GPM）是整张卡的，只有一个任务单独跑时才等于它自己的流量。
   用 decode 已知的读取量标定：1 % = 17.79 GB/s（30 个点，误差中位数 0.5 %）。
 
-**同样的 tenant 进度。** C1 和 C2 的每个对比都固定 tenant 的 tok/s；否则 decode 少慢，可能只是因为训练少了。
+**同样的 tenant 进度。** BWS 和 BWR 的每个对比都固定 tenant 的 tok/s；否则 decode 少慢，可能只是因为训练少了。
 做法：先跑参照设置，把它实际的 tok/s 作为同一组里其他设置的上限，tenant 超前了就歇。表里给的是实际量到的
 tok/s。
 
-## 3. C1：字节额度
+## 3. 带宽调度（BWS）
 
-### 3.1 方案
+### 3.1 BWS-Budget：方案
 
 给 tenant 一个额度：平均每秒最多搬多少 GB。它全速干，额度用完就停，补上了再接着干。
 
 - **用字节，不用 tok/s**：tenant 一换形状，tok/s 上限就要重调（各形状每 token 的代价最多差 7 倍）；字节额度不用。
 - **几十个 SM，不是 8 个。** 少给 tenant SM，decode 确实慢得少，但 tenant 自己的进度掉得更快（11 月 9 日，
-  合成实验台，tenant 和 decode 的 SM 不重叠）：
+  模拟 decode，tenant 和 decode 的 SM 不重叠）：
 
   | tenant 的 SM | tenant 进度，tok/s | decode 变慢（1 / 4 / 8 个请求） | decode 剩下的 SM |
   |---|---|---|---|
@@ -111,13 +212,13 @@ tok/s。
   剩下的 106 或 74 个 SM 上，就已经比用全部 170 个慢 2–7 % 或 2–14 %。所以给 32 个 SM，再用时间来压。
 - **在步与步之间歇**，因为 tenant 歇着时 decode 回到基线。
 
-![C1](../coloc_adjust/report/figures/12_c1_budget.png)
+![BWS](../coloc_adjust/report/figures/12_c1_budget.png)
 
-*示意图 3 — tenant 进度相同（约 2.6k tok/s）时，C1 和少给 SM 的对比，横轴 3.2 秒，按比例画
+*示意图 3 — tenant 进度相同（约 2.6k tok/s）时，BWS 和少给 SM 的对比，横轴 3.2 秒，按比例画
 （`../coloc_adjust/diagrams/12_c1_budget.svg`）。条的高度是 tenant 此刻的流量；虚线是额度。右边的数字是
-3.3 节合成实验台在 1 / 4 / 8 个请求下的结果。*
+3.3 节模拟 decode在 1 / 4 / 8 个请求下的结果。*
 
-### 3.2 实现
+### 3.2 BWS-Budget：实现
 
 1. **预算文件加一个 GB/s 字段。** VRAM scheduler 原来就在 `/dev/shm/coloc_ft_budget` 里发布 tenant 的显存
    预算、SM 数和 tok/s 上限；现在多写一个 `gbps`（`controller.py --gbps-fixed`）。当晚用 50 GB/s：scheduler 一直写同一个数，不看 TPOT，
@@ -135,25 +236,25 @@ tok/s。
 
 和报告 1 相同的部分：tenant 仍然服从显存预算，decode 要回显存时沿形状阶梯往下退，≥ 3 req/s 时完全暂停。
 
-### 3.3 测量
+### 3.3 BWS-Budget：测量
 
-**合成实验台：同样的 tenant 进度，不同的限法。** 参照是 tenant 在 8 个 SM 上放开跑（旁边 1 / 4 / 8 个请求时
+**模拟 decode：同样的 tenant 进度，不同的限法。** 参照是 tenant 在 8 个 SM 上放开跑（旁边 1 / 4 / 8 个请求时
 2.4 / 2.8 / 2.9k tok/s）；其他设置都限到这个进度。
 
 | 同样的 tenant 进度，限法 | decode 平均（1 / 4 / 8 个请求） | 单步 p90 |
 |---|---|---|
 | 8 个 SM，一直跑 | +3.9 / +6.9 / +5.9 % | +5.4 / +7.9 / +8.2 % |
-| **32 个 SM，每步之后歇（C1）** | **+2.5 / +5.7 / +5.5 %** | +5.8 / +11.8 / +11.0 % |
+| **32 个 SM，每步之后歇（BWS）** | **+2.5 / +5.7 / +5.5 %** | +5.8 / +11.8 / +11.0 % |
 | 全部 SM 共用，每步之后歇 | +4.6 / +7.0 / +6.5 % | +12.7 / +20.0 / +19.0 % |
 
-![C1，合成实验台](../coloc_adjust/report/figures/c1c2_c1_synthetic.png)
+![BWS，模拟 decode](../coloc_adjust/report/figures/c1c2_c1_synthetic.png)
 
-*图 4 — 上表。蓝色是 C1。*
+*图 4 — 上表。蓝色是 BWS。各栏是模拟 decode 同时在生成的请求数（批大小），不是到达率。*
 
 另一组以 16 个 SM 的 tenant 为参照（4.5–5.3k tok/s），顺序相同：16 个 SM 一直跑 +4.7 / +9.6 / +8.7 %，
 32 个 SM 加停顿 +4.5 / +8.7 / +8.4 %。
 
-- 每种批大小下 C1 都比 8 个 SM 便宜，差距大于两遍之间的波动，但只有 0.4–1.4 个点。
+- 每种批大小下 BWS 都比 8 个 SM 便宜，差距大于两遍之间的波动，但只有 0.4–1.4 个点。
 - **差距小的原因：4 和 8 个请求时，歇着并不免费。** tenant 在干时，decode 慢 +8.1 / +14.0 / +13.5 %，
   和 tenant 放开跑一样。tenant 歇着时，1 个请求下 decode 只慢 +0.7 %，4 和 8 个请求下仍慢 +3.0 / +2.7 %。
   在同一批日志里查过并排除了三种原因：功率上限（时钟只比 decode 单独时低 0.5 %，平均 475 W）；每次突发后的
@@ -165,24 +266,24 @@ tok/s。
 
 *图 5 — 把 decode 的每一步按「当时 tenant 在干还是在歇」分开统计（32 个 SM，每步之后歇）。方案里假设歇着时为 0。*
 
-**真引擎：固定 50 GB/s，跑完整的 11 分钟。** 对照是 `tpot_slo15`，报告 1 里最好的限速 scheme。15 % 是它的
+**vLLM 服务：固定 50 GB/s，跑完整的 11 分钟。** 对照是 `tpot_slo15`，报告 1 里最好的限速 scheme。15 % 是它的
 目标：允许 decode 的 TPOT 比引擎单独时高 15 %。它的 tenant 共用全部 SM，唯一的限制是一个 tok/s 上限。
 VRAM scheduler 每 2 秒拿最近 10 秒的 TPOT 中位数和目标比，把上限乘上一个系数，一步最小乘 0.5、最大乘 1.5，
-范围 500–20,000 tok/s；从最高调到最低大约只要 12 秒。它的 tenant 进度和 C1 接近，可以直接比。
+范围 500–20,000 tok/s；从最高调到最低大约只要 12 秒。它的 tenant 进度和 BWS 接近，可以直接比。
 
 ![tenant 实际搬的](../coloc_adjust/report/figures/c1c2_c1_tenant_rate.png)
 
 *图 6 — 两种 scheme 下 tenant 实际搬的字节，每 10 秒一个点：这 10 秒里做完的 token 数 × 所用形状的每 token MB
 （来自 tenant 自己的日志；不是计数器的读数，计数器分不开两个任务）。浅色竖带是时间线的各阶段，上面是到达率。*
 
-- **C1 下，tenant 能干的时候贴着 50 GB/s**（0.5 和 1 req/s 的各阶段里，每个 10 秒窗口都是 48–50 GB/s）。
+- **BWS 下，tenant 能干的时候贴着 50 GB/s**（0.5 和 1 req/s 的各阶段里，每个 10 秒窗口都是 48–50 GB/s）。
   一个窗口之内，它是干约 0.5 秒、歇约 0.6 秒。
 - **它不是一条直线。** 2 req/s 时显存紧，tenant 退到更慢的形状，做不到额度（1–44 GB/s）。3 和 4 req/s 时它
   没有显存可用，停着；对照下也一样。
 - **对照下，tenant 在 0 和 150 GB/s 之间摆**，有活干的窗口里中位数是 31 GB/s。整段算下来，两个 tenant 做的
   训练差不多一样多。
 
-![C1，真引擎](../coloc_adjust/report/figures/c1c2_c1_real.png)
+![BWS，vLLM 服务](../coloc_adjust/report/figures/c1c2_c1_real.png)
 
 *图 7 — decode 和引擎单独时相比，0.5 和 1 req/s。*
 
@@ -192,15 +293,13 @@ VRAM scheduler 每 2 秒拿最近 10 秒的 TPOT 中位数和目标比，把上�
 | `green_dyn2`：按负载给 16–96 个 SM（对照） | 11,468 / 9,154 | +13.4 / +13.8 % | 1.2 / 1.5 % | +14 / +15 % | +16 / +13 % |
 | **`c1_fix`：32 个 SM，固定 50 GB/s** | 3,524 / 3,670 | **+5.6 / +6.3 %** | 1.6 / 1.7 % | +6 / +6 % | **+6 / +4 %** |
 
-### 3.4 结论
+### 3.4 BWS-Budget：结论
 
 tenant 进度相同时，32 个 SM 上的字节额度让 decode 的代价减半，并消掉了快反馈环的长尾：p90 落在中位数附近。
-对照 `green_dyn2` 的训练量是三倍，代价约两倍；按每个 tenant token 算和 C1 差不多便宜，但它不能把 decode 守在
-一个目标附近。C1 比「8 个 SM 一直跑」省得比预期少，原因是 tenant 歇着时 decode 没有完全回到基线。
+对照 `green_dyn2` 的训练量是三倍，代价约两倍；按每个 tenant token 算和 BWS 差不多便宜，但它不能把 decode 守在
+一个目标附近。BWS 比「8 个 SM 一直跑」省得比预期少，原因是 tenant 歇着时 decode 没有完全回到基线。
 
-## 4. C1 留下的两个问题
-
-### 4.1 歇得更细
+### 3.5 BWS-Budget-Slicing：同一个额度，在一步里面切片
 
 **方案。** 每步之后歇时，tenant 一次突发约 0.47 秒，盖住约三十个 decode 步（每步 12–18 ms），这些步都被拖慢，
 其余的不受影响。把同样的活切成比一个 decode 步还短的片，应当能把慢摊匀：平均不变，单步的尾部变小。
@@ -223,12 +322,12 @@ tenant 进度相同时，32 个 SM 上的字节额度让 decode 的代价减半�
 | 每 8 个 block 一片 | +2.6 / +5.9 / +5.6 % | +5.5 / +10.3 / +9.1 % |
 | **每 1 个 block 一片（约 2.4 ms）** | +2.6 / +5.8 / +5.5 % | **+2.2 / +5.5 / +5.2 %** |
 
-- 合成实验台上有效：每 1 个 block 一片时，单步 p90 降到平均值。tenant 在跑时慢 5 %，实际进度比上限低 4.4 %；
+- 模拟 decode上有效：每 1 个 block 一片时，单步 p90 降到平均值。tenant 在跑时慢 5 %，实际进度比上限低 4.4 %；
   同步本身让它慢不到 1 %（tenant 单独、每个 block 后同步一次：11,510 对 11,582 tok/s）。
 - 所有 32 个 SM 的设置里，单步 p99 都是 +26–32 %，和怎么歇无关。可能来自切不到的那一段（输出层、loss、
   优化器），没有验证。
 
-真引擎上（`c1_fine`，每 1 个 block 一片，其余和 `c1_fix` 相同）：
+vLLM 服务上（`c1_fine`，每 1 个 block 一片，其余和 `c1_fix` 相同）：
 
 | 0.5 / 1 req/s | tenant tok/s | token 间隔平均 | TPOT 中位数 | TPOT p90 | 单个 token 间隔的 p90 |
 |---|---|---|---|---|---|
@@ -237,37 +336,53 @@ tenant 进度相同时，32 个 SM 上的字节额度让 decode 的代价减半�
 
 ![切片](../coloc_adjust/report/figures/c1c2_slices.png)
 
-*图 8 — 左：合成实验台，4 个请求；右：真引擎。*
+*图 8 — 左：模拟 decode，4 个请求；右：vLLM 服务。*
 
-**结论。** 真引擎上切片看不出变化：每请求 TPOT 完全一样，单个 token 间隔的尾部没变，tenant 还少了 9 % 的
+**结论。** vLLM 服务上切片看不出变化：每请求 TPOT 完全一样，单个 token 间隔的尾部没变，tenant 还少了 9 % 的
 token。在这个额度下，引擎 token 间隔的尾部不是 tenant 的突发造成的。保留每步之后歇的做法。
 
-### 4.2 额度由谁定
+## 4. SLO-aware BWS：目标是 SLO，方法是带宽调度
 
-**方案。** 上面的 50 GB/s 是我选的一个数；固定额度不知道 decode 在某个负载下能承受多少。让 VRAM scheduler
-用反馈来定：它看结果（decode 的 TPOT），反过来调原因（tenant 的额度）。对照 `tpot_slo15` 也是这样一个环，但它
-调得太猛，tenant 被推得一阵接近停、一阵接近全速，它的长尾就是这么来的。「慢反馈」是同一个思路，只是每次只调
-一点。
+**方案。** BWS-Budget 并不知道 decode 慢了多少：它的 50 GB/s 是我选的一个数。SLO-aware 的方法从另一头出发：输入是
+目标，「decode 的 TPOT 最多比引擎单独时高百分之几」，然后去调 tenant，直到目标达到。项目里原来就有这样一个方法，
+报告 1 的 `tpot_slo15` 和 `tpot_slo5`：它在全部 SM 上用一个 tok/s 上限压住 tenant，而且调得很猛，tenant 被推得一阵
+接近停、一阵接近全速，它的长尾就是这么来的。SLO-aware BWS 保留 SLO 目标，换掉被调的东西：32 个 SM 上的字节额度，
+每次只调一点。
 
-| | 快反馈（`tpot_slo15`，对照） | 慢反馈（这里） |
+| | 之前的 SLO 方法（`tpot_slo15`、`tpot_slo5`） | SLO-aware BWS（`c1_slow15`、`c1_slow5`） |
 |---|---|---|
-| 看什么 | 最近 10 秒的 TPOT 中位数，和目标比 | 一样 |
+| 看什么 | 最近 10 秒的 TPOT 中位数，和 SLO 目标比 | 一样 |
 | 多久调一次 | 每 2 秒 | 每 2 秒 |
+| 调的是什么 | tenant 的 tok/s 上限，500–20,000 | tenant 的字节额度（GB/s），10–150 |
 | **一步最多调多少** | 乘 0.5 或乘 1.5 | **±10 %** |
 | **从最高调到最低** | 约 12 秒 | **约 50 秒** |
-| 调的是什么 | tenant 的 tok/s 上限，500–20,000 | tenant 的 GB/s 额度，10–150 |
 | tenant 的 SM | 全部，共用 | 32 个 |
 | 引擎里没有请求时 | 不特殊处理 | 发布上限值；环自己的值留着，下一个请求来时接着用 |
 
-**实现。** `controller.py --slo-mode slow`。改的只是 VRAM scheduler 里的反馈环；tenant 和固定额度时一样，
-读到多少 GB/s 就按多少记账。跑了两个目标：decode 最多慢 15 %，和最多慢 5 %。
+**实现。** `controller.py --slo-mode slow`。改的只是 VRAM scheduler 里的反馈环；tenant 和 BWS-Budget 时一样，读到
+多少 GB/s 就按多少记账：全速算完一步，然后歇。跑了两个目标：decode 最多慢 15 %，和最多慢 5 %。
 
-**测量**（真引擎，0.5 / 1 req/s）：
+反馈环每 2 秒做一遍：
 
-| scheme | tenant tok/s | token 间隔平均 | TPOT 中位数 | TPOT p90 | 各阶段额度（中位数） |
+1. 取最近 10 秒里完成的请求的 TPOT 中位数。
+2. 取一个参照：当前到达率下引擎单独跑时的 TPOT，来自没有 tenant 的那次运行。
+3. decode 的变慢 = 前者除以后者再减一。误差 = 变慢减去目标（0.15 或 0.05）。
+4. 额度乘上 `exp(−4 × 误差)`，这个系数一步限制在 0.9 到 1.1 之间，额度保持在 10–150 GB/s 之内。起始值是
+   150 GB/s。最近 10 秒没有请求完成时，额度保持不变。
+5. 引擎里没有请求时，发给 tenant 的是 150 GB/s；环自己的值留着，下一个请求来时再发出去。
+
+**测量**（vLLM 服务，0.5 / 1 req/s；之前的方法在 5 % 目标下用的是 11 月 9 日的运行，11 月 16 日没有重跑，所以没有算它的
+token 间隔平均值）：
+
+| SLO 目标 | 方法 | tenant tok/s | token 间隔平均 | TPOT 中位数 | TPOT p90 |
 |---|---|---|---|---|---|
-| `c1_slow15`：目标 +15 % | 3,686 / 4,167 | +5.5 / +6.2 % | +6 / +7 % | +7 / +5 % | 36–60 GB/s，最后一个阶段 113 |
-| `c1_slow5`：目标 +5 % | 2,622 / 1,442 | +3.5 / +2.6 % | +3 / +4 % | +4 / +0 % | 0.5 req/s 时 21 GB/s，1 req/s 时 10–16 |
+| 15 % | 之前的 SLO 方法（`tpot_slo15`） | 3,769 / 3,953 | +12.2 / +11.0 % | +7 / +10 % | +28 / +15 % |
+| 15 % | **SLO-aware BWS**（`c1_slow15`） | 3,686 / 4,167 | **+5.5 / +6.2 %** | +6 / +7 % | **+7 / +5 %** |
+| 5 % | 之前的 SLO 方法（`tpot_slo5`，11 月 9 日） | 3.8k / 1.2k | – | +7 / +3 % | +28 / +4 % |
+| 5 % | **SLO-aware BWS**（`c1_slow5`） | 2,622 / 1,442 | **+3.5 / +2.6 %** | +3 / +4 % | **+4 / +0 %** |
+
+反馈环给出的额度，按阶段的中位数：目标 15 % 时 36–60 GB/s（最后一个阶段 113）；目标 5 % 时，0.5 req/s 是 21 GB/s，
+1 req/s 是 10–16 GB/s。
 
 ![慢反馈](../coloc_adjust/report/figures/c1c2_slow_loop.png)
 
@@ -285,13 +400,13 @@ token。在这个额度下，引擎 token 间隔的尾部不是 tenant 的突发
 **结论。** 慢慢调的额度能守住严格的目标，而且没有长尾，但它的误差信号偏高。目标宽松时，固定额度效果一样。
 更好的参照（同样的在跑请求数下引擎单独的 TPOT）还没有试。
 
-## 5. C2：少搬字节的 tenant
+## 5. 带宽削减（BWR）：BWR-Compile，编译版 tenant
 
 ### 5.1 方案
 
-有了 C1，tenant 在 3.5–3.7k tok/s 时 decode 仍慢约 6 %。tenant 进度固定时，要再往下降，只能让每个 token
-少搬字节。C2 改的是 tenant 的计算方式；衡量标准是**同样的 tenant 进度下 decode 慢多少**。一个只是跑得更快的
-tenant 会把同样的带宽占满，所以 C2 需要 C1 在旁边。
+有了 BWS，tenant 在 3.5–3.7k tok/s 时 decode 仍慢约 6 %。tenant 进度固定时，要再往下降，只能让每个 token
+少搬字节。BWR 改的是 tenant 的计算方式；衡量标准是**同样的 tenant 进度下 decode 慢多少**。一个只是跑得更快的
+tenant 会把同样的带宽占满，所以 BWR 需要 BWS 在旁边。
 
 **字节花在哪。** 上 GPU 之前，先在 CPU 上把一个微批（2 × 512 个 token）按算子拆开数
 （`../coloc_adjust/tenant_inventory.py`、`../coloc_adjust/results/tenant_inventory.md`），假设每个算子从显存读
@@ -364,9 +479,9 @@ tenant 单独跑在 32 个 SM 上，每种做法约 43 秒；计数器读到它�
 - **CPU 上数的数不准**：1 个微批的方向数反了（数出来 −9 %，量到 +16 %）。
 - 带 offload 的形状在跑时每秒只搬 42–49 GB；快形状在同样 32 个 SM 上是 143–181 GB/s。
 
-### 5.4 测量，decode 这一边：合成实验台
+### 5.4 测量，decode 这一边：模拟 decode
 
-tenant 在 32 个 SM 上，合成 decode 在其余 138 个上。原来的 tenant 放开跑；编译版本身跑得更快，
+tenant 在 32 个 SM 上，模拟 decode 在其余 138 个上。原来的 tenant 放开跑；编译版本身跑得更快，
 限到同样的 tok/s。
 
 | tenant，都是 8.0 / 9.2 / 9.4k tok/s | 1 个请求 | 4 个 | 8 个 | 每 1k tok/s |
@@ -374,7 +489,7 @@ tenant 在 32 个 SM 上，合成 decode 在其余 138 个上。原来的 tenant
 | 原来的 | +8.1 % | +13.9 % | +13.7 % | 1.02 / 1.51 / 1.46 % |
 | `torch.compile` | +5.3 % | +9.7 % | +9.2 % | 0.66 / 1.06 / 0.99 % |
 
-![C2，合成实验台](../coloc_adjust/report/figures/c1c2_c2_synthetic.png)
+![BWR，模拟 decode](../coloc_adjust/report/figures/c1c2_c2_synthetic.png)
 
 *图 12 — 上表。*
 
@@ -382,9 +497,9 @@ tenant 在 32 个 SM 上，合成 decode 在其余 138 个上。原来的 tenant
 - 按 tenant 每秒搬的 GB（tok/s × 每 token MB）算，1 个请求时的三个设置（原来的放开跑、编译版放开跑、编译版限速）
   都在每 100 GB/s 慢 7.5–8.5 %。
 - **放开跑时，编译版只是跑得更快。** 它多做三分之一的训练（1 个请求时 10.7k 对 8.0k tok/s），decode 是 +7.2 %，
-  原来的 tenant 是 +8.1 %：省下的字节大半花在了多做的训练上。没有 C1，C2 变成的是更多训练，而不是更少伤害。
+  原来的 tenant 是 +8.1 %：省下的字节大半花在了多做的训练上。没有 BWS，BWR 变成的是更多训练，而不是更少伤害。
 
-### 5.5 测量，decode 这一边：真引擎
+### 5.5 测量，decode 这一边：vLLM 服务
 
 设置和 `c1_fix` 相同（32 个 SM，每步之后歇），tenant 限到 50 GB/s 对原来 tenant 换算出的 tok/s。所以编译版
 实际只搬约 28–29 GB/s。
@@ -394,7 +509,7 @@ tenant 在 32 个 SM 上，合成 decode 在其余 138 个上。原来的 tenant
 | `c1_fix`：原来的 tenant | 3,524 / 3,670 | +5.6 / +6.3 % | 1.6 / 1.7 % | +6 / +6 % | +6 / +4 % |
 | **`c2a`：编译版 tenant** | 3,524 / 3,688 | **+4.3 / +4.0 %** | 1.2 / 1.1 % | +5 / +4 % | +4 / +2 % |
 
-![C2，真引擎](../coloc_adjust/report/figures/c1c2_c2_real.png)
+![BWR，vLLM 服务](../coloc_adjust/report/figures/c1c2_c2_real.png)
 
 *图 13 — 上表。*
 
@@ -404,16 +519,16 @@ tenant 在 32 个 SM 上，合成 decode 在其余 138 个上。原来的 tenant
 
 ### 5.6 结论
 
-C2 对编译版成立：同样的训练、同样的速度，真引擎上 decode 少慢 1.3–2.3 个点，合成实验台上少 30–35 %，训练内容
-不变。改微批数或 attention 没有收益。C2 需要 C1 在旁边：不限制进度，更轻的 tenant 会把省下的字节花在更多的
+BWR 对编译版成立：同样的训练、同样的速度，vLLM 服务上 decode 少慢 1.3–2.3 个点，模拟 decode上少 30–35 %，训练内容
+不变。改微批数或 attention 没有收益。BWR 需要 BWS 在旁边：不限制进度，更轻的 tenant 会把省下的字节花在更多的
 训练上。
 
-## 6. C2 带出来的两个发现
+## 6. BWR 带出来的两个发现
 
 ### 6.1 带 offload 的形状，代价比它搬的字节高
 
 形状阶梯（报告 1）靠把中间结果或权重放到主机内存来省显存。每种形状都在同一个 50 GB/s 额度、32 个 SM 下跑，
-真引擎 1 req/s，引擎 KV 上限 3 GiB，每种 120 秒，正反两遍，中间插三段没有 tenant 的窗口作基准。
+vLLM 服务 1 req/s，引擎 KV 上限 3 GiB，每种 120 秒，正反两遍，中间插三段没有 tenant 的窗口作基准。
 
 | 形状 | 每 token MB | tenant tok/s | 在算的时间占比 | 在算时的 GB/s | decode，token 间隔平均 | 每 100 GB/s |
 |---|---|---|---|---|---|---|
@@ -435,7 +550,7 @@ block 都做主机内存和显存之间的拷贝，并启动很多小 kernel；d
 
 ### 6.2 下限：不搬字节的任务
 
-tenant 的字节怎么减，也低不过一个不搬字节的任务的代价。让一个只做算术的任务挨着合成 decode 放开跑，在 32 个
+tenant 的字节怎么减，也低不过一个不搬字节的任务的代价。让一个只做算术的任务挨着模拟 decode 放开跑，在 32 个
 或 8 个 SM 上，1 个和 8 个请求：一个 16 KB 的逐元素 kernel，以及 128、512、2304 阶的方阵相乘（工作集 0.2、3、
 64 MB）。
 
@@ -464,16 +579,16 @@ tenant 的字节怎么减，也低不过一个不搬字节的任务的代价。�
 1. **tenant 应当按字节限制，给够 SM，靠停顿守额度。** 32 个 SM 上的固定 GB/s 额度，在 tenant 进度相同时让
    decode 的代价减半，p90 等于中位数。
 2. **tenant 怎么算是第二个、独立的把手。** `torch.compile` 让每 token 字节少 41 %，同样进度下 decode 的代价
-   再降 1.3–2.3 个点，训练不变。C1 + C2 合起来，每 1k tenant tok/s 让 decode 慢 1.1–1.2 %；`green_dyn2` 是
+   再降 1.3–2.3 个点，训练不变。BWS + BWR 合起来，每 1k tenant tok/s 让 decode 慢 1.1–1.2 %；`green_dyn2` 是
    1.2–1.5 %，`tpot_slo15` 是 2.8–3.2 %；在所有训练的 scheme 里尾部最小。
-3. **更精细的控制在这台引擎上没有回报。** 比 decode 步还短的切片在合成实验台上消掉了单步的尾部，在真引擎上
+3. **更精细的控制在这台引擎上没有回报。** 比 decode 步还短的切片在模拟 decode上消掉了单步的尾部，在vLLM 服务上
    没有变化；按 TPOT 调的额度能守住严格目标，但比要求的更保守。
 4. **字节是代价的大部分，不是全部。** 4–8 个请求时停顿仍剩约 3 %；启动、功率上限和缓存让不搬字节的任务也有
    2–10 %；带 offload 的形状每字节贵三到四倍。
 
 ![代价和进度](../coloc_adjust/report/figures/c1c2_tradeoff.png)
 
-*图 16 — 当晚真引擎上的所有 scheme：tenant 的进度和 decode 的平均变慢，每个 scheme 两个点（0.5 和 1 req/s）。
+*图 16 — 当晚vLLM 服务上的所有 scheme：tenant 的进度和 decode 的平均变慢，每个 scheme 两个点（0.5 和 1 req/s）。
 三条虚线是每 1k tenant tok/s 让 decode 慢 1 %、2 %、3 %。*
 
 **由此支持的配置**：固定或慢慢调的 GB/s 额度；tenant 在 32 个 SM 上、每步之后歇、用编译版；挨着 decode 时不跑
@@ -506,7 +621,7 @@ tenant 的字节怎么减，也低不过一个不搬字节的任务的代价。�
 3. **按字节给 GPU 任务定预算，只见于保护 CPU 任务。** 以 decode 为受害者的系统按 kernel 或 token 放行，依据是
    延迟；没有一个数字节。
 
-| 工作 | 它做什么 | 和 C1 / C2 的关系 | 读到哪 |
+| 工作 | 它做什么 | 和 BWS / BWR 的关系 | 读到哪 |
 |---|---|---|---|
 | Elvinger 等（SoCC 2025） | H100 上，64 个 SM 的 Llama-3.1-8B decode 挨着另外 68 个 SM 上的拷贝 kernel，最多慢 1.3 倍 | 报告 2 的现象；没有提机制 | 正文 |
 | MIG（NVIDIA） | 每个实例独占一段显存通道 | 能隔带宽；GeForce 不支持；份额固定 | 正文 |
@@ -518,25 +633,25 @@ tenant 的字节怎么减，也低不过一个不搬字节的任务的代价。�
 | LLMStation（ATC 2025） | LoRA 微调和 decode 共用基座模型；每个 decode 迭代决定带几个微调 `tasklet`，使迭代不超延迟目标 | 场景最近；预算是延迟，不是字节 | 正文 |
 | Nexus、FlexLLM、ConServe（预印本），LithOS（SOSP 2025） | 运行中调整大小的 green context 分区；以 token 为单位共服务；按 SM 组调度 | 不限字节 | 部分 / 摘要 |
 | Harli（预印本，2025 年 11 月） | PEFT 微调和 LLM decode 混部，用 green context 分 SM；把干扰建模成和微调任务 SM 份额成正比的带宽争用 | 场景和诊断最近；旋钮是 SM 划分，报告 2 测到这个旋钮很弱 | 搜索，正文 |
-| LoRAFusion（EuroSys 2026） | 把 LoRA 微调里受带宽限制的算子融合；显存流量 −34–37 % | 就是 C2 的「合并算子」，为的是任务自己的速度；旁边没有别的任务 | 搜索，正文 |
+| LoRAFusion（EuroSys 2026） | 把 LoRA 微调里受带宽限制的算子融合；显存流量 −34–37 % | 就是 BWR 的「合并算子」，为的是任务自己的速度；旁边没有别的任务 | 搜索，正文 |
 | ConCo（ICS 2025） | 为推理模型按 SM 份额编译多个 kernel 变体；带宽压力变小是副产品 | 对等任务，目标是吞吐 | 搜索，正文 |
 | QoS-Compile（CGO 2012）、ReQoS（ASPLOS 2013）、Protean Code（MICRO 2014） | CPU 上改低优先级程序的代码，让它变慢或少占缓存 | 「改代码当好邻居」的先例；没有一个让它每字节多干活 | 搜索，部分 |
 
 | | 最接近的工作 | 这里的不同 |
 |---|---|---|
-| **C1** | MemGuard（每核每周期预算，硬件计数器）；Ripple（按截止时间批准） | 受害者是 GPU 上的 decode，被限的是 tenant；没有每进程计数器，tenant 用每 token 字节自己记账 |
-| **C1**，歇得更细 | LLMStation 可暂停的 `tasklet`；Hummingbird 约 400 µs 的片；Tally | 独立进程，只在 block 边界停，不改 autograd，不拦截调用；预算是字节 |
-| **C2** | LoRAFusion（融合并量了字节，为自身速度）；ConCo；Protean Code 一系 | **因为**旁边有带宽受限的 decode，才降低 tenant 的字节，并用 decode 慢多少来衡量 |
+| **BWS** | MemGuard（每核每周期预算，硬件计数器）；Ripple（按截止时间批准） | 受害者是 GPU 上的 decode，被限的是 tenant；没有每进程计数器，tenant 用每 token 字节自己记账 |
+| **BWS**，歇得更细 | LLMStation 可暂停的 `tasklet`；Hummingbird 约 400 µs 的片；Tally | 独立进程，只在 block 边界停，不改 autograd，不拦截调用；预算是字节 |
+| **BWR** | LoRAFusion（融合并量了字节，为自身速度）；ConCo；Protean Code 一系 | **因为**旁边有带宽受限的 decode，才降低 tenant 的字节，并用 decode 慢多少来衡量 |
 
 两个位置都没找到先例：在没有 MIG 的独立 GPU 上，以带宽受限的 decode 为受害者、给低优先级 tenant 按字节定预算
-（C1）；以及因为旁边的任务而让邻居少搬字节（C2）。写进论文之前，Harli、LoRAFusion、ConCo 要通读。来源列在
+（BWS）；以及因为旁边的任务而让邻居少搬字节（BWR）。写进论文之前，Harli、LoRAFusion、ConCo 要通读。来源列在
 附录 B；更长的工作笔记在 git 历史里（`coloc_adjust/report/RELATED_bandwidth.md`，commit `358cc6b`）。
 
 ## 9. 局限和未解的问题
 
 局限：
 
-- **真引擎上每个 scheme 只跑了一遍。** 当晚两次引擎单独的 baseline，token 间隔平均值相差不到 0.4 %，但开头那次
+- **vLLM 服务上每个 scheme 只跑了一遍。** 当晚两次引擎单独的 baseline，token 间隔平均值相差不到 0.4 %，但开头那次
   的每请求 p90 比收尾那次高 3 %（前几次运行时 GPU 1 在忙，最后三次时它空着，其中有 `c1_fine` 和 `c2a`）。跨这条线比 p90，
   有约 3 个点的不确定；平均值没有这个问题。
 - SLO 目标是我暂定的。
@@ -561,11 +676,11 @@ tenant 的字节怎么减，也低不过一个不搬字节的任务的代价。�
 | 实验清单和待办 | `coloc_adjust/TODO.md`，D 和 E 两节 |
 | tenant（额度、block 切片、变体） | `coloc_adjust/ft_worker.py`、`pacing.py`、`loss_chunk.py` |
 | VRAM scheduler（GB/s 字段、慢反馈） | `coloc_adjust/controller.py` |
-| 合成实验台；每 token 字节；启动脚本 | `coloc_adjust/corun2.py`、`tenant_bytes.py`、`run_eval7.sh`、`run_probe2.sh`、`run_o3_gpu0*.sh`、`run_o3_gpu1.sh` |
+| 模拟 decode；每 token 字节；启动脚本 | `coloc_adjust/corun2.py`、`tenant_bytes.py`、`run_eval7.sh`、`run_probe2.sh`、`run_o3_gpu0*.sh`、`run_o3_gpu1.sh` |
 | 分析 | `coloc_adjust/analyze_o3.py`、`analyze_probe2.py`、`o3_synth_tables.py` |
 | 本报告的图 1–16；示意图 | `coloc_adjust/diagrams/make_c1c2_figs.py`；`coloc_adjust/diagrams/make_svg.py` |
 | 一层上的 `torch.compile`，CPU | `coloc_adjust/compile_demo.py` |
-| 结果表 | `coloc_adjust/results_o3/`：`r4_summary.md`（真引擎）、`r1_table.md`（C1 合成）、`r3_table.md`（C2 合成）、`r2_bytes.md`（每 token 字节）、`probe2_summary.md`（形状）、`r6_floor_summary.md`（下限） |
+| 结果表 | `coloc_adjust/results_o3/`：`r4_summary.md`（vLLM 服务）、`r1_table.md`（BWS，模拟 decode）、`r3_table.md`（BWR，模拟 decode）、`r2_bytes.md`（每 token 字节）、`probe2_summary.md`（形状）、`r6_floor_summary.md`（下限） |
 
 ## 附录 A. 11 月 16 日那一晚
 
@@ -573,24 +688,24 @@ tenant 的字节怎么减，也低不过一个不搬字节的任务的代价。�
 
 | 运行 | 时间 | 卡 | 做什么 | 对应小节 |
 |---|---|---|---|---|
-| R0 | 02:06–02:12 | GPU 1 | decode 单独、tenant 单独、计数器标定、同步的开销 | 2、4.1 |
+| R0 | 02:06–02:12 | GPU 1 | decode 单独、tenant 单独、计数器标定、同步的开销 | 2、3.5 |
 | R2 | 02:12–02:30 | GPU 1 | 14 种 tenant 做法的每 token 字节 | 5.3 |
-| R3 | 02:33–02:49 | GPU 1 | 少搬字节的 tenant 挨着合成 decode，同样进度 | 5.4 |
-| R1 | 02:49–03:14 | GPU 1 | 同样的 tenant 进度、九种限法，54 个点（重跑） | 3.3、4.1 |
+| R3 | 02:33–02:49 | GPU 1 | 少搬字节的 tenant 挨着模拟 decode，同样进度 | 5.4 |
+| R1 | 02:49–03:14 | GPU 1 | 同样的 tenant 进度、九种限法，54 个点（重跑） | 3.3、3.5 |
 | R6 | 03:14–03:18 | GPU 1 | 不搬字节的任务 | 6.2 |
-| R4 | 02:06–04:14 | GPU 0 | 11 分钟时间线跑 10 遍：baseline、两个对照、四个 C1、两个更轻的 tenant、baseline | 3.3、4、5.5 |
+| R4 | 02:06–04:14 | GPU 0 | 11 分钟时间线跑 10 遍：baseline、两个对照、四个 BWS、两个更轻的 tenant、baseline | 3.3、3.5、4、5.5 |
 | R5 | 04:14–04:43 | GPU 0 | 每种形状在同一额度下 | 6.1 |
 | R7 | 04:43–05:40 | GPU 0 | prefill tenant 跟着 VRAM scheduler 切 green context：没有结果 | 报告 4 |
 
-**和计划的偏离。** 计划是按一张卡串行写的；两张卡都能用以后，真引擎的运行放到 GPU 0、合成的放到 GPU 1 同时跑；
-两个对照先跑，因为 C1 和 C2 的运行要用另一张卡上 R2 的每 token 字节表和 R1 选出的切片长度。每秒 kernel 启动次数
+**和计划的偏离。** 计划是按一张卡串行写的；两张卡都能用以后，vLLM 服务的运行放到 GPU 0、模拟 decode 的放到 GPU 1 同时跑；
+两个对照先跑，因为 BWS 和 BWR 的运行要用另一张卡上 R2 的每 token 字节表和 R1 选出的切片长度。每秒 kernel 启动次数
 没有用 profiler 量。R6 里没有只用寄存器的 kernel（要手写 CUDA），用四种大小的算术任务代替。
 
-**一次故障（02:33）。** 真引擎的启动脚本在每个 scheme 开始时停掉所有 tenant 进程，这一行是只用一张卡时写的。
+**一次故障（02:33）。** vLLM 服务的启动脚本在每个 scheme 开始时停掉所有 tenant 进程，这一行是只用一张卡时写的。
 它停掉了另一张卡上 R1 的 tenant（R1 只跑了 54 个点里的 3 个），还让 R2 的一种做法少跑了 8 秒（35 秒，仍有效）。
-02:43 修好，R1 完整重跑。真引擎的运行没有受影响。
+02:43 修好，R1 完整重跑。vLLM 服务的运行没有受影响。
 
-**量过、但这份报告没有采用的。** LoRA 只加在顶部 8 或 4 层（每 token 10.10 / 9.24 MB；真引擎十次运行里的一次，
+**量过、但这份报告没有采用的。** LoRA 只加在顶部 8 或 4 层（每 token 10.10 / 9.24 MB；vLLM 服务十次运行里的一次，
 `c2b`）。它改变了训练内容，不算「同样的训练、少搬字节」，它的训练效果是否一样好也没有检查。数字在
 `coloc_adjust/results_o3/` 和 DECISIONS 的 D22、D23、D26。
 

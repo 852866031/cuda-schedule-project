@@ -356,7 +356,7 @@ The diagram is as drawn on Nov 9, when (2) was "proposed, not built yet" and (3)
   Decode keeps the path at 75–79 % with 1, 4 and 8 requests.
 
 **Next: report 3.** [3_c1_c2.md](3_c1_c2.md) takes this conclusion and tests two ways to act on
-it: C1, a byte allowance for the tenant, and C2, a tenant changed so that the same training moves
+it: BWS (bandwidth scheduling), a byte budget for the tenant, and BWR (bandwidth reduction), a tenant changed so that the same training moves
 fewer bytes.
 
 ## What this shows
