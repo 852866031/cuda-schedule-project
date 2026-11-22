@@ -13,7 +13,7 @@ when an item is done (next free figure number: Figure 7 / 图 7). Background rea
 
 Rules for every run: either GPU may be used (GPU 1 only was lifted on Nov 9); check that the GPU
 is free first (another project's vLLM tests used both on Nov 9); one MPS daemon and pipe directory
-per GPU (`GPU=0 ./run_knee_corun.sh …`); weights under `/mnt/storage/huggingface`; 500 W cap as in the earlier runs;
+per GPU (`GPU=0 ./run_knee_corun.sh …`); weights under `/home/jiaxuan/.cache/huggingface`; 500 W cap as in the earlier runs;
 rerun any point that looks odd before reporting it.
 
 Terms: *decode* = the synthetic Llama-3-8B decode step (15.8 GB read per step); *tenant* = the
@@ -426,3 +426,56 @@ Done on Nov 9: the standalone report `report/REPORT_bandwidth.md` and `report/RE
   `analyze_modes.py`, `plot_bw_report.py`, results), Diagrams 08–10 and the standalone report.
 - [ ] Commit the co-run probe (`knee_corun.py`, `run_knee_corun.sh`, results), this file,
   the related-work notes (now `../reports/3_c1_c2.md`), and the `HF_HOME` lines in `kvcached_validation/scripts/`.
+
+## Plan after the profile (Nov 21 2026)
+
+Basis: `reports/3_c1_c2.md` section 1, the profile (bytes per segment of a tenant step; 1.5: the
+output layer over vocabulary blocks). Main line unchanged: the tenant keeps training, decode slows as little as
+possible; a method is judged on the vLLM engine, decode's mean first, then its tail, then tenant
+work. Two directions from the supervisor: make slicing work (BWS), go to the kernel level (BWR).
+Every GPU run is announced first.
+
+Profile
+- [x] P0 Per-segment bytes of the usual tenant, the split head, vocabulary blocks 1,024–32,768,
+  the compiled tenant and compiled body + vocabulary blocks (`segment_bytes.py`,
+  `results_prof/seg_summary.md`).
+- [ ] P1 (does not block S1–S4: until measured, the bytes per segment found alone are assumed to
+  hold next to decode) The tenant's segments next to the vLLM engine, and decode's own profile: whose bytes the
+  extra traffic of a co-run is (+41–52 % of the tenant's share at 4 and 8 requests on the
+  simulated decode). About 30 min of GPU.
+- [ ] P2 Does decode's slowdown follow a segment's bytes: a probe timed at the millisecond.
+  About 20 min.
+- [x] P3 (done Nov 22, `block_bytes.py`, `results_prof/block_parts.md`: 58 % of the blocks' bytes are the MLP) Bytes by operator group inside one block (checkpoints on the sub-modules). About 5 min.
+
+BWS: slicing done right
+- [x] S1 (done Nov 21: `pacing.BytePacer`, `test_pacing_bytes.py`) A byte ledger in `pacing.py`: cut a step into chunks of equal bytes from the per-segment
+  table (chunk = budget × window, window no longer than a decode step), pause at chunk borders,
+  re-cut when the budget changes; BWS-Budget and BWS-Budget-Slicing become one code path that
+  differs in chunk size. CPU tests. No GPU.
+- [x] S2 (done Nov 21: `pace_check.py`, `results_prof/pace_summary.md`; period within 0.1 % of bytes ÷ budget, worst 12 ms at 1.4x the budget with the vocabulary-block tenant, 12x with the usual one) Overhead of the implementation (the supervisor's suspicion): cost per checkpoint (sync,
+  sleep resolution, hook), distribution of lateness; done when the paced tenant alone shows a flat
+  GB/s in `nsys` and its period equals bytes ÷ budget. About 10 min.
+- [x] S3 (done Nov 22, `results_n21/night_summary.md`, `reports/night_2026-11-22.md` 5.4: no lost tenant work; p90 of single decode steps about 2 points lower; mean and TPOT unchanged) vLLM engine: BWS-Budget against BWS-Budget-Slicing at one byte budget, with the
+  vocabulary-block tenant, at least two runs each. Expected: no 9 % loss of tenant work; p90 of
+  decode steps near the mean; watch the p99. About 1 h.
+- [x] S4 (done Nov 22, report 5.7; the loop's budget range had to be scaled to the tenant's MB per token) SLO-aware BWS with slicing, targets 5 % and 15 %, against SLO-aware BWS without. About
+  45 min.
+
+BWR: at the kernel level
+- [x] R1 (done Nov 22 with `torch.compile` on the per-block operators, `head_loss._fused_block_fns`, `--head-fused`: output layer 3.2 GB per step, speed back) One fused kernel per vocabulary block for the output layer and loss (Triton or CUDA)
+  instead of about ten PyTorch operators: output layer near 2.2 GB per step (two reads of the
+  weight), tenant speed back to the usual tenant's.
+- [x] R2 (done Nov 22, `--compile-blocks`: 27 % fewer bytes in the 24 blocks; needs torch._dynamo recompile_limit raised, else only 8 blocks compile) The body compiled block by block, so that the checkpoints survive: 22 % fewer bytes in
+  the body and still a pause after every block.
+- [ ] R3 Inside a block, after P3: a fused LoRA linear layer (as LoRAFusion), fused normalisation.
+- [ ] R4 NVIDIA mechanisms, exploratory: L2 cache set aside for the tenant's small tensors.
+- [x] R5 (done Nov 22, report 5.3) Every BWR step judged on the decode side at equal tenant work (with S3).
+
+Together
+- [x] F1 (done Nov 22 with two to three runs per setting, report section 6) Final comparison on the vLLM engine: today's best (BWS-Budget + BWR-Compile) against the
+  new combinations, three runs each.
+
+Suggested order: S1, S2; then S3 and S4 (with P1); then R1, R2; then F1.
+
+Left after the night of Nov 21/22 (see `reports/night_2026-11-22.md`, section 8): P1 (segments next to decode), P2, R3 (the MLP part
+of the blocks), R4, the cautious SLO loop, a training on real data run to its end. No simulated-decode runs (Jiaxuan, Nov 22).

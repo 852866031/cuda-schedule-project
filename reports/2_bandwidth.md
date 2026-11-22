@@ -350,7 +350,7 @@ The diagram is as drawn on Nov 9, when (2) was "proposed, not built yet" and (3)
 - **What decode pays for is mainly the bytes the second job moves**: 4–7 % per 100 GB/s for a
   read-only job, about 10 % for the real tenant, and the bytes are the quantity to limit directly.
   Earlier work also reports that SM partitioning does not isolate bandwidth (Elvinger et al.,
-  Mosaic, Hummingbird, Ripple; see report 3, section 8).
+  Mosaic, Hummingbird, Ripple; see report 3, section 9).
 - **Timing has little room on a decode node.** While any request runs, the GPU is busy 93–100 %
   of the time, and the stage-2 scheme that let the tenant run only in idle gaps trained nothing.
   Decode keeps the path at 75–79 % with 1, 4 and 8 requests.
@@ -387,7 +387,7 @@ fewer bytes.
   hardware-level profile.
 - **One tenant shape** (configuration 2) for the co-run tables.
 - **The 8-SM tenant point was one run.** Its repeat on Nov 16 gave +3.9 / +6.9 / +5.9 % against
-  +5.4 / +7.5 / +6.4 % here (report 3, section 3.3), so "5–7 %" is 4–7 % over both.
+  +5.4 / +7.5 / +6.4 % here (report 3, section 4.3), so "5–7 %" is 4–7 % over both.
 - **The tenant's GB/s next to decode is computed** from its tok/s × its solo bytes per token. With
   4 and 8 requests the two jobs' bytes add up to 3–4.5 % less than the counter reads; the likely
   cause, that the tenant's bytes per token change next to decode, was not checked.
@@ -398,7 +398,7 @@ fewer bytes.
 - Which part of the path (L2, the GPU-memory controllers, something else) does the limiting when
   the total is below these levels. Proposed tests: a second job with a working set just below and
   just above the L2 size at the same call rate (TODO E2.3); Nsight Compute profiles of decode's
-  L2 hit rate (E2.5). A first version ran on Nov 16 (report 3, section 6.2): with 8 requests and
+  L2 hit rate (E2.5). A first version ran on Nov 16 (report 3, section 7.2): with 8 requests and
   working sets of 3 and 64 MB the counter reads 6–8 % more than decode's own bytes, and decode
   loses 5–7 % with the clock unchanged.
 - A reader costs decode about half as much per byte from 8–16 SMs as from 64–96; for the real

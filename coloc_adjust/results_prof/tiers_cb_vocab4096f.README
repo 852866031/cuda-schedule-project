@@ -1,0 +1,2 @@
+GPU memory the best tenant needs per shape (ft_worker.py --calibrate, Nov 22 2026), bytes.
+Shape 0 (one micro-batch) measured 5380571443 bytes, but is switched off here (set to 1e12): it moves 6.57 MB per token against 5.00 for shape 1 and its largest piece is 0.68 GB. Shapes 4-6 (host RAM) are not supported with compiled blocks.

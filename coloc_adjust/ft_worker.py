@@ -26,8 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from layer_offload import OffloadManager
 from xfer_trace import XferTrace, default_path
 from green_ctx import GreenCtx
-from pacing import Bpt, BlockPacer, cap_tok_s
+from pacing import Bpt, BlockPacer, BytePacer, SegTable, cap_tok_s
 from loss_chunk import chunked_lm_loss
+from head_loss import split_lm_loss, vocab_lm_loss
 
 GiB = 1024 ** 3
 TOTAL_GIB = 31.3536
@@ -60,12 +61,21 @@ ap.add_argument("--green-dynamic", action="store_true", help="take the SM count 
 ap.add_argument("--gbps-cap", type=float, default=0.0, help="fixed GB/s allowance; 0 = follow the budget file's gbps if present")
 ap.add_argument("--bpt-json", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "results_o3", "bytes_per_token.json"), help="MB per token by variant and shape (tenant_bytes.py)")
 ap.add_argument("--bpt-variant", default="base", help="row of --bpt-json used to turn GB/s into tokens/s ('base' also for a variant that must do the usual tenant's tokens/s)")
-ap.add_argument("--pace", default="step", choices=["step", "block"], help="keep the cap by pausing after a step, or in slices at block boundaries; the budget file's 'pace' overrides")
+ap.add_argument("--pace", default="step", choices=["step", "block", "bytes"], help="keep the cap by pausing after a step, in slices at block boundaries (equal work assumed per checkpoint), or by the byte ledger: chunks of equal bytes from the per-segment table; the budget file's 'pace' overrides")
+ap.add_argument("--pace-window-ms", type=float, default=12.0, help="with --pace bytes: a chunk is GB/s x this window; 0 = one pause after the step (BWS-Budget). The budget file's 'window' overrides")
+ap.add_argument("--seg-table", default=None, help="per-segment bytes of a step (segment_bytes.py); default: results_prof/seg_<variant of these flags>.csv")
+ap.add_argument("--seg-table-cfg", type=int, default=2, help="the shape (TIERS index) the table was measured for; other shapes fall back to the pause after the step")
 ap.add_argument("--slice-blocks", type=int, default=8, help="blocks per slice with --pace block; the budget file's 'slice' overrides")
 ap.add_argument("--lora-top-layers", type=int, default=0, help="LoRA on the top N layers only (0 = all layers); changes the training")
 ap.add_argument("--attn", default=None, help="attention implementation (sdpa, eager); default: the model's")
 ap.add_argument("--compile", action="store_true", help="torch.compile the model (no block hooks: no idle gate, no block pacing, no mid-step preemption)")
+ap.add_argument("--compile-blocks", action="store_true", help="torch.compile each of the model's blocks on its own: the block hooks stay, so the tenant can still pause after every block (the shapes with layers in host RAM are not supported: use --no-slow-shapes)")
 ap.add_argument("--loss-chunk", type=int, default=0, help="output layer and loss over this many positions at a time (0 = the usual way)")
+ap.add_argument("--head", default="model", choices=["model", "split", "vocab"], help="output layer and loss: the model's own; 'split' = the same operators with a checkpoint between them; 'vocab' = over blocks of the vocabulary, the full logits never exist (head_loss.py)")
+ap.add_argument("--vocab-block", type=int, default=8192, help="vocabulary rows per block with --head vocab")
+ap.add_argument("--head-fused", action="store_true", help="with --head vocab: the operators of a vocabulary block as compiled kernels (head_loss._fused_block_fns)")
+ap.add_argument("--nvtx", action="store_true", help="profiling: synchronise and emit an NVTX mark at every checkpoint and at step begin/end (segment_bytes.py)")
+ap.add_argument("--nvtx-steps", action="store_true", help="profiling: NVTX marks at step begin and end only, no extra synchronisation inside the step (pace_check.py)")
 ap.add_argument("--forward-only", action="store_true", help="reference: forward pass only, nothing is trained")
 ap.add_argument("--force-ckpt", action="store_true", help="gradient checkpointing in every shape")
 ap.add_argument("--no-slow-shapes", action="store_true", help="shapes with offload count as 'does not fit': pause instead")
@@ -94,8 +104,15 @@ _lora = dict(r=args.lora_r, lora_alpha=2 * args.lora_r, target_modules=["q_proj"
 if args.lora_top_layers: _lora["layers_to_transform"] = list(range(model.config.num_hidden_layers - args.lora_top_layers, model.config.num_hidden_layers))
 model = get_peft_model(model, LoraConfig(**_lora))
 if not args.lora_top_layers: model.enable_input_require_grads()   # with LoRA on the top layers only, the backward pass stops at the lowest adapted layer
+if args.compile_blocks:                    # R2 of the plan of Nov 21: one compiled function per block; checkpoints between blocks survive
+    _ly = model.base_model.model.model.layers
+    # every block and every micro-batch size is its own compilation of the same code object; with the default limit (8) only
+    # the first 8 blocks are compiled and the rest run uncompiled without any error
+    torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 16 * len(_ly))
+    torch._dynamo.config.accumulated_recompile_limit = max(torch._dynamo.config.accumulated_recompile_limit, 128 * len(_ly))
+    for _j in range(len(_ly)): _ly[_j] = torch.compile(_ly[_j])
 net = torch.compile(model) if args.compile else model
-body = torch.compile(model.base_model.model.model) if (args.compile and args.loss_chunk) else None
+body = torch.compile(model.base_model.model.model) if (args.compile and (args.loss_chunk or args.head != "model")) else None
 bpt = Bpt(args.bpt_json, args.bpt_variant)
 model.train()
 ckpt_state = {"on": None}
@@ -131,8 +148,17 @@ def poll_budget_midstep():
     if peaks.get(cfg_i, 0) + args.margin_gib * GiB > budget:
         raise Preempt(f"budget {budget/GiB:.2f} GiB < need of cfg {cfg_i}")
 def rd(i): return struct.unpack_from("<q", page, i * 8)[0]
+mark = {"step": 0, "label": ""}; NV = torch.cuda.nvtx if args.nvtx else None; NVS = torch.cuda.nvtx if (args.nvtx or args.nvtx_steps) else None
+def nv_mark(name):
+    """profiling only: the mark sits where the GPU work issued so far has finished"""
+    sync_tenant(); torch.cuda.nvtx.mark(name)
+def ckpt(label=""):
+    """a named checkpoint: the label names the work that follows it (block hooks, head_loss.py)"""
+    mark["label"] = label; gate()
 def gate(*_):
-    pacer.tick()
+    if NV is not None: nv_mark(f"s{mark['step']}u{pacer.units + 1}:{mark['label']}")
+    mark["label"] = ""
+    pacer.tick(); bpacer.tick()
     poll_budget_midstep()
     if page is None or rd(0) != MAGIC: return
     t0 = time.monotonic_ns()
@@ -143,8 +169,8 @@ def gate(*_):
     ev = torch.cuda.Event(); ev.record(); fence["ev"] = ev
     gate_ns["v"] += time.monotonic_ns() - t0
 if not args.compile:
-    for m in layers:
-        m.register_forward_pre_hook(lambda *a: gate()); m.register_full_backward_pre_hook(lambda *a: gate())
+    for j, m in enumerate(layers):
+        m.register_forward_pre_hook(lambda *a, j=j: ckpt(f"blk{j}:fwd")); m.register_full_backward_pre_hook(lambda *a, j=j: ckpt(f"blk{j}:bwd"))
 duty_state = {"t": time.monotonic_ns(), "busy": 0}
 def busy_duty():
     """fraction of the last interval the engine reported busy (from the page's busy_ns_total)."""
@@ -298,19 +324,37 @@ def set_green(sms):
 peaks = {}
 if os.path.exists(args.tiers_json):
     peaks = {int(k): float(v) for k, v in json.load(open(args.tiers_json)).items()}
-budget_extra = {"sms": None, "cap": None, "gbps": None, "pace": None, "slice": None}
+budget_extra = {"sms": None, "cap": None, "gbps": None, "pace": None, "slice": None, "window": None}
 compiled_ok = set()   # with --compile: the shapes compiled at start
 def sync_tenant():
     """wait for the tenant's queued kernels (the hook may run in autograd's device thread, so name the stream)"""
     (green["ctx"].torch_stream() if green["ctx"] is not None else torch.cuda.default_stream()).synchronize()
 pacer = BlockPacer(sync_tenant, poll=poll_budget_midstep)
+bpacer = BytePacer(sync_tenant, poll=poll_budget_midstep, stop=lambda: stop["flag"])
+def seg_table_path(cfg_i=None):
+    """the table of shape cfg_i: seg_<variant>.csv for the usual shape (--seg-table-cfg), seg_<variant>_t<i>.csv for another"""
+    if args.seg_table and cfg_i in (None, args.seg_table_cfg): return args.seg_table
+    v = ("compile_" if args.compile else "cb_" if args.compile_blocks else "") + (f"vocab{args.vocab_block}{'f' if args.head_fused else ''}" if args.head == "vocab" else "split" if args.head == "split" else "")
+    name = (v.rstrip('_') or 'base') + ("" if cfg_i in (None, args.seg_table_cfg) else f"_t{cfg_i}")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "results_prof", f"seg_{name}.csv")
+segtab = {}          # shape index -> SegTable, or None where no table was measured (that shape pauses after the step)
+def seg_table_for(cfg_i):
+    if cfg_i not in segtab:
+        try:
+            segtab[cfg_i] = SegTable(seg_table_path(cfg_i))
+            print(f"ft_worker: per-segment table for shape {cfg_i}: {segtab[cfg_i].path}: {segtab[cfg_i].n} checkpoints, {segtab[cfg_i].total:.2f} GB per step, largest piece {segtab[cfg_i].largest:.2f} GB", flush=True)
+        except Exception as e:
+            segtab[cfg_i] = None
+            if args.pace == "bytes": print(f"ft_worker: no per-segment table for shape {cfg_i} ({e}); it pauses after the step", flush=True)
+    return segtab[cfg_i]
+seg_table_for(args.seg_table_cfg)
 def read_budget():
     if args.fixed_budget_gib is not None:
         if args.tok_s_cap: budget_extra["cap"] = args.tok_s_cap
         return args.fixed_budget_gib * GiB, 0
     try:
         j = json.load(open(args.budget_file)); budget_extra["sms"] = j.get("sms"); budget_extra["cap"] = args.tok_s_cap or j.get("tok_s_cap")
-        budget_extra["gbps"] = j.get("gbps"); budget_extra["pace"] = j.get("pace"); budget_extra["slice"] = j.get("slice")
+        budget_extra["gbps"] = j.get("gbps"); budget_extra["pace"] = j.get("pace"); budget_extra["slice"] = j.get("slice"); budget_extra["window"] = j.get("window")
         return float(j["bytes"]), int(j.get("seq", 0))
     except Exception:
         return TOTAL_GIB * GiB, 0
@@ -319,7 +363,7 @@ def choose(budget, duty):
     for i, cfg in enumerate(TIERS[:-1]):
         if cfg["k"] and duty > args.collision_duty and cfg["k"] < 4: continue
         if args.no_slow_shapes and (cfg["act"] or cfg["off"]): continue
-        if args.compile and compiled_ok and i not in compiled_ok: continue   # a shape first met in mid-run would compile for ~45 s inside one step
+        if (args.compile or args.compile_blocks or args.head_fused) and compiled_ok and i not in compiled_ok: continue   # a shape first met in mid-run would compile for ~45 s inside one step
         if peaks.get(i, 1e9) + args.margin_gib * GiB <= budget: return i
     return PAUSE
 def apply_cap(budget):
@@ -337,7 +381,7 @@ def publish_state(seq, i, extra=""):
 def train_step(cfg, ids):
     k = cfg["k"]; tokens = ids.numel(); loss_sum = 0.0
     act_stats.update(out_b=0, in_b=0, out_ms=0.0, in_ms=0.0)
-    gate()
+    ckpt("step")
     for i in range(k):
         sub = ids[i::k]
         if args.forward_only:
@@ -346,6 +390,10 @@ def train_step(cfg, ids):
         with act_offload(cfg["act"]):
             if args.loss_chunk:
                 sur, lval = chunked_lm_loss(model, sub, args.loss_chunk, body); loss = sur / k
+            elif args.head == "split":
+                loss = split_lm_loss(model, sub, ckpt, body) / k; lval = None
+            elif args.head == "vocab":
+                sur, lval = vocab_lm_loss(model, sub, args.vocab_block, ckpt, body, args.head_fused); loss = sur / k
             else:
                 out = net(input_ids=sub, labels=sub); loss = out.loss / k; lval = None
         if offload["mgr"] is not None:
@@ -354,7 +402,7 @@ def train_step(cfg, ids):
         else:
             loss.backward()
         loss_sum += float(lval) if lval is not None else loss.item() * k
-        if k > 1: gate()
+        if k > 1: ckpt("mb_end")
     opt.step(); sched.step(); opt.zero_grad(set_to_none=True)
     torch.cuda.synchronize(); pin_recycle()
     return loss_sum / k, tokens
@@ -364,7 +412,7 @@ def main():
     out = open(args.out, "w", newline="") if args.out else None
     w = csv.writer(out) if out else None
     if w: w.writerow(["ts", "step", "cfg", "tier", "k", "off", "act", "dt_ms", "tok_s", "loss", "peak_gib", "reserved_gib",
-                      "gated_ms", "budget_gib", "duty", "act_out_mb", "act_in_mb", "snapshot_ms", "event", "sms", "cap_tok_s", "sleep_ms", "pace", "slices", "slice_sleep_ms", "gbps", "units"])
+                      "gated_ms", "budget_gib", "duty", "act_out_mb", "act_in_mb", "snapshot_ms", "event", "sms", "cap_tok_s", "sleep_ms", "pace", "slices", "slice_sleep_ms", "gbps", "units", "window_ms", "late", "late_ms", "forgiven_ms"])
     to_gpu(); cur = None; seq_seen = -1; t_start = time.time(); last_snap = step; up_since = {"cfg": None, "t": 0.0}
     last_budget = {"v": TOTAL_GIB * GiB}
     if args.green_prebuilt:
@@ -379,7 +427,12 @@ def main():
         torch.cuda.synchronize(); prebuild_green()
     if args.green_remaining_of: set_green(args.green_remaining_of)
     elif args.green_sms and not args.green_dynamic: set_green(args.green_sms)
-    if args.compile and not args.calibrate:
+    def warm_loss(sub, k):
+        """the loss of one micro-batch by the path the run will use (so that this path is what gets compiled)"""
+        if args.head == "vocab": return vocab_lm_loss(model, sub, args.vocab_block, lambda *_: None, body, args.head_fused)[0] / k
+        if args.head == "split": return split_lm_loss(model, sub, lambda *_: None, body) / k
+        return net(input_ids=sub, labels=sub).loss / k
+    if (args.compile or args.compile_blocks or args.head_fused) and not args.calibrate:
         # compile every shape that fits the budget now, before the first real step: a recompilation in mid-run would hold
         # the tenant inside one "step" for tens of seconds, with no hooks to release memory through
         b0, _ = read_budget()
@@ -387,15 +440,16 @@ def main():
             if c_["act"] or c_["off"] or peaks.get(i_, 1e18) + args.margin_gib * GiB > b0: continue
             try:
                 apply_cap(b0); set_ckpt(c_["ckpt"] or args.force_ckpt); tw = time.time()
-                ids = torch.randint(0, vocab, (args.batch, args.seq), generator=gen).to(dev)
+                ids = torch.randint(0, vocab, (args.batch, args.seq), generator=torch.Generator().manual_seed(12345)).to(dev)   # its own generator: the training data of step n is then the same with and without this warm-up
                 for j_ in range(2):
-                    sub = ids[j_::c_["k"]]; (net(input_ids=sub, labels=sub).loss / c_["k"]).backward()
+                    sub = ids[j_::c_["k"]]; warm_loss(sub, c_["k"]).backward()
                 opt.zero_grad(set_to_none=True); torch.cuda.synchronize(); compiled_ok.add(i_); print(f"ft_worker: compiled shape cfg {i_} (k={c_['k']}) in {time.time() - tw:.0f} s", flush=True)
             except torch.OutOfMemoryError:
                 opt.zero_grad(set_to_none=True); torch.cuda.empty_cache(); print(f"ft_worker: shape cfg {i_} did not fit while compiling", flush=True)
     if args.calibrate:
         results = {}
         for i, cfg in enumerate(TIERS[:-1]):
+            if args.no_slow_shapes and (cfg["act"] or cfg["off"]): results[i] = int(peaks.get(i, 1e12)); continue     # shapes this tenant never uses: keep the old figure
             apply_cap(TOTAL_GIB * GiB); set_ckpt(cfg["ckpt"]); set_weight_offload(cfg["off"]); torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats(dev)
             dts = []
             for _ in range(3):
@@ -451,11 +505,16 @@ def main():
             cg = cap_tok_s(float(gbps), bpt.mb(i)); cap = min(cap, cg) if cap else cg
         pace = budget_extra["pace"] or args.pace; nslice = int(budget_extra["slice"] or args.slice_blocks)
         pacer.begin_step(i, ids.numel(), cap if pace == "block" else None, nslice)
+        window_ms = float(budget_extra["window"] if budget_extra["window"] is not None else args.pace_window_ms)
+        use_tab = seg_table_for(i) if (pace == "bytes" and gbps) else None     # one table per shape
+        bpacer.begin_step(use_tab, float(gbps) if gbps else None, window_ms / 1e3)
+        if NVS is not None: mark["step"] += 1; nv_mark(f"s{mark['step']}begin")
         try:
             loss, tokens = train_step(cfg, ids)
             torch.cuda.synchronize()
+            if NVS is not None: nv_mark(f"s{mark['step']}end")
         except Preempt as e:
-            preempt_state["cur"] = None; preempt_state["count"] += 1; pacer.active = False
+            preempt_state["cur"] = None; preempt_state["count"] += 1; pacer.active = False; bpacer.active = False
             opt.zero_grad(set_to_none=True); torch.cuda.synchronize(); torch.cuda.empty_cache()
             event = f"preempted mid-step ({e}) after {(time.time()-t0)*1e3:.0f} ms"
             if w: w.writerow([f"{time.time():.3f}", step, i, cfg["tier"], cfg["k"], cfg["off"], int(cfg["act"]), "", "", "", "", f"{torch.cuda.memory_reserved(dev)/GiB:.2f}", f"{(gate_ns['v']-g0)/1e6:.0f}", f"{budget/GiB:.2f}", f"{duty:.2f}", "", "", "", event]); out.flush()
@@ -467,10 +526,14 @@ def main():
             if w: w.writerow([f"{time.time():.3f}", step, i, cfg["tier"], cfg["k"], cfg["off"], int(cfg["act"]), "", "", "", "", f"{torch.cuda.memory_reserved(dev)/GiB:.2f}", "", f"{budget/GiB:.2f}", f"{duty:.2f}", "", "", "", event]); out.flush()
             cur = None; continue
         preempt_state["cur"] = None; pst = pacer.end_step()
+        bst = bpacer.end_step()                 # byte ledger: settles the step (sleeps until its bytes are paid for)
+        if bst["mismatch"]:
+            print(f"ft_worker: the per-segment table of shape {i} has {segtab[i].n} checkpoints, this step had {bst['units']}; table dropped", flush=True); segtab[i] = None
         dt = time.time() - t0; step += 1
         # P1.1: throughput cap from the VRAM scheduler -- idle after the step so tokens/s (incl. the idle) stays under the cap
-        sleep_ms = 0.0
-        if cap and tokens / dt > cap:
+        sleep_ms = bst["final_sleep_s"] * 1e3
+        if bst["active"]: pst = dict(pst, slices=bst["slices"], sleep_s=bst["sleep_s"])
+        elif cap and tokens / dt > cap:
             pause_s = tokens / cap - dt; t_sl = time.time()
             while time.time() - t_sl < pause_s and not stop["flag"]:
                 time.sleep(min(0.05, pause_s - (time.time() - t_sl)))
@@ -488,7 +551,8 @@ def main():
             w.writerow([f"{time.time():.3f}", step, i, cfg["tier"], cfg["k"], cfg["off"], int(cfg["act"]), f"{dt*1e3:.0f}", f"{tokens/dt:.0f}",
                         f"{loss:.4f}", f"{torch.cuda.max_memory_allocated(dev)/GiB:.2f}", f"{torch.cuda.memory_reserved(dev)/GiB:.2f}",
                         f"{(gate_ns['v']-g0)/1e6:.0f}", f"{budget/GiB:.2f}", f"{duty:.2f}", f"{act_stats['out_b']/2**20:.0f}", f"{act_stats['in_b']/2**20:.0f}", snap_ms, event, green["sms"],
-                        "" if not cap else f"{cap:.0f}", f"{sleep_ms:.0f}", pace, pst["slices"], f"{pst['sleep_s']*1e3:.0f}", "" if not gbps else f"{float(gbps):.1f}", pst["units"]])
+                        "" if not cap else f"{cap:.0f}", f"{sleep_ms:.0f}", pace, pst["slices"], f"{pst['sleep_s']*1e3:.0f}", "" if not gbps else f"{float(gbps):.1f}", pst["units"],
+                        f"{window_ms:g}" if bst["active"] else "", bst["late"], f"{bst['late_s']*1e3:.1f}", f"{bst['forgiven_s']*1e3:.1f}"])
             out.flush()
         if step % 20 == 0:
             print(f"  step {step} cfg {i} (tier {cfg['tier']} k={cfg['k']} off={cfg['off']}): {dt*1e3:.0f} ms, {tokens/dt:.0f} tok/s, "

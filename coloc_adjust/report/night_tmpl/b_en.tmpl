@@ -1,0 +1,240 @@
+### 5.2 First a check: tonight's measurements match Nov 16
+
+Before comparing anything new, the two methods of Nov 16 were run again unchanged, to see whether tonight's machine
+behaves as it did then.
+
+<<T:controls>>
+
+The Nov 16 values below were computed again from that night's raw records with tonight's script, so both nights
+are measured in the same way.
+
+- With no tenant, decode's mean token gap: 12.68 ms on Nov 16, 12.63 ms tonight (median 12.01 against 11.98 ms).
+- Usual tenant, pause after the step: decode's mean, +6.3 % on Nov 16 and <<V:c1_fix:mean>> tonight; the p99 of single
+  steps, +24.0 % against <<V:c1_fix:s99>>.
+- Tenant compiled as a whole, pause after the step (the best method of Nov 16): decode's mean, +4.2 % then and
+  <<V:c2a:mean>> tonight; the p99 of single steps, +10.7 % against <<V:c2a:s99>>.
+- Repeats of one setting differ by less than 0.2 points in the mean. So differences of 0.5 points or more in a mean
+  can be trusted below; for the p99 of single steps a difference needs 3–4 points to count.
+
+### 5.3 How much less decode slows once the tenant is changed
+
+Four tenants, all pausing after the step, each with the budget that gives a tenant progress of about 3,500 tokens per
+second: 50 GB per second for the usual tenant, 30.7 GB per second for the tenant with only the output layer changed,
+19.2 GB per second for the new tenant; the tenant compiled as a whole keeps its setting of Nov 16 (the same cap on
+progress as the usual tenant, 3,712 tokens per second).
+
+<<T:tenants>>
+
+![tenants and ways of pausing](../coloc_adjust/report/figures/night_methods.png)
+
+*Figure 5 — the six settings of this section and the next side by side. Each bar is the change against tonight's runs
+with no tenant; where a setting was run more than once, the circles are the single runs. The last column is the tenant's
+progress.*
+
+Row by row:
+
+1. **Only the output layer changed (change one).** Decode's mean hardly moves (<<V:c1_fix:mean>> → <<V:v_step:mean>>),
+   but the p99 of single-step time falls from <<V:c1_fix:s99>> to <<V:v_step:s99>>. This confirms the inference of
+   section 2: **the slowest 1 % of decode steps were the ones that met the output-layer segments**. Problem B is
+   answered.
+2. **The new tenant (all three changes).** Decode's mean falls to <<V:cvfm_step:mean>>, almost half of the usual
+   tenant's; the TPOT p90 per request falls from <<V:c1_fix:tpot90>> to <<V:cvfm_step:tpot90>>.
+3. **Against the best method of Nov 16 (whole-model compilation)**: decode's mean is a little lower
+   (<<V:cvfm_step:mean>> against <<V:c2a:mean>>), not by much. The clear gains are elsewhere: a lower p99 of single
+   steps (<<V:cvfm_step:s99>> against <<V:c2a:s99>>), and about <<V:gain_tok_all:cvfm_step>> more training over the
+   whole 11 minutes (<<V:cvfm_step:tok_all>> against <<V:c2a:tok_all>> tok/s). The reason for the latter was not worked
+   out. The logs show that both tenants were stopped for lack of GPU memory for only about 2 seconds, so it is not
+   "one can still train and the other has to stop"; the difference arises in the phases with many requests, where
+   every step of both tenants gets slower and those of the tenant compiled as a whole more so (1.86 against 1.66 seconds
+   per step on average over the run).
+
+One thing is not explained: the tenant with only the output layer changed and the tenant compiled as a whole move about
+the same data per second when measured alone (about 30 GB), yet decode's mean cost differs (<<V:v_step:mean>> against
+<<V:c2a:mean>>). So "data moved per second" explains most of the differences but not all. A possible reason is that the
+data a tenant moves next to decode is not what it moves alone (section 7); that was not measured tonight.
+
+### 5.4 Do slices help
+
+Same tenant, same budget, only the way of pausing differs: compute a whole step and then pause, or pause briefly every
+time "budget × 12 ms" of data has been moved.
+
+<<T:slices>>
+
+- **The tenant loses almost no progress any more.** For the new tenant: in the phases counted here,
+  <<V:cvfm_step:tok>> tok/s with the pause after the step and <<V:cvfm_w12:tok>> with slices, the same; over the whole
+  11 minutes <<V:cvfm_step:tok_all>> against <<V:cvfm_w12:tok_all>> tok/s, about 2 % less with slices. The old slices of
+  Nov 16 lost 9 % in the counted phases alone. The "lost progress" half of problem A is solved.
+- **Decode's steps are affected more evenly.** For the new tenant: the median single-step time rises from
+  <<V:cvfm_step:s50>> to <<V:cvfm_w12:s50>> and the p90 falls from <<V:cvfm_step:s90>> to <<V:cvfm_w12:s90>>; the two
+  meet. That is what slices are for: no group of decode steps that is hit hard while the rest is not hit at all.
+- **The mean does not change** (<<V:cvfm_step:mean>> against <<V:cvfm_w12:mean>>). Slices spread the same total effect;
+  they do not shrink it.
+- **No visible gain for the TPOT per request** (p90: <<V:cvfm_step:tpot90>> against <<V:cvfm_w12:tpot90>>). A request
+  has 128 steps, so unevenness between single steps averages out inside a request anyway.
+
+So the full answer to problem A: slices now work as designed and lower the p90 of decode's single steps by about 2
+points; they do not lower the mean and do not help request-level figures. Use them if the worst gap between tokens
+matters; if only the TPOT per request matters, pausing after the step is enough.
+
+### 5.5 What more tenant training costs decode
+
+The new tenant, slices, three fixed budgets.
+
+<<T:tradeoff>>
+
+![cost against progress](../coloc_adjust/report/figures/night_tradeoff.png)
+
+*Figure 6 — one dot per run. Left: decode's mean cost against the tenant's progress. Right: the same dots with the
+tenant's data per second on the horizontal axis (progress times the data per token measured alone).*
+
+- Each further 1,000 tok/s of tenant training costs decode about 0.7 points in the mean. About 1.3 points are there as
+  soon as the tenant is present at all.
+- **Twice the training at the same cost to decode**: the new tenant at <<V:cvfm_w12_x2:tok>> tokens per second slows
+  decode by <<V:cvfm_w12_x2:mean>>; the usual tenant at <<V:c1_fix:tok>> tokens per second already slows it by
+  <<V:c1_fix:mean>>.
+- The other way round, **the same training at about half the cost** (section 5.3).
+
+### 5.6 How many SMs for the tenant
+
+On Nov 16 the tenant was given 32 SMs. The new tenant is much lighter, so 16 and 64 were tried again. Same budget
+(19.2 GB per second), slices.
+
+<<T:sms>>
+
+- Decode's mean cost is almost the same for the three SM counts.
+- The share of time the tenant computes differs more than twofold (<<V:cvfm_w12_sm16:comp>> on 16 SMs,
+  <<V:cvfm_w12_sm64:comp>> on 64). So **decode's cost follows the data the tenant moves, not how many SMs it uses or how
+  long it computes**.
+- On 16 SMs the tenant cannot keep up with its budget and loses about 7 % of its progress. 32 SMs stay a good choice;
+  there is no reason to change it.
+
+### 5.7 Letting the budget follow decode's measured slowdown
+
+The budgets so far were fixed by hand. Another way (already there on Nov 16) is to give a target, for example "decode
+at most 5 % slower": every 2 seconds the scheduler looks at how much slower decode actually is, lowers the tenant's
+budget if it is too slow and raises it otherwise. Tonight this was joined with the new tenant and the new rule for
+pausing.
+
+<<T:slo>>
+
+![automatic budget](../coloc_adjust/report/figures/night_slo.png)
+
+*Figure 7 — The six settings of the table above. Each bar is the change against tonight's runs without a tenant; where
+a setting was run more than once the dots are the single runs. The last column is the tenant's progress.*
+
+- **Target 5 %**: with the new tenant (pause after the step) decode's mean is <<V:cvfm_slow5_step:mean>> slower and the
+  tenant progresses at <<V:cvfm_slow5_step:tok>> tokens per second. The usual tenant on the same night:
+  <<V:c1_slow5:mean>>, <<V:c1_slow5:tok>>. So for about the same cost to decode the new tenant trains about 1.8 times
+  as much; and with the usual tenant the p99 of decode's single-step time is still <<V:c1_slow5:s99>> above the
+  no-tenant value, with the new tenant <<V:cvfm_slow5_step:s99>>.
+- **Target 15 %**: with the new tenant (pause after the step) decode's mean is <<V:cvfm_slow15_step:mean>> slower and
+  the tenant progresses at <<V:cvfm_slow15_step:tok>> tokens per second. The usual tenant on the same night:
+  <<V:c1_slow15:mean>>, <<V:c1_slow15:tok>>. So decode slows less and the tenant trains about 1.5 times as much; the
+  p99 of single steps is <<V:cvfm_slow15_step:s99>> against <<V:c1_slow15:s99>>.
+- **The two rows of the usual tenant are one run each, and where the automatic setting settles differs from run to
+  run.** The Nov 16 records, computed again with the same script: usual tenant, target 5 %: decode +2.9 %, 1,607 tok/s
+  (tonight <<V:c1_slow5:mean>>, <<V:c1_slow5:tok>>); target 15 %: +6.4 %, 4,096 tok/s (tonight <<V:c1_slow15:mean>>,
+  <<V:c1_slow15:tok>>). Both nights together give the same conclusion: where decode is 2–3 % slower the usual tenant
+  trains 1,000–1,600 tokens per second, and the new tenant reaches <<V:cvfm_slow5_step:tok>> at
+  <<V:cvfm_slow5_step:mean>>.
+- **The automatic setting is cautious**: the target says 15 % and decode ends up only 5–6 % slower. The reason found on
+  Nov 16 is that its measure of "how much slower decode is" also counts the slowdown requests cause each other. That
+  reason was not checked again tonight and the setting was not changed. So "target 5 %" and "target 15 %" are here the
+  names of two levels, not the slowdown actually reached.
+- **Slices do here what they do under a fixed budget**: at the 5 % target the p90 of decode's single steps falls from
+  <<V:cvfm_slow5_step:s90>> (pause after the step) to <<V:cvfm_slow5_w12:s90>> (slices), with the mean and the tenant's
+  progress about unchanged. At the 15 % target the two ways of pausing differ little (p90 of single steps:
+  <<V:cvfm_slow15_step:s90>> against <<V:cvfm_slow15_w12:s90>>). The table gives the number of runs of each setting,
+  one or two.
+- One setting was changed on the way: the range of budgets for the automatic setting had been chosen for the usual
+  tenant (10–150 GB per second). The new tenant moves four tenths of the data per token, so for it the lower end was too
+  high to slow it down. Scaled to 4–60 GB per second it works. The one run made before that change is listed apart and
+  not used for conclusions.
+
+---
+
+## 6. Conclusions
+
+Answering the three problems of the start.
+
+**C. Which part of a tenant step moves the data?** Measured: 55 % is the output layer and the loss, four blocks of
+7.97 GB each that cannot be paused and that peak near the card's limit. This measurement became the basis of everything
+after it.
+
+**B. What caused the slowest 1 % of decode steps?** Those four blocks. With the output layer computed over blocks of the
+vocabulary, the p99 of decode's single-step time goes from <<V:c1_fix:s99>> above the no-tenant value to
+<<V:v_step:s99>>; with the new tenant and slices it is <<V:cvfm_w12:s99>>.
+
+**A. Why did slices not help, and now?** They did not because the slicing code assumed all segments were equal while
+they differ 70-fold, and the four largest could not be cut at all. Now pauses follow the data actually moved and the
+tenant can pause everywhere, and slices work as designed: almost no lost progress (about 2 % over the whole 11 minutes), and the p90 of decode's single steps about
+2 points lower. They do not lower decode's mean and do not help the TPOT per request.
+
+**For the main line (the tenant keeps training, decode slows as little as possible) the most useful result of the night
+is the three changes to the tenant:**
+
+| What is compared | Usual tenant, pause after the step (the method of Nov 16) | New tenant, slices |
+|---|---|---|
+| Decode's mean slowdown at the same tenant training (about 3,500–3,700 tok/s) | <<V:c1_fix:mean>> | <<V:cvfm_w12:mean>> |
+| The same, TPOT p90 per request | <<V:c1_fix:tpot90>> | <<V:cvfm_w12:tpot90>> |
+| The same, p99 of decode's single-step time | <<V:c1_fix:s99>> | <<V:cvfm_w12:s99>> |
+| Tenant training when decode is a little over 6 % slower | <<V:c1_fix:tok>> tok/s | <<V:cvfm_w12_x2:tok>> tok/s |
+| Budget set automatically, level "target 5 %" (decode's mean in fact about 2 % slower): how much the tenant trains | <<V:c1_slow5:tok>> tok/s | <<V:cvfm_slow5_w12:tok>> tok/s |
+| Data per step, tenant alone | 57.2 GB | 21.9 GB |
+| GPU memory needed with the same way of splitting a step (4 batches of 2) | 5.0 GiB | 2.3 GiB |
+
+Against the best method of Nov 16 (the tenant compiled as a whole) the new tenant is only a little better in decode's
+mean (<<V:c2a:mean>> → <<V:cvfm_w12:mean>>). The progress is mainly: a smaller tail of decode's single steps, about
+<<V:gain_tok_all:cvfm_w12>> more tenant training over the whole 11 minutes, and a place to pause after every layer, so
+that slices and the automatic budget can be used with it.
+
+**One more conclusion, about where the cost comes from**: at one budget, with the tenant on 16, 32 or 64 SMs, decode's
+mean cost is almost the same. Decode's cost follows the data the tenant moves. This supports the overall direction of
+controlling that data once more.
+
+---
+
+## 7. What did not work, and what to read with care
+
+- **Leave 3–4 points of margin on any p99.** Between tonight's no-tenant baselines the p99 of single steps itself
+  differs that much. Means, medians and p90 do not have this problem (they differ by less than 0.2 points).
+- **The single-step statistics leave out two kinds of gaps** (those while another request is admitted, and the engine's
+  own occasional double gaps); see 5.1. With nothing left out, the p99 of token gaps is set mainly by the engine itself
+  and changes by about 1 % with or without a tenant; the tables also give the p95 with nothing left out.
+- **The data per segment was measured with the tenant alone.** Whether it is the same next to decode was not measured
+  tonight; it was used as "about the same". The unexplained difference of 5.3 may come from this.
+- **Only the arrival rates of 0.5 and 1 request per second are counted.** At higher rates decode queues by itself and
+  the tenant often stops for lack of GPU memory; that was not analysed separately.
+- **The new tenant does not support the ways of splitting a step that keep part of the data in host RAM.** When GPU memory is very tight it can
+  only pause. It needs less GPU memory to begin with, and under tonight's load it trained more over the 11 minutes than
+  the usual tenant; more extreme memory pressure was not tried.
+- **The cautious automatic setting (5.7) was left as it is.**
+- **Four runs are not used for conclusions** and are listed in the table at the end of this section: one was cut
+  13 seconds before its end; one was made while the new tenant still used the usual tenant's table of memory needs (it
+  needs less than half of that memory; with the old table it took the larger ways of splitting for too large and
+  computed 73 % of its steps as "4 batches" and 25 % as "8 batches" instead of the "2 batches" that would have fitted); one was made while the new tenant still used "1 batch of 8" (63 % of its steps), which moves more data; one was
+  made before the range of the automatic budget was changed.
+- **Whether the training is the same was checked as far as "the loss agrees step by step over 1,500 steps"** (3.4).
+  The tenant trains on randomly generated token sequences; it is a stand-in job that produces load. So what is compared
+  is numerical agreement, not how good the final model is. A training on real data run to its end was not compared.
+- **A problem found and fixed on the way**: the per-layer compilation at first compiled only 8 layers (PyTorch's limit
+  on recompilations) without any message; it showed only in "the data did not change".
+- One comparison was started tonight on a program that imitates decode instead of vLLM; it was stopped half-way and
+  none of it is used in this document.
+
+The four runs not used for conclusions (the values are still against tonight's runs without a tenant):
+
+<<T:others>>
+
+---
+
+## 8. What could come next
+
+1. **Measure the data per segment with tenant and decode running together**, turning the "about the same" of section 7
+   into a measurement.
+2. **Fix the cautious automatic setting**, so that "target 15 %" really uses 15 %. By the relation of 5.5 the tenant
+   could then train a good deal more.
+3. **The data left in the 24 layers**: 85 % of the new tenant's data is in them. In the usual tenant's 24 layers, 58 %
+   is in the MLP part (measured alone). That is the next place for a fused kernel.
+4. **Run one training on real data to its end** to confirm that the three changes leave the final model unchanged.
+5. Behaviour at higher arrival rates and under more memory pressure.

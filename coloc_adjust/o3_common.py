@@ -13,6 +13,9 @@ VARIANTS = {
     "top8": ["--lora-top-layers", "8"],
     "top4": ["--lora-top-layers", "4"],
     "fwd": ["--forward-only"],
+    # plan of Nov 21 (names as in results_prof/bytes_per_token_prof.json): the output layer over vocabulary blocks; the same with every block compiled and the block's operators fused
+    "vocab4096": ["--head", "vocab", "--vocab-block", "4096", "--bpt-variant", "vocab4096"],
+    "cb_vocab4096f": ["--compile-blocks", "--no-slow-shapes", "--head", "vocab", "--vocab-block", "4096", "--head-fused", "--bpt-variant", "cb_vocab4096f"],
 }
 SAME_TRAINING = ["compile", "losschunk", "compile_losschunk"]
 LESS_TRAINING = ["top8", "top4"]

@@ -6,6 +6,9 @@ tenant, with the tenant limited in different ways (R1) or in different variants 
               without pacing and with block pacing at a cap it never reaches (the cost of the syncs)
   --plan r1   C1: same tenant work limited in nine ways (PLAN_overnight3.md, R1)
   --plan r3   C2: variants with fewer bytes per token next to decode, at equal tenant tokens/s (R3)
+  --plan n21  plan of Nov 21: the byte ledger (pace "bytes": one pause after the step, or chunks of budget x window) for the usual
+              tenant, the vocabulary-block tenant and the one with compiled blocks and fused kernels, all at the same tenant tokens/s
+              (start with --bpt-json results_prof/bytes_per_token_prof.json --out results_n21/sim)
   --plan smoke  a two-minute pass over the machinery
 
 Every decode step is timed on its own: a CUDA event is recorded on the decode stream after each step of
@@ -23,7 +26,7 @@ from pacing import Bpt
 from o3_common import VARIANTS, O3, chosen_variants
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--plan", required=True, choices=["r0", "r1", "r3", "smoke"])
+ap.add_argument("--plan", required=True, choices=["r0", "r1", "r3", "n21", "smoke"])
 ap.add_argument("--out", default=None, help="prefix; default results_o3/<plan>")
 ap.add_argument("--batches", default="1,4,8"); ap.add_argument("--ctx", type=int, default=6272)
 ap.add_argument("--window", type=float, default=20.0); ap.add_argument("--alone-window", type=float, default=5.0)
@@ -41,8 +44,8 @@ BS = [int(b) for b in args.batches.split(",")]; BMAX = max(BS); FULL = 170
 bpt = Bpt(args.bpt_json)
 
 # ---------------------------------------------------------------- the plans
-def P(label, variant="base", sms=32, disjoint=True, pace="none", slc=8, ref=None, decode=True, cap=None):
-    return dict(label=label, variant=variant, sms=sms, disjoint=disjoint, pace=pace, slc=slc, ref=ref, decode=decode, cap=cap)
+def P(label, variant="base", sms=32, disjoint=True, pace="none", slc=8, ref=None, decode=True, cap=None, win=None):
+    return dict(label=label, variant=variant, sms=sms, disjoint=disjoint, pace=pace, slc=slc, ref=ref, decode=decode, cap=cap, win=win)
 CALIB = []
 if args.plan == "r1":
     pts = [P("a", sms=8), P("b", sms=16), P("e", sms=32),
@@ -58,6 +61,12 @@ elif args.plan == "r3":
     SEGS = [[("base", [p_])] + ([(V1, seg_v1)] if V1 else []) + [(V2, seg_v2), ("base", [s_])],
             [("base", [s_, p_]), (V2, seg_v2[::-1])] + ([(V1, seg_v1[::-1])] if V1 else [])]
     print(f"r3: V1 = {V1}, V2 = {V2}", flush=True)
+elif args.plan == "n21":
+    R = ("a", "tok"); V_, F_ = "vocab4096", "cb_vocab4096f"
+    bp = [P("a", sms=8), P("c", pace="step", ref=R), P("bs", pace="bytes", win=0, ref=R), P("bw", pace="bytes", win=12, ref=R)]
+    vp = [P("vs", V_, pace="bytes", win=0, ref=R), P("vw", V_, pace="bytes", win=12, ref=R), P("vw6", V_, pace="bytes", win=6, ref=R)]
+    fp = [P("fs", F_, pace="bytes", win=0, ref=R), P("fw", F_, pace="bytes", win=12, ref=R)]
+    SEGS = [[("base", bp), (V_, vp), (F_, fp)], [(F_, fp[::-1]), (V_, vp[::-1]), ("base", bp[::-1])]]
 elif args.plan == "r0":
     CALIB = [16, 32, 48, 64, 96, 128]
     ta = [P(f"alone{m}", sms=m, decode=False) for m in (8, 16, 32)]
@@ -123,10 +132,13 @@ def measure(g, B, seconds):
 
 # ---------------------------------------------------------------- tenant side
 seq = {"n": 0}; ft = {"p": None, "csv": None, "n": 0}
-def set_budget(sms, cap=None, pace="step", slc=8):
+def set_budget(sms, cap=None, pace="step", slc=8, gbps=None, window=None):
+    """pace "bytes": the tenant keeps `gbps` by its byte ledger (window in ms, 0 = one pause after the step); tok_s_cap stays empty"""
     seq["n"] += 1
     with open(BUD + ".tmp", "w") as f:
-        json.dump(dict(bytes=args.budget_gib * 2**30, seq=seq["n"], sms=sms, tok_s_cap=cap, pace="block" if pace == "block" else "step", slice=slc), f)
+        d = dict(bytes=args.budget_gib * 2**30, seq=seq["n"], sms=sms, tok_s_cap=cap, pace=pace if pace in ("block", "bytes") else "step", slice=slc)
+        if pace == "bytes": d.update(tok_s_cap=None, gbps=gbps, window=window)
+        json.dump(d, f)
     os.replace(BUD + ".tmp", BUD)
 def ft_rows():
     """finished tenant steps: dict(t0, t1, run_s, tokens, sms, cap, pace)"""
@@ -136,7 +148,8 @@ def ft_rows():
             if r.get("tok_s") and r.get("dt_ms") and float(r["dt_ms"]) > 0:
                 te = float(r["ts"]); d = float(r["dt_ms"]) / 1e3; sl = float(r.get("sleep_ms") or 0) / 1e3; ss = float(r.get("slice_sleep_ms") or 0) / 1e3
                 out.append(dict(t0=te - d, t1=te, run_end=te - sl, run_s=d - sl - ss, tokens=float(r["tok_s"]) * d, sms=int(r["sms"] or 0),
-                                cap=float(r["cap_tok_s"]) if r.get("cap_tok_s") else None, pace=r.get("pace") or "step", slices=int(r.get("slices") or 0)))
+                                cap=float(r["cap_tok_s"]) if r.get("cap_tok_s") else None, pace=r.get("pace") or "step", slices=int(r.get("slices") or 0),
+                                window=float(r["window_ms"]) if r.get("window_ms") not in (None, "") else None))
     except Exception: pass
     return out
 def start_tenant(variant):
@@ -161,6 +174,8 @@ def matches(r, want):
     m = want["sms"]
     if (m == 0) != (r["sms"] == 0) or (m and abs(r["sms"] - m) > 3): return False
     if (r["pace"] == "block") != (want["pace"] == "block"): return False
+    if (r["pace"] == "bytes") != (want["pace"] == "bytes"): return False
+    if want["pace"] == "bytes" and (r.get("window") is None or abs(r["window"] - want.get("window", 0)) > 1e-6): return False   # the ledger must be active with this window
     if want["cap"] is None: return r["cap"] is None
     return r["cap"] is not None and abs(r["cap"] - want["cap"]) <= 0.02 * want["cap"] + 1
 def wait_ready(want, n=2, timeout=120):
@@ -187,13 +202,13 @@ def record(pass_i, label, B, g, steps, groups, pt=None, cap=None, sms_got=None, 
     c = gpm.mean(groups[0][0], groups[-1][1]) if groups else gpm.mean(t0, t1)
     ts, rows = tenant_stats(t0, t1) if pt else (dict(tok_s=float("nan"), tok_s_running=float("nan"), run_share=float("nan"), steps=0, slices=0), [])
     row = dict(pass_=pass_i, label=label, B=B, decode_sms=(g.sm_count if g else FULL) if steps else 0, variant=pt["variant"] if pt else "", tenant_sms=sms_got if pt else "",
-               pace=pt["pace"] if pt else "", slice=pt["slc"] if pt else "", cap=f"{cap:.0f}" if cap else "", n=len(steps), gb_per_step=f"{W_GB + B * KV_GB_PER_REQ:.3f}" if steps else "",
+               pace=(pt["pace"] + (f" w{pt['win']}" if pt["pace"] == "bytes" else "")) if pt else "", slice=pt["slc"] if pt else "", cap=f"{cap:.0f}" if cap else "", n=len(steps), gb_per_step=f"{W_GB + B * KV_GB_PER_REQ:.3f}" if steps else "",
                tenant_tok_s=f"{ts['tok_s']:.0f}", tenant_tok_s_running=f"{ts['tok_s_running']:.0f}", tenant_run_share=f"{ts['run_share']:.3f}", tenant_steps=ts["steps"], slices_per_step=f"{ts['slices']:.1f}", **c)
     state = [""] * len(steps)
     if steps:
         ms = [m for _, m in steps]
         row.update(mean_ms=f"{st.fmean(ms):.3f}", p50_ms=f"{q(ms, .5):.3f}", p90_ms=f"{q(ms, .9):.3f}", p99_ms=f"{q(ms, .99):.3f}", group_mean_ms=f"{st.fmean(x[2] for x in groups):.3f}")
-        if pt and rows and pt["pace"] != "block":          # split the decode steps by whether a tenant step was computing at their midpoint
+        if pt and rows and pt["pace"] != "block" and not (pt["pace"] == "bytes" and pt["win"]):          # split the decode steps by whether a tenant step was computing at their midpoint
             starts = [r["t0"] for r in rows]; run, idle = [], []
             for j, (t, m) in enumerate(steps):
                 mid = t + m / 2e3; k = bisect.bisect_right(starts, mid) - 1
@@ -241,8 +256,8 @@ try:
                         lab, mode = pt["ref"]; rr = ref_rate.get((lab, B))
                         if rr is None: print(f"  no reference rate for {pt['label']} B={B} ({lab}); skipped", flush=True); continue
                         cap = rr["tok_s"] if mode == "tok" else rr["tok_s"] * bpt.mb(args.tier, rr["variant"]) / bpt.mb(args.tier, pt["variant"])
-                    want = dict(sms=pt["sms"], pace=pt["pace"], cap=cap)
-                    set_budget(pt["sms"], cap, pt["pace"], pt["slc"])
+                    want = dict(sms=pt["sms"], pace=pt["pace"], cap=cap, window=pt["win"])
+                    set_budget(pt["sms"], cap, pt["pace"], pt["slc"], gbps=cap * bpt.mb(args.tier, pt["variant"]) / 1e3 if (pt["pace"] == "bytes" and cap) else None, window=pt["win"])
                     try: got = wait_ready(want, n=2, timeout=90)
                     except RuntimeError as e:
                         print(f"  {pt['label']} B={B}: {e}; skipped", flush=True)
