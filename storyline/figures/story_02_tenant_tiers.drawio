@@ -1,0 +1,9 @@
+<mxGraphModel adaptiveColors="auto"><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="s0" value="Full batch&lt;br&gt;&lt;small&gt;15.9 GiB, fastest&lt;/small&gt;" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fontSize=14;fillColor=#fde9c8;strokeColor=#e37400;strokeWidth=2;fontColor=#202124;" vertex="1" parent="1"><mxGeometry x="40" y="60" width="190" height="70" as="geometry"/></mxCell>
+<mxCell id="s1" value="Smaller micro-batches&lt;br&gt;&lt;small&gt;2, 4 or 8 per step: 8.7 / 5.0 / 3.2 GiB&lt;/small&gt;" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fontSize=14;fillColor=#fde9c8;strokeColor=#e37400;strokeWidth=2;fontColor=#202124;" vertex="1" parent="1"><mxGeometry x="320" y="60" width="270" height="70" as="geometry"/></mxCell>
+<mxCell id="s2" value="+ activations kept in host RAM&lt;br&gt;&lt;small&gt;2.5 GiB&lt;/small&gt;" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fontSize=14;fillColor=#fde9c8;strokeColor=#e37400;strokeWidth=2;fontColor=#202124;" vertex="1" parent="1"><mxGeometry x="680" y="60" width="230" height="70" as="geometry"/></mxCell>
+<mxCell id="s3" value="+ part of the frozen weights streamed from host RAM&lt;br&gt;&lt;small&gt;2.2 / 1.9 GiB&lt;/small&gt;" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fontSize=14;fillColor=#fde9c8;strokeColor=#e37400;strokeWidth=2;fontColor=#202124;" vertex="1" parent="1"><mxGeometry x="1000" y="60" width="250" height="70" as="geometry"/></mxCell>
+<mxCell id="a1" value="shrink" style="endArrow=open;endSize=10;html=1;" edge="1" source="s0" target="s1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="a2" value="shrink" style="endArrow=open;endSize=10;html=1;" edge="1" source="s1" target="s2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="a3" value="shrink" style="endArrow=open;endSize=10;html=1;" edge="1" source="s2" target="s3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+</root></mxGraphModel>

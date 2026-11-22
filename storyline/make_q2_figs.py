@@ -86,52 +86,57 @@ side(ax[2], "all SMs while it works;\nover the target → sleep more,\nunder the
 save(fig, "q2_slo.png")
 
 # ------------------------------------------------------------------ 2. measured comparison
+# The latency here is the TPOT with the queue wait in it: (last token - request sent) / output tokens. The request's wait in
+# the decode engine's queue and the load of its KV from host RAM count, as well as the decode steps. (The TPOT of reports/1
+# starts at the first output token, so it leaves the queue wait out.)
 SCHED = [(0, 1), (90, 2), (180, 3), (270, 1), (360, 4), (420, 0.5), (480, 2), (510, 3), (540, 2), (570, 1), (600, 1)]; END = 660; SKIP = 10
 PH = [(ta, tb, v) for (ta, v), tb in zip(SCHED, [t for t, _ in SCHED[1:]] + [END])]
+RATES = [0.5, 1, 2, 3, 4]
 def tpot(arm):
     t0 = float(open(os.path.join(D, f"{arm}_t0.txt")).read()); rows = []
     for l in open(os.path.join(D, f"{arm}_load.jsonl")):
         r = json.loads(l)
         if r["rid"].startswith("w") or not r["tok_t"] or r["status"] != 200 or r["error"]: continue
-        rows.append((r["t_send"] - t0, (r["t_done"] - r["tok_t"][0]) / max(1, r["n_out"] - 1) * 1e3))
+        rows.append((r["t_send"] - t0, (r["t_done"] - r["t_send"]) / max(1, r["n_out"]) * 1e3))
     return np.array(rows)
-def by_rate(arm, q):   # mean over the phases at one arrival rate of the per-phase statistic (the method of reports/1, sections 2.4 and 2.5); q = "mean" or a percentile
+def by_rate(arm, q):   # mean over the phases at one arrival rate of the per-phase statistic (first 10 s of a phase left out); q = "mean" or a percentile
     R = tpot(arm); out = {}
     stat = (lambda v: float(np.mean(v))) if q == "mean" else (lambda v: float(np.percentile(v, q)))
-    for rate in (0.5, 1, 2):
+    for rate in RATES:
         v = [stat(R[(R[:, 0] >= a + SKIP) & (R[:, 0] < b), 1]) for a, b, r in PH if r == rate and ((R[:, 0] >= a + SKIP) & (R[:, 0] < b)).sum() > 3]
         out[rate] = float(np.mean(v))
     return out
 def tenant(arm):
-    p = pd.read_csv(os.path.join(D, f"{arm}_phases.csv")); return {r: float(p[p.rps == r].ft_tok_s.mean()) / 1e3 for r in (0.5, 1, 2)}
+    p = pd.read_csv(os.path.join(D, f"{arm}_phases.csv")); return {r: float(p[p.rps == r].ft_tok_s.mean()) / 1e3 for r in RATES}
 ARMS = [("adjust_mps20", "MPS limit of 20 %", "#0072B2", "MPS\n20 %"), ("green_dyn2", "dynamic green context", "#009E73", "green\ncontext"),
         ("tpot_slo15", "latency SLO, 15 %", "#E69F00", "SLO\n15 %"), ("tpot_slo5", "latency SLO, 5 %", "#CC79A7", "SLO\n5 %")]
-rates = [0.5, 1, 2]
 bm, b90 = by_rate("adjust_notenant", "mean"), by_rate("adjust_notenant", 90)
-fig, ax = plt.subplots(1, 4, figsize=(15, 4.9), gridspec_kw=dict(width_ratios=[1, 1, 1, 1.15])); fig.subplots_adjust(top=0.82, bottom=0.27, left=0.045, right=0.995, wspace=0.22)
-w = 0.38
+print("no tenant      mean " + " ".join(f"{bm[r]:.1f}" for r in RATES) + " ms   p90 " + " ".join(f"{b90[r]:.1f}" for r in RATES) + " ms")
+fig, axs = plt.subplots(2, 3, figsize=(14, 8.6)); fig.subplots_adjust(top=0.875, bottom=0.115, left=0.055, right=0.99, wspace=0.2, hspace=0.42)
+ax = list(axs.flat); w = 0.38
 for k, (arm, name, col, short) in enumerate(ARMS):
     sm, s90, ft = by_rate(arm, "mean"), by_rate(arm, 90), tenant(arm)
-    avg = [(sm[r] / bm[r] - 1) * 100 for r in rates]; p90 = [(s90[r] / b90[r] - 1) * 100 for r in rates]
-    print(f"{arm:14s} avg " + " ".join(f"{v:+.1f}%" for v in avg) + "   p90 " + " ".join(f"{v:+.1f}%" for v in p90) + "   tenant " + " ".join(f"{ft[r]:.1f}k" for r in rates))
-    for j, a in enumerate(ax[:3]):
+    avg = [(sm[r] / bm[r] - 1) * 100 for r in RATES]; p90 = [(s90[r] / b90[r] - 1) * 100 for r in RATES]
+    print(f"{arm:14s} avg " + " ".join(f"{v:+.1f}%" for v in avg) + "   p90 " + " ".join(f"{v:+.1f}%" for v in p90) + "   tenant " + " ".join(f"{ft[r]:.1f}k" for r in RATES))
+    for j, a in enumerate(ax[:5]):
         a.bar(k - w / 2 - 0.01, avg[j], w, color=col, lw=0)
         a.bar(k + w / 2 + 0.01, p90[j], w, color=col, lw=0, alpha=0.45, hatch="///", edgecolor=col)
-        a.text(k - w / 2 - 0.01, avg[j] + 0.5, f"{avg[j]:+.0f}", ha="center", va="bottom", fontsize=8.5, color=INK)
-        a.text(k + w / 2 + 0.01, p90[j] + 0.5, f"{p90[j]:+.0f}", ha="center", va="bottom", fontsize=8.5, color=INK, fontweight="bold")
-    x = np.arange(3) + (k - 1.5) * 0.2
-    ax[3].bar(x, [ft[r] for r in rates], 0.185, color=col, lw=0)
-    for xi, r in zip(x, rates): ax[3].text(xi, ft[r] + 0.2, f"{ft[r]:.1f}", ha="center", va="bottom", fontsize=7.5, color=INK)
-for a, r in zip(ax[:3], rates):
-    a.set_title(f"Decode TPOT at {r:g} req/s", loc="left", fontsize=10.5, fontweight="bold"); a.set_ylim(0, 34)
-    a.set_xticks(range(4)); a.set_xticklabels([sh for *_, sh in ARMS], fontsize=9)
-ax[0].set_ylabel("slower than with no tenant (%)")
-ax[3].set_title("Tenant throughput", loc="left", fontsize=10.5, fontweight="bold"); ax[3].set_ylim(0, 14); ax[3].set_ylabel("thousand tokens / s")
-ax[3].set_xticks(range(3)); ax[3].set_xticklabels(["0.5 req/s", "1 req/s", "2 req/s"])
+        a.text(k - w / 2 - 0.01, max(avg[j], 0) + 0.8, f"{avg[j]:+.0f}", ha="center", va="bottom", fontsize=8.5, color=INK)
+        a.text(k + w / 2 + 0.01, max(p90[j], 0) + 0.8, f"{p90[j]:+.0f}", ha="center", va="bottom", fontsize=8.5, color=INK, fontweight="bold")
+    x = np.arange(5) + (k - 1.5) * 0.2
+    ax[5].bar(x, [ft[r] for r in RATES], 0.185, color=col, lw=0)
+    for xi, r in zip(x, RATES): ax[5].text(xi, ft[r] + 0.25, f"{ft[r]:.1f}", ha="center", va="bottom", fontsize=8, color=INK, rotation=90)
+for a, r in zip(ax[:5], RATES):
+    a.set_title(f"Decode at {r:g} req/s", loc="left", fontsize=10.5, fontweight="bold")
+    a.text(0.02, 0.97, f"with no tenant: mean {bm[r]:.1f} ms, p90 {b90[r]:.1f} ms per token", transform=a.transAxes, ha="left", va="top", fontsize=8.5, color=MUTE)
+    a.set_ylim(-4, 62); a.axhline(0, color=INK, lw=0.8); a.set_xticks(range(4)); a.set_xticklabels([sh for *_, sh in ARMS], fontsize=9)
+    a.set_ylabel("slower than with no tenant (%)")
+ax[5].set_title("Tenant throughput", loc="left", fontsize=10.5, fontweight="bold"); ax[5].set_ylim(0, 15); ax[5].set_ylabel("thousand tokens / s")
+ax[5].set_xticks(range(5)); ax[5].set_xticklabels([f"{r:g} req/s" for r in RATES], fontsize=9)
 for a in ax: a.grid(True, axis="y", alpha=0.25); a.set_axisbelow(True); a.spines[["top", "right"]].set_visible(False)
-fig.legend(handles=[Patch(color="#5f6368", label="average (mean TPOT)"),
-                    Patch(facecolor="#5f6368", alpha=0.45, hatch="///", edgecolor="#5f6368", label="tail (p90 TPOT)")],
-           loc="upper left", bbox_to_anchor=(0.04, 0.99), ncol=2, frameon=False, fontsize=10, title="each against the same statistic with no tenant", title_fontsize=8.5, alignment="left")
-fig.legend(handles=[Patch(color=c, label=n) for _, n, c, _ in ARMS], loc="lower center", bbox_to_anchor=(0.5, 0.075), ncol=4, frameon=False, fontsize=9.5)
-fig.text(0.5, 0.02, "3 and 4 req/s are left out: decode needs the whole GPU memory there, so the tenant is paused in every method.", ha="center", fontsize=8.5, color=MUTE)
+fig.legend(handles=[Patch(color="#5f6368", label="average (mean)"), Patch(facecolor="#5f6368", alpha=0.45, hatch="///", edgecolor="#5f6368", label="tail (p90)")],
+           loc="upper left", bbox_to_anchor=(0.05, 0.995), ncol=2, frameon=False, fontsize=10, alignment="left", title_fontsize=9,
+           title="TPOT with the queue wait in it = (last token − request sent) ÷ output tokens; each bar against the same statistic with no tenant")
+fig.legend(handles=[Patch(color=c, label=n) for _, n, c, _ in ARMS], loc="lower center", bbox_to_anchor=(0.5, 0.035), ncol=4, frameon=False, fontsize=9.5)
+fig.text(0.5, 0.012, "At 3 and 4 req/s decode needs the whole GPU memory, so the tenant is paused in every method.", ha="center", fontsize=8.5, color=MUTE)
 out = os.path.join(F, "q2_compare.png"); fig.savefig(out, dpi=140); print(out)
