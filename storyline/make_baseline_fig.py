@@ -19,7 +19,7 @@ def load(arm):
     t0 = float(open(P("t0.txt")).read())
     reqs = [json.loads(l) for l in open(P("load.jsonl"))]; reqs = [r for r in reqs if not r["rid"].startswith("w")]
     R = pd.DataFrame([dict(t_send=r["t_send"] - t0, ok=bool(r["status"] == 200 and not r["error"] and r["tok_t"]),
-                           tpot=((r["t_done"] - r["tok_t"][0]) / max(1, r["n_out"] - 1)) if r["tok_t"] else np.nan) for r in reqs])
+                           tpot=((r["t_done"] - r["t_send"]) / max(1, r["n_out"])) if r["tok_t"] else np.nan) for r in reqs])   # TPOT with the queue wait in it: from the request being sent
     samp = pd.read_csv(P("sampler.csv")); samp["rel"] = samp.t - t0
     ctl = pd.read_csv(P("controller.csv")); ctl["rel"] = ctl.t - t0
     return R, samp, ctl
@@ -61,7 +61,7 @@ for a, key, name in ((ax[1], "full", "Run A · full memory: the KV limit is fixe
 # (4) decode TPOT, both runs on one axis
 ax[3].plot(tt, rolling_tpot(runs["full"][0]), color=C_FULL, lw=4.0, solid_capstyle="round")
 ax[3].plot(tt, rolling_tpot(runs["follow"][0]), color=C_FOL, lw=1.3)
-ax[3].set_ylabel("decode TPOT (ms)"); ax[3].set_ylim(10, 28); title(ax[3], "Decode TPOT, 10-s median: the two runs on one axis")
+ax[3].set_ylabel("decode TPOT (ms)"); ax[3].set_ylim(10, 50); title(ax[3], "Decode TPOT with the queue wait in it, 10-s median: the two runs on one axis")
 two = [Line2D([], [], color=C_FULL, lw=4.0, label="Run A · full memory"), Line2D([], [], color=C_FOL, lw=1.3, label="Run B · follows the load")]
 def note(s): return Line2D([], [], color="none", label=s)
 def in_run(R): return R[R.ok & (R.t_send >= 0) & (R.t_send < END)]
