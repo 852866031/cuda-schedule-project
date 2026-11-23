@@ -1,4 +1,4 @@
-# The paced tenant alone: bytes against the budget (2026-11-21)
+# The paced tenant alone: bytes against the budget (2026-11-22)
 
 Tenant alone on a green context of 32 SMs; memory read + write throughput from Nsight Systems at 10 kHz (1 % = 17.63 GB/s).
 Case = variant_mode: free = no budget; step = byte ledger, one pause after the step; wN = byte ledger, chunks of budget x N ms; blockN = the pacer of Nov 16.
@@ -14,3 +14,6 @@ Case = variant_mode: free = no budget; step = byte ledger, one pause after the s
 | vocab4096_w6 | 50 | 700.5 | 700.0 | 37.80 | 54.0 | 5848 | 54 / 60 / 66 / 70 | 54 / 55 / 56 | 2.6 % / 0.00 % | 116 | 1.1 (1.8) |
 | vocab2048_w12 | 50 | 609.0 | 608.3 | 32.03 | 52.6 | 6726 | 53 / 69 / 95 / 102 | 53 / 57 / 59 | 2.8 % / 0.00 % | 38 | 12.0 (10.6) |
 | base_block1 | 50 | 1163.1 | 1143.4 | 65.29 | 56.1 | 3522 | 31 / 44 / 578 / 608 | 34 / 107 / 108 | 5.3 % / 1.89 % | 193 | 0.0 (0.0) |
+| cb_vocab4096f_free |  | 323.2 |  | 21.32 | 66.0 | 12675 | 73 / 91 / 96 / 97 | 67 / 71 / 73 | 3.1 % / 0.01 % | 0 | 0.0 (0.0) |
+| cb_vocab4096f_step | 50 | 438.3 | 437.5 | 22.07 | 50.3 | 9344 | 59 / 91 / 95 / 97 | 61 / 70 / 72 | 2.3 % / 0.01 % | 0 | 0.0 (242.7) |
+| cb_vocab4096f_w12 | 50 | 440.4 | 437.5 | 22.50 | 51.1 | 9300 | 51 / 71 / 91 / 96 | 51 / 53 / 55 | 2.3 % / 0.01 % | 28 | 7.9 (347.6) |

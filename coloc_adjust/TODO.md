@@ -479,3 +479,14 @@ Suggested order: S1, S2; then S3 and S4 (with P1); then R1, R2; then F1.
 
 Left after the night of Nov 21/22 (see `reports/night_2026-11-22.md`, section 8): P1 (segments next to decode), P2, R3 (the MLP part
 of the blocks), R4, the cautious SLO loop, a training on real data run to its end. No simulated-decode runs (Jiaxuan, Nov 22).
+
+Budget as an upper bound (Jiaxuan, Nov 22 evening: "what we want is not the average but an upper bound"; set aside for now)
+- [ ] U1 Strict mode of the byte ledger: a chunk ends at the last segment border before budget x window would be exceeded
+  (today: the first border after), and a late chunk is not made up for (today: up to one window). Tenant alone: no 12 ms
+  window above the budget (today 1.4 x with the vocabulary-block tenant), and how much tenant work is lost. Then next to decode.
+- [ ] U2 Finer than one decode step: while it computes the tenant runs at its full speed, pauses cannot change that. Measure the
+  changed tenant's full-speed traffic against its number of SMs, so that the SM count can serve as the cap.
+- [ ] U3 One budget for every tenant, so that only the implementation changes (the runs of Nov 21 gave each tenant the budget
+  for 3,600 tok/s: 50 / 30.7 / 19.2 GB/s). Started Nov 22: the tenant with both changes at 50 GB/s, pause after the step and
+  chunks of 12 ms, plus the engine alone (`results_b50/`). Missing: the vocabulary-block-only tenant at the same budget.
+  Note: next to decode the changed tenants move about 45-50 GB/s at full speed (estimate from the logs), so 50 GB/s may not bind.

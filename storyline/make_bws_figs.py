@@ -12,30 +12,33 @@ from matplotlib.patches import Patch
 
 H = os.path.dirname(os.path.abspath(__file__)); D = os.path.join(H, "..", "coloc_adjust", "results_prof")
 ORG, INK, MUTE = "#e37400", "#202124", "#5f6368"; BUDGET = 50
-S = pd.read_csv(os.path.join(D, "pace_summary.csv")); print(S.columns.tolist()[:14])
-COLS = [("base", "Usual tenant", 1050, 1650), ("vocab4096", "Tenant whose output layer is computed in vocabulary blocks", 1190, 165)]   # x range: the length of the shortest trace of the column
+import numpy as np
+S = pd.read_csv(os.path.join(D, "pace_summary.csv")).set_index("case")
+# right column: the tenant with both changes once its traces exist (cb_vocab4096f, measured Nov 22), else the tenant with change 1 only
+RIGHT = ("cb_vocab4096f", "Tenant with changes ① and ②") if os.path.exists(os.path.join(D, "pace_cb_vocab4096f_w12_trace.csv")) else ("vocab4096", "Tenant with change ① only")
+COLS = [("base", "Usual tenant"), RIGHT]; YMAX = 200     # one vertical scale for all panels; taller peaks are cut off and their height is written next to them
 ROWS = [("free", "no limit"), ("step", f"budget {BUDGET} GB/s,\none pause\nafter each step"), ("w12", f"budget {BUDGET} GB/s,\npauses inside\nthe step")]
-# worst 12 ms window of each case, GB/s (pace_summary.md, column "12 ms windows: ... max")
-WORST = {("base", "free"): 610, ("base", "step"): 610, ("base", "w12"): 610, ("vocab4096", "free"): 108, ("vocab4096", "step"): 107, ("vocab4096", "w12"): 72}
-fig, ax = plt.subplots(3, 2, figsize=(13.5, 7.6), sharex="col", sharey="col"); fig.subplots_adjust(top=0.90, bottom=0.115, left=0.215, right=0.985, hspace=0.20, wspace=0.13)
-for j, (ten, name, xmax, ymax) in enumerate(COLS):
+fig, ax = plt.subplots(3, 2, figsize=(13.5, 8.0), sharex="col", sharey=True); fig.subplots_adjust(top=0.865, bottom=0.115, left=0.215, right=0.985, hspace=0.40, wspace=0.09)
+for j, (ten, name) in enumerate(COLS):
+    xmax = min(len(pd.read_csv(os.path.join(D, f"pace_{ten}_{m}_trace.csv"))) for m, _ in ROWS)      # the length of the shortest trace of the column
     for i, (mode, rname) in enumerate(ROWS):
-        a = ax[i][j]; d = pd.read_csv(os.path.join(D, f"pace_{ten}_{mode}_trace.csv"))
-        a.fill_between(d.t_ms, 0, d.gbps, step="mid", color=ORG, lw=0)
-        a.plot(d.t_ms, d.gbps.rolling(12, center=True, min_periods=1).mean(), color="#5b2e00", lw=1.1)
-        if mode != "free": a.axhline(BUDGET, color=INK, lw=1.0, ls="--")
-        a.set_xlim(0, xmax); a.set_ylim(0, ymax); a.grid(True, axis="y", alpha=0.25); a.set_axisbelow(True); a.spines[["top", "right"]].set_visible(False)
-        a.text(0.985, 0.93, f"mean {d.gbps.mean():.0f} GB/s · worst 12 ms: {WORST[(ten, mode)]} GB/s", transform=a.transAxes, ha="right", va="top", fontsize=9, color=INK,
-               bbox=dict(facecolor="white", edgecolor="none", pad=2.0, alpha=0.9))
-        if j == 0: a.text(-0.42, 0.5, rname, transform=a.transAxes, ha="left", va="center", fontsize=10, fontweight="bold", color=INK, linespacing=1.3)
-        if i == 0: a.set_title(name, loc="left", fontsize=10.5, fontweight="bold")
+        a = ax[i][j]; d = pd.read_csv(os.path.join(D, f"pace_{ten}_{mode}_trace.csv")); g = d.gbps.values; r12 = d.gbps.rolling(12, center=True, min_periods=1).mean()
+        a.fill_between(d.t_ms, 0, d.gbps, step="mid", color=ORG, lw=0); a.plot(d.t_ms, r12, color="#5b2e00", lw=1.1)
+        if mode != "free": a.axhline(BUDGET, color=INK, lw=1.2, ls="--", zorder=5)
+        a.set_xlim(0, xmax); a.set_ylim(0, YMAX); a.grid(True, axis="y", alpha=0.25); a.set_axisbelow(True); a.spines[["top", "right"]].set_visible(False)
+        hi = np.where((g > YMAX) & (d.t_ms.values < xmax))[0]                                         # peaks taller than the axis: a mark at the top of each, the height written at the first
+        note = ""
+        if len(hi):
+            grp = np.split(hi, np.where(np.diff(hi) > 20)[0] + 1); tc = [d.t_ms.values[k].mean() for k in grp]
+            a.plot(tc, [YMAX * 1.035] * len(tc), marker="^", ls="", color=INK, ms=5.5, clip_on=False, zorder=6); note = f"   ·   ▲ peaks cut off: up to {g[hi].max():,.0f} GB/s in 1 ms"
+        a.text(1.0, 1.10, f"mean {int(S.mean_gbps[f'{ten}_{mode}'] + 0.5)} GB/s   ·   highest 12 ms window: {S.w12_max[f'{ten}_{mode}']:.0f} GB/s{note}", transform=a.transAxes, ha="right", va="bottom", fontsize=9, color=INK)
+        if j == 0: a.text(-0.42, 0.5, rname, transform=a.transAxes, ha="left", va="center", fontsize=10, fontweight="bold", color=INK, linespacing=1.3); a.set_ylabel("GB/s", fontsize=9)
+        if i == 0: a.text(0.0, 1.26, name, transform=a.transAxes, ha="left", va="bottom", fontsize=11, fontweight="bold", color="black")
         if i == 2: a.set_xlabel("time (ms)")
-        a.set_ylabel("GB/s", fontsize=9)
-        print(f"{ten:10s} {mode:5s} mean {d.gbps.mean():6.1f}  max 1 ms {d.gbps.max():5.0f}  samples {len(d)}")
+        print(f"{ten:14s} {mode:5s} mean {S.mean_gbps[f'{ten}_{mode}']:6.1f}  max 1 ms {g.max():5.0f}  worst 12 ms {S.w12_max[f'{ten}_{mode}']:.0f}  tok/s {S.tok_s[f'{ten}_{mode}']:.0f}  samples {len(d)}")
 fig.legend(handles=[Patch(color=ORG, label="GPU internal bandwidth used by the tenant, 1 ms bins (measured, tenant alone)"), Line2D([], [], color="#5b2e00", lw=1.1, label="the same, 12 ms average"),
-                    Line2D([], [], color=INK, lw=1.0, ls="--", label=f"the budget, {BUDGET} GB/s")],
-           loc="lower center", ncol=3, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, 0.012))
-fig.text(0.985, 0.955, "the two columns have different vertical scales", ha="right", va="center", fontsize=8.5, color=MUTE, style="italic")
+                    Line2D([], [], color=INK, lw=1.2, ls="--", label=f"the budget, {BUDGET} GB/s"), Line2D([], [], marker="^", color=INK, ls="", ms=5.5, label="a peak taller than the axis")],
+           loc="lower center", ncol=4, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, 0.012), columnspacing=1.6)
 out = os.path.join(H, "figures", "bws_pacing.png"); fig.savefig(out, dpi=140); print(out)
 
 # ---------------------------------------------------------------- how a budget is applied: segments -> chunks of equal data -> pauses
