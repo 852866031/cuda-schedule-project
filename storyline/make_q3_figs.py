@@ -140,3 +140,33 @@ for a in ax:
 h, l = ax[1].get_legend_handles_labels(); fig.legend(h, l, loc="lower center", ncol=3, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, 0.045))
 fig.text(0.5, 0.012, "Left: bytes one decode step has to read ÷ the measured step time, decode alone. Right: the vLLM measurement of step 7.0. Vertical lines at 80 SMs.", ha="center", fontsize=8.5, color=MUTE)
 out = os.path.join(F, "q3_bandwidth.png"); fig.savefig(out, dpi=140); plt.close(fig); print(out)
+
+# ---------------------------------------------------------------- 5. a synthetic tenant that only moves bytes: decode's slowdown against its traffic
+# (simulated decode step, coloc_adjust/results/aggr_corun.csv; the slowdown is against the same block with the second task idle)
+# 64 and 96 SMs: the second task on its own SMs, decode on the others (aggr_corun.csv, Nov 2026 run of report 2);
+# all 170 SMs: neither task confined, both on the full device through MPS (aggr_corun_shared.csv, Nov 22)
+def aggr(path, series, m):
+    """[(second task's GB/s, decode's slowdown %)] per batch size. The slowdown is against decode alone on the same SMs, measured before the
+    second task's process exists and again after it has exited; the point at 0 GB/s is the second task present but idle."""
+    a_ = pd.read_csv(os.path.join(CA, "results", path), dtype={"target_gbps": str}); co = a_[(a_.series == series) & (a_.aggr_sms == m)]; out = {}
+    for B in (1, 8):
+        s_ = co[co.B == B]; dsm = s_.decode_sms.iloc[0]
+        base = a_[a_.series.isin(["alone", "alone_end"]) & (a_.decode_sms == dsm) & (a_.B == B)].groupby("series").step_ms.median().mean()
+        pts_ = [(0.0, (s_[s_.target_gbps == "0"].step_ms.median() / base - 1) * 100)]
+        pts_ += [(float(r.aggr_gbps.iloc[0]), (r.step_ms.median() / base - 1) * 100) for t, r in s_[~s_.target_gbps.isin(["0", "max"])].groupby("target_gbps")]
+        out[B] = sorted(pts_)
+    return out
+LINES = [("second task on 64 SMs, decode on the other 106", aggr("aggr_corun.csv", "corun", 64), "#6baed6"),
+         ("second task on 96 SMs, decode on the other 74", aggr("aggr_corun.csv", "corun", 96), "#08306b"),
+         ("both tasks on all 170 SMs", aggr("aggr_corun_shared.csv", "corun_shared", 0), ORG)]
+fig, ax = plt.subplots(1, 2, figsize=(11.5, 4.7), sharey=True); fig.subplots_adjust(top=0.88, bottom=0.27, left=0.075, right=0.985, wspace=0.08)
+for a, B in zip(ax, (1, 8)):
+    for name, d_, col in LINES:
+        xy = d_[B]; a.plot([p[0] for p in xy], [p[1] for p in xy], "-o", color=col, lw=2, ms=6, markeredgecolor="white", markeredgewidth=0.8, label=name)
+        print(f"{name}, {B} in batch: " + "  ".join(f"{x:.0f} GB/s: {y:+.1f}%" for x, y in xy))
+    title(a, f"Decode with {B} request{'s' if B > 1 else ''} in the batch"); a.set_xlabel("GPU-memory traffic of the second task (GB/s)"); xmax = min(d_[B][-1][0] for _, d_, _ in LINES)   # the plot ends where all three lines still have a value
+    a.set_xlim(-20, xmax + 14); a.set_ylim(-2, 85); a.axhline(0, color=MUTE, lw=0.6); clean(a); print(f"  {B} in batch: x axis ends at {xmax:.0f} GB/s")
+ax[0].set_ylabel("decode slower than with no second task (%)")
+h, l = ax[0].get_legend_handles_labels(); fig.legend(h, l, loc="lower center", ncol=3, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, 0.055))
+fig.text(0.5, 0.012, "Simulated decode step; the second task only reads GPU memory at a set rate. At 0 GB/s the second task is there but idle.", ha="center", fontsize=8.5, color=MUTE)
+out = os.path.join(F, "q3_aggressor.png"); fig.savefig(out, dpi=140); plt.close(fig); print(out)

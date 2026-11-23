@@ -35,6 +35,7 @@ ap.add_argument("--batches", default="1,8"); ap.add_argument("--ctx", type=int, 
 ap.add_argument("--window", type=float, default=4.0, help="seconds per measured point")
 ap.add_argument("--kernel", default="gemv32"); ap.add_argument("--chunk-mb", type=int, default=64); ap.add_argument("--chunks", type=int, default=32)
 ap.add_argument("--gpm-period", type=float, default=0.25)
+ap.add_argument("--shared", action="store_true", help="one series, corun_shared: the aggressor on the full device (no green context) next to decode on the full device, so the two share every SM")
 ap.add_argument("--modes", default="", help='E2.7 plan, e.g. "gemv32:100,200,-1;write32:100,200,-1;copy32:100,200,-1;tiny:1,5,20,-1;compute:50%%,-1"')
 args = ap.parse_args()
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -42,6 +43,7 @@ tag = os.path.basename(args.out).replace(".csv", "")
 CTL, AG_CSV = f"/dev/shm/{tag}_ctl", args.out.replace(".csv", "_aggr.csv")
 SMS = [int(x) for x in args.sms.split(",")]; GBPS = [float(x) for x in args.gbps.split(",")]
 FIX = int(args.fixed_split) if args.fixed_split else 0
+if args.shared: SMS, FIX = [0], 0   # aggressor setting 0 = full device
 BS = [int(b) for b in args.batches.split(",")]; BMAX = max(BS)
 MODES = [(k, v.split(",")) for k, v in (x.split(":") for x in args.modes.split(";") if x)]
 BYTE_MODES = ("gemv32", "write32", "copy32", "sum32", "sum64", "gemv16")
@@ -50,7 +52,7 @@ BYTE_MODES = ("gemv32", "write32", "copy32", "sum32", "sum64", "gemv16")
 H, I, L, NKV, GRP, HD, V = 4096, 14336, 32, 8, 4, 128, 128256
 dev, dt = "cuda", torch.bfloat16
 torch.cuda.init()
-rem = {k: GreenCtx(k, remaining=True) for k in sorted(set(SMS) | ({FIX} if FIX else set()))}
+rem = {} if args.shared else {k: GreenCtx(k, remaining=True) for k in sorted(set(SMS) | ({FIX} if FIX else set()))}
 for k, g in rem.items(): print(f"decode context after a {k}-SM split: {g.sm_count} of {g.device_sms} SMs", flush=True)
 def w(*shape): return torch.empty(*shape, device=dev, dtype=dt).normal_(0, 0.02)
 W = [dict(qkv=w(H + 2 * NKV * HD, H), o=w(H, H), gate_up=w(2 * I, H), down=w(H, I)) for _ in range(L)]
@@ -141,7 +143,7 @@ def decode_alone(tag_, seconds):
 decode_alone("alone", 3.0)
 for f in (CTL, AG_CSV):
     if os.path.exists(f): os.remove(f)
-ag = subprocess.Popen([sys.executable, os.path.join(HERE, "bw_aggr.py"), "--ctl", CTL, "--out", AG_CSV, "--sms-set", ",".join(map(str, SMS)),
+ag = subprocess.Popen([sys.executable, os.path.join(HERE, "bw_aggr.py"), "--ctl", CTL, "--out", AG_CSV, "--sms-set", ",".join(str(m) for m in SMS if m),
                        "--kernel", args.kernel, "--chunk-mb", str(args.chunk_mb), "--chunks", str(args.chunks)],
                       stdout=open(args.out.replace(".csv", "_aggr.log"), "w"), stderr=subprocess.STDOUT)
 try:
@@ -175,7 +177,7 @@ try:
                 if t > 0 and t > 0.97 * top[m]: continue
                 set_aggr(m, t); a = time.time(); time.sleep(2.5); r, _ = rec_aggr(m, t, a, time.time())
                 if t < 0: top[m] = r
-        plan = [("corun", m, rem[m], [0.0] + [t for t in GBPS if t <= 0.97 * top[m]] + [-1.0]) for m in SMS]
+        plan = [("corun_shared" if args.shared else "corun", m, rem.get(m), [0.0] + [t for t in GBPS if t <= 0.97 * top[m]] + [-1.0]) for m in SMS]   # rem.get: None = the full device
         if FIX: plan += [("corun_fixed", m, rem[FIX], [0.0] + [t for t in GBPS if t <= 0.97 * top[m]]) for m in SMS if m < FIX]
     for series, m, g, targets in plan:
         for t in targets:
