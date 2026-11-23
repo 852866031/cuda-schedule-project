@@ -7,6 +7,7 @@ G=$1; PORT=$2; LIST=$3
 C=$(cd "$(dirname "$0")" && pwd); KV=$C/../kvcached_validation; mkdir -p "$C/results_sm" "$C/logs_sm"
 export VENV_NAME=.venv-main VLLM_PORT=$PORT; source "$KV/scripts/env.sh"
 PFX=q; [[ ${EAGER:-0} == 1 ]] && PFX=eager
+[[ -n ${OUTPFX:-} ]] && PFX=$OUTPFX   # another name for the result files, e.g. for repeats
 for n in $LIST; do
   TAG=smq_gpu${G}; export PYTHONPATH=$C/hp_patch
   if [[ $n == full ]]; then unset COLOC_ENGINE_SMS; else export COLOC_ENGINE_SMS=$n; fi
