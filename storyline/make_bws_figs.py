@@ -314,7 +314,7 @@ def changes_result(out_name="bwr_result.png"):
             (["cvfm_step_r2", "cvfm_step_r3", "cvfm_step_r4"], "+ changes ① and ② (19.2 GB/s)", "#0072B2")]
     bm, b90 = by_rate(rd, base, "mean", rates), by_rate(rd, base, 90, rates)
     fig, ax = plt.subplots(1, 2, figsize=(12.0, 5.0), gridspec_kw=dict(width_ratios=[1.9, 1])); fig.subplots_adjust(top=0.76, bottom=0.22, left=0.065, right=0.985, wspace=0.18)
-    fig.suptitle("The two changes next to decode on vLLM, at the same training progress", x=0.02, ha="left", fontsize=13, fontweight="bold")
+    fig.suptitle("The same training progress for all tenants: the budget each one needs, next to decode on vLLM", x=0.02, ha="left", fontsize=13, fontweight="bold")
     fig.text(0.02, 0.905, "tenant on 32 SMs; each tenant gets the budget that about 3,600 tokens/s needs, with one pause after each step; decode TPOT includes the queue wait\n"
              "and is compared with decode alone (no tenant) on the same night; Nov 21, two to three runs each", ha="left", va="center", fontsize=9, color=MUTE, linespacing=1.4)
     w = 0.125; gap = 0.01; n = len(ARMS)
@@ -413,3 +413,33 @@ def chunk_detail(variant="cb_vocab4096f", out_name="bwr_chunks_detail.png", zoom
                loc="lower center", ncol=6, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, 0.008), columnspacing=1.8)
     out = os.path.join(H, "figures", out_name); fig.savefig(out, dpi=140); plt.close(fig); print(out)
 chunk_detail()
+
+# ---------------------------------------------------------------- one budget for both tenants (50 GB/s), next to decode on vLLM
+# Usual tenant: results_n21/c1_fix (+ _r2), Nov 21. Tenant with both changes: results_b50/cvfm_step_b50, Nov 22. Both pause once after
+# each step; each against decode alone of its own night (TPOT alone 12.92 / 13.81 ms and 12.92 / 13.82 ms at 0.5 / 1 req/s).
+def same_budget_result(out_name="bwr_same_budget.png"):
+    rates = [0.5, 1]
+    ARMS = [("results_n21", ["adjust_notenant", "adjust_notenant_b", "adjust_notenant_c", "adjust_notenant_d", "adjust_notenant_e"], ["c1_fix", "c1_fix_r2"], "usual tenant", "#E69F00"),
+            ("results_b50", ["adjust_notenant_a"], ["cvfm_step_b50"], "tenant with changes ① and ②", "#0072B2")]
+    fig, ax = plt.subplots(1, 2, figsize=(11.5, 5.0), gridspec_kw=dict(width_ratios=[1.75, 1])); fig.subplots_adjust(top=0.76, bottom=0.20, left=0.07, right=0.985, wspace=0.20)
+    fig.suptitle(f"The same budget for both tenants ({BUDGET} GB/s), next to decode on vLLM", x=0.02, ha="left", fontsize=13, fontweight="bold")
+    fig.text(0.02, 0.905, "tenant on 32 SMs, one pause after each step; decode TPOT includes the queue wait; each bar against decode alone (no tenant) of its own night:\n"
+             "usual tenant on Nov 21 (two runs), tenant with both changes on Nov 22 (one run)", ha="left", va="center", fontsize=9, color=MUTE, linespacing=1.4)
+    w = 0.19; gap = 0.015
+    for k, (rd, base, arms, name, col) in enumerate(ARMS):
+        bm, b90 = by_rate(rd, base, "mean", rates), by_rate(rd, base, 90, rates); m, p = by_rate(rd, arms, "mean", rates), by_rate(rd, arms, 90, rates)
+        ten = [float(np.mean([pd.read_csv(os.path.join(CA, rd, f"{a}_phases.csv")).query("rps == @r").ft_tok_s.mean() for a in arms])) / 1e3 for r in rates]
+        avg = [(m[r] / bm[r] - 1) * 100 for r in rates]; p90 = [(p[r] / b90[r] - 1) * 100 for r in rates]
+        print(f"{name:30s} avg " + " ".join(f"{v:+.1f}%" for v in avg) + "  p90 " + " ".join(f"{v:+.1f}%" for v in p90) + "  tenant " + " ".join(f"{v:.2f}k" for v in ten) + "   decode alone " + " ".join(f"{bm[r]:.2f}" for r in rates) + " ms")
+        for i in range(len(rates)):
+            xa = i + (2 * k - 1.5) * (w + gap) - (0.02 if k == 0 else -0.02); xp = xa + w + gap
+            ax[0].bar(xa, avg[i], w, color=col, lw=0, zorder=2); ax[0].bar(xp, p90[i], w, color=col, lw=0, alpha=0.45, hatch="///", edgecolor=col, zorder=2)
+            for x, v in ((xa, avg[i]), (xp, p90[i])): ax[0].text(x, v + 0.15, f"{v:+.1f} %", ha="center", va="bottom", fontsize=9, color=INK)
+            xt = i + (k - 0.5) * 0.39; ax[1].bar(xt, ten[i], 0.36, color=col, lw=0, zorder=2); ax[1].text(xt, ten[i] + 0.12, f"{ten[i]:.2f}k", ha="center", va="bottom", fontsize=9.5, color=INK)
+    for a, name, ymax, yl in zip(ax, ("Decode TPOT: average and p90", "Tenant progress"), (12, 11), ("slowdown against decode alone (%)", "thousand tokens/s")):
+        a.set_title(name, loc="left", fontsize=11, fontweight="bold"); a.set_xticks(range(len(rates))); a.set_xticklabels([f"{r:g} req/s" for r in rates], fontsize=10); a.set_ylim(0, ymax); a.set_ylabel(yl, fontsize=9.5)
+        a.set_xlim(-0.5, len(rates) - 0.5); a.grid(True, axis="y", alpha=0.25); a.set_axisbelow(True); a.spines[["top", "right"]].set_visible(False)
+    fig.legend(handles=[Patch(color=c, label=n) for _, _, _, n, c in ARMS] + [Patch(facecolor="#5f6368", label="average"), Patch(facecolor="#5f6368", alpha=0.45, hatch="///", edgecolor="#5f6368", label="p90")],
+               loc="lower center", ncol=4, frameon=False, fontsize=10, bbox_to_anchor=(0.5, 0.01), columnspacing=2.2)
+    out = os.path.join(H, "figures", out_name); fig.savefig(out, dpi=140); plt.close(fig); print(out)
+same_budget_result()
