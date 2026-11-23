@@ -19,7 +19,9 @@ for B in sorted(rel.columns):
     ax.plot(rel.index, rel[B], "-o", color=COL[B], lw=2, ms=5, markeredgecolor="white", markeredgewidth=0.8,
             label=f"{B} request{'s' if B > 1 else ''} in the batch")
 ax.axhline(100, color="#5f6368", lw=0.8, ls="--")
-ax.axvline(96, color="#5f6368", lw=1.0, ls="--")
+# the vertical line: the first SM count at which every line has reached the full speed (within 1 %)
+knee = min(n for n in rel.index if (rel.loc[n] >= 99).all()); print("full speed reached at", knee, "SMs")
+ax.axvline(knee, color="#5f6368", lw=1.0, ls="--")
 ax.set_xlim(0, 176); ax.set_ylim(0, 120); ax.set_yticks([0, 20, 40, 60, 80, 100]); ax.set_xticks([8, 32, 56, 80, 96, 128, 170])
 ax.set_xlabel("SMs decode may use (the card has 170)"); ax.set_ylabel("decode speed, % of the speed with all 170 SMs")
 ax.set_title("Decode speed against the number of SMs it may use", loc="left", fontsize=11, fontweight="bold")

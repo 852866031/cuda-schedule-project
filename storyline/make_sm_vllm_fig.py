@@ -33,10 +33,12 @@ for c in LEVELS:
     xs = [n for n in sms if pts[n].get(c)]
     ax.plot(xs, [pts[n][c] for n in xs], "-o", color=COL[c], lw=2, ms=5, markeredgecolor="white", markeredgewidth=0.8,
             label=f"{c} request{'s' if c > 1 else ''} in the batch")
-ax.axhline(100, color="#5f6368", lw=0.8, ls="--"); ax.axvline(96, color="#5f6368", lw=1.0, ls="--")
+# the vertical line: the first SM count at which every line has reached the full speed (within 1 %, the spread between repeats)
+knee = min(n for n in sms if all((pts[n].get(c) or 0) >= 99 for c in LEVELS)); print("full speed reached at", knee, "SMs")
+ax.axhline(100, color="#5f6368", lw=0.8, ls="--"); ax.axvline(knee, color="#5f6368", lw=1.0, ls="--")
 ax.set_xlim(0, 176); ax.set_ylim(0, 120); ax.set_yticks([0, 20, 40, 60, 80, 100]); ax.set_xticks([8, 32, 56, 80, 96, 128, 170])
 ax.set_xlabel("SMs decode may use (the card has 170)"); ax.set_ylabel("decode speed, % of the speed with all 170 SMs")
 ax.set_title("Decode on vLLM: speed against the number of SMs it may use", loc="left", fontsize=11, fontweight="bold")
 ax.grid(True, axis="y", alpha=0.25); ax.spines[["top", "right"]].set_visible(False)
-ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False, fontsize=9.5, title="vLLM engine (eager mode),\ndecode alone on the GPU", title_fontsize=9, alignment="left")
+ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False, fontsize=9.5, title="vLLM engine,\ndecode alone on the GPU", title_fontsize=9, alignment="left")
 out = os.path.join(H, "figures", "decode_vs_sms_vllm.png"); fig.savefig(out, dpi=140); print(out)

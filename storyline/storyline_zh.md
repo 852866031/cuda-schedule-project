@@ -261,7 +261,7 @@ tenant 的显存预算 = 整卡 31.35 GiB − 引擎权重和运行时（约 17 
 
 ![图 7-0](figures/decode_vs_sms_vllm.png)
 
-*图 7-0：vLLM 引擎上，只给 decode 一部分 SM 时，它的速度是用全部 170 个 SM 时的百分之几。三条线是同时有 1、4、8 个请求在跑。竖线在 96 个 SM。*
+*图 7-0：vLLM 引擎上，只给 decode 一部分 SM 时，它的速度是用全部 170 个 SM 时的百分之几。三条线是同时有 1、4、8 个请求在跑。竖线在 80 个 SM：从这里起三条线都到了全速（差 1 % 以内）。*
 
 | 同时在跑的请求数 | 8 个 SM | 16 | 32 | 48 | 64 | 80 | 96 | 128 |
 |---|---|---|---|---|---|---|---|---|
@@ -284,7 +284,8 @@ tenant 的显存预算 = 整卡 31.35 GiB − 引擎权重和运行时（约 17 
 
 ![图 7-0b](figures/decode_vs_sms.png)
 
-*图 7-0b：模拟的 decode 步，同样的横轴和纵轴。出处：`coloc_adjust/results/knee_probe.csv`，报告 2 的第 3 节。*
+*图 7-0b：模拟的 decode 步，同样的横轴和纵轴。竖线按同样的规则画在 128 个 SM：8 个请求那条线在 96 和 112 个 SM 处只有 95 % 和 91 %，
+把这条线推到了右边。出处：`coloc_adjust/results/knee_probe.csv`，报告 2 的第 3 节。*
 
 **注：green context 和 CUDA graph（先不管，记在这里）。**
 - vLLM 默认用 CUDA graph 执行 decode。默认模式下同样的 green context 限制不住引擎：限制到 8 个 SM，decode 还有 73–78 % 的速度
