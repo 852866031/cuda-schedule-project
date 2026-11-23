@@ -230,3 +230,105 @@ def naive_trace(out_name="bws_naive_trace.png", xmax=1050, win=12):
                loc="lower center", ncol=3, frameon=False, fontsize=10, bbox_to_anchor=(0.5, 0.01), columnspacing=2.5)
     out = os.path.join(H, "figures", out_name); fig.savefig(out, dpi=140); plt.close(fig); print(out)
 naive_result(); naive_trace()
+
+# ---------------------------------------------------------------- direction two: the three changes to the tenant, data moved per step
+# From coloc_adjust/results_prof/seg_summary.md (tenant alone on 32 SMs, Nov 21/22). The usual tenant's output layer cannot be told apart
+# in its own row (no check inside), so its split comes from the variant with extra marks between the operators ("split").
+def seg_table():
+    rows = {}
+    for l in open(os.path.join(D, "seg_summary.md")):
+        c = [x.strip() for x in l.strip().strip("|").split("|")]
+        if len(c) >= 13 and c[1].replace(".", "").isdigit(): rows[c[0]] = dict(tok=float(c[2]), gb=float(c[3]), head=float(c[7]) if c[7] else 0.0, big=float(c[9]))
+    return rows
+def changes_bytes(out_name="bwr_bytes.png"):
+    S_ = seg_table(); BL, OR = "#3182bd", "#fdae6b"
+    ROWS = [("base", "usual tenant"), ("vocab4096", "+ ① output layer and loss in vocabulary blocks"), ("cb_vocab4096", "+ ② every layer compiled on its own"), ("cb_vocab4096f", "+ ③ small operations of a vocabulary block fused")]
+    fig, a = plt.subplots(figsize=(12.5, 3.9)); fig.subplots_adjust(top=0.74, bottom=0.17, left=0.335, right=0.70)
+    fig.suptitle("Data moved in one fine-tuning step, after each change", x=0.02, ha="left", fontsize=13, fontweight="bold")
+    fig.text(0.02, 0.885, "tenant alone on 32 SMs, one step of 4,096 tokens in 4 batches; the changes add up from top to bottom", ha="left", va="center", fontsize=9, color=MUTE)
+    base = S_["base"]["gb"]
+    for i, (v, name) in enumerate(ROWS):
+        r = S_[v]; head = S_["split"]["head"] if v == "base" else r["head"]; rest = r["gb"] - head; y = len(ROWS) - 1 - i
+        a.barh(y, rest, 0.62, color=BL, lw=0); a.barh(y, head, 0.62, left=rest + 0.25, color=OR, lw=0)
+        a.text(rest / 2, y, f"{rest:.1f}", ha="center", va="center", fontsize=9.5, color="white"); a.text(rest + 0.25 + head / 2, y, f"{head:.1f}", ha="center", va="center", fontsize=9.5, color=INK)
+        a.text(r["gb"] + 1.2, y, f"{r['gb']:.1f} GB" + ("" if v == "base" else f"   ({(r['gb'] / base - 1) * 100:+.0f} %)"), ha="left", va="center", fontsize=11, fontweight="bold", color=INK)
+        a.text(-1.0, y, name, ha="right", va="center", fontsize=10, color=INK)
+        fig.text(0.80, a.get_position().y0 + (y + 0.5) / len(ROWS) * a.get_position().height, f"{r['big']:.2f} GB", ha="center", va="center", fontsize=10.5, color=INK)
+        fig.text(0.93, a.get_position().y0 + (y + 0.5) / len(ROWS) * a.get_position().height, f"{r['tok'] / 1e3:.1f}k", ha="center", va="center", fontsize=10.5, color=INK)
+        print(f"{v:16s} total {r['gb']:.2f}  layers+rest {rest:.2f}  head {head:.2f}  largest {r['big']:.3f}  tok/s {r['tok']:.0f}")
+    top = a.get_position().y1 + 0.035
+    fig.text(0.80, top, "largest piece\nwithout a pause", ha="center", va="bottom", fontsize=9.5, color=MUTE, linespacing=1.3); fig.text(0.93, top, "tokens/s,\ntenant alone", ha="center", va="bottom", fontsize=9.5, color=MUTE, linespacing=1.3)
+    a.set_xlim(0, 60); a.set_ylim(-0.5, len(ROWS) - 0.5); a.set_yticks([]); a.set_xlabel("GB per step", fontsize=9.5); a.spines[["top", "right", "left"]].set_visible(False); a.grid(True, axis="x", alpha=0.25); a.set_axisbelow(True)
+    fig.legend(handles=[Patch(color=BL, label="the 24 layers (and the rest)"), Patch(color=OR, label="output layer and loss")], loc="lower center", ncol=2, frameon=False, fontsize=10, bbox_to_anchor=(0.5, -0.01), columnspacing=2.5)
+    out = os.path.join(H, "figures", out_name); fig.savefig(out, dpi=140, bbox_inches="tight", pad_inches=0.15); plt.close(fig); print(out)
+changes_bytes()
+
+# ---------------------------------------------------------------- direction two: what merging small operators does (changes 2 and 3), schematics
+# Change 2: one part of a layer, its RMS normalisation, as recorded by coloc_adjust/compile_demo.py on the CPU (reports/3, section 6.2):
+#   eager 8 operators, 5 full-size tensors written; compiled 1 generated kernel, 1 tensor written.
+# Change 3: the second pass over one vocabulary block (coloc_adjust/head_loss.py, vocab_lm_loss, plain and fused); the sizes follow from
+#   the tensor shapes: 1,024 positions x 4,096 words (bf16 8.4 MB, float32 16.8 MB), 1,024 x 896 hidden values (bf16 1.8 MB).
+from matplotlib.patches import FancyBboxPatch
+def merge_figure(out_name, title, sub, ops, merged, head_a, head_b):
+    """ops: [(name, size text, big?, library call?)]; merged: [(first op, one past the last op, text, size text, library call?)]"""
+    MEM, MEDGE, LIB = "#e8f0fe", "#1a73e8", "#e8eaed"; n = len(ops); W = 100.0 / n; g = 1.2
+    fig = plt.figure(figsize=(13.0, 6.2)); fig.suptitle(title, x=0.02, ha="left", fontsize=13, fontweight="bold"); fig.text(0.02, 0.925, sub, ha="left", va="center", fontsize=9, color=MUTE)
+    def row(a, items, head):
+        a.set_xlim(0, 100); a.set_ylim(0, 10); a.axis("off"); a.text(0, 10.3, head, ha="left", va="bottom", fontsize=11, fontweight="bold", color=INK)
+        a.add_patch(FancyBboxPatch((0.3, 0.3), 99.4, 2.6, boxstyle="round,pad=0,rounding_size=0.5", facecolor=MEM, edgecolor=MEDGE, lw=1.2))
+        for x0, x1, name, size, big, lib in items:
+            a.add_patch(FancyBboxPatch((x0 + g / 2, 6.0), x1 - x0 - g, 3.2, boxstyle="round,pad=0,rounding_size=0.5", facecolor=LIB if lib else "#fff4e5", edgecolor=MUTE if lib else ORG, lw=1.3))
+            a.text((x0 + x1) / 2, 7.6, name, ha="center", va="center", fontsize=9.5, color=INK, linespacing=1.25)
+            xa = x1 - W / 2                                # the result leaves at the right end of the box
+            a.annotate("", xy=(xa, 3.0), xytext=(xa, 5.9), arrowprops=dict(arrowstyle="-|>", color=INK, lw=2.6 if big else 0.9, mutation_scale=16 if big else 9))
+            a.text(xa, 1.6, size, ha="center", va="center", fontsize=10.5 if big else 9.5, color=INK if big else MUTE, fontweight="bold" if big else "normal")
+    a = fig.add_axes([0.03, 0.50, 0.94, 0.30]); row(a, [(i * W, (i + 1) * W, nm, sz, big, lib) for i, (nm, sz, big, lib) in enumerate(ops)], head_a)
+    b = fig.add_axes([0.03, 0.10, 0.94, 0.30]); row(b, [(i0 * W, i1 * W, nm, sz, True, lib) for i0, i1, nm, sz, lib in merged], head_b)
+    fig.legend(handles=[Patch(facecolor="#fff4e5", edgecolor=ORG, label="an operator, run on the SMs"), Patch(facecolor=LIB, edgecolor=MUTE, label="a matrix product (a library call, not merged)"),
+                        Patch(facecolor=MEM, edgecolor=MEDGE, label="GPU memory: the size of what the operator writes there"), Line2D([], [], color=INK, lw=2.6, label="writes a full-size tensor"),
+                        Line2D([], [], color=INK, lw=0.9, label="writes a few KB")], loc="lower center", ncol=5, frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.0), columnspacing=1.5, handletextpad=0.5)
+    out = os.path.join(H, "figures", out_name); fig.savefig(out, dpi=140); plt.close(fig); print(out)
+NORM = [("to float32", "3.67 MB", True, False), ("square", "3.67 MB", True, False), ("mean", "4 KB", False, False), ("add ε", "4 KB", False, False), ("1 / square root", "4 KB", False, False),
+        ("multiply", "3.67 MB", True, False), ("to bf16", "1.84 MB", True, False), ("× weight", "1.84 MB", True, False)]
+merge_figure("bwr_compile_layer.png", "Change ②: torch.compile on each layer, shown on one part of a layer (its normalisation, forward pass)",
+             "one batch of 2 × 512 tokens; operators and sizes as recorded on the CPU; a layer has several such runs of small operators between its matrix products",
+             NORM, [(0, len(NORM), "one kernel generated by torch.compile:   to float32 · square · mean · add ε · 1 / square root · multiply · to bf16 · × weight\nreads the input once; the values in between stay inside the SMs", "1.84 MB", False)],
+             "Without torch.compile: 8 operators, one after another; each reads its input from GPU memory and writes its result back", "With torch.compile: the 8 operators become one")
+VOC = [("matrix product\n(the block's scores)", "8.4 MB", True, True), ("to float32", "16.8 MB", True, False), ("subtract the\nlog of the sum", "16.8 MB", True, False), ("exp", "16.8 MB", True, False),
+       ("subtract 1 at the\nright answer", "4 KB", False, False), ("× 1 / n", "16.8 MB", True, False), ("to bf16", "8.4 MB", True, False), ("matrix product\n(the gradient)", "1.8 MB", True, True)]
+merge_figure("bwr_fuse_block.png", "Change ③: torch.compile on the small operators of one vocabulary block (second pass over the block)",
+             "one batch of 1,024 positions and one block of 4,096 words; sizes follow from the tensor shapes; a step has 4 batches × 2 passes × 38 blocks",
+             VOC, [(0, 1, "matrix product\n(the block's scores)", "8.4 MB", True), (1, 7, "one kernel generated by torch.compile:   to float32 · subtract · exp · right answer · × 1 / n · to bf16\nreads the scores once; the values in between stay inside the SMs", "8.4 MB", False),
+                   (7, 8, "matrix product\n(the gradient)", "1.8 MB", True)],
+             "Without torch.compile (after change ①): 6 small operators between the two matrix products; each rewrites the block's scores", "With torch.compile: the 6 small operators become one")
+
+# ---------------------------------------------------------------- direction two, measured next to decode on vLLM (Nov 21/22, results_n21)
+# The three tenants at about the same training progress: each gets the budget that 3,600 tok/s needs at its MB per token (50, 30.7, 19.2 GB/s),
+# kept by one pause after each step. Against decode alone of the same night (five runs pooled). TPOT with the queue wait in it.
+def changes_result(out_name="bwr_result.png"):
+    rates = [0.5, 1]; rd = "results_n21"; base = ["adjust_notenant", "adjust_notenant_b", "adjust_notenant_c", "adjust_notenant_d", "adjust_notenant_e"]
+    ARMS = [(["c1_fix", "c1_fix_r2"], "usual tenant (budget 50 GB/s)", "#E69F00"), (["v_step", "v_step_r2"], "+ change ① (30.7 GB/s)", "#56B4E9"),
+            (["cvfm_step_r2", "cvfm_step_r3", "cvfm_step_r4"], "+ changes ① ② ③ (19.2 GB/s)", "#0072B2")]
+    bm, b90 = by_rate(rd, base, "mean", rates), by_rate(rd, base, 90, rates)
+    fig, ax = plt.subplots(1, 2, figsize=(12.0, 5.0), gridspec_kw=dict(width_ratios=[1.9, 1])); fig.subplots_adjust(top=0.76, bottom=0.22, left=0.065, right=0.985, wspace=0.18)
+    fig.suptitle("The three changes next to decode on vLLM, at the same training progress", x=0.02, ha="left", fontsize=13, fontweight="bold")
+    fig.text(0.02, 0.905, "tenant on 32 SMs; each tenant gets the budget that about 3,600 tokens/s needs, with one pause after each step; decode TPOT includes the queue wait\n"
+             "and is compared with decode alone (no tenant) on the same night; Nov 21, two to three runs each", ha="left", va="center", fontsize=9, color=MUTE, linespacing=1.4)
+    w = 0.125; gap = 0.01; n = len(ARMS)
+    for k, (arms, name, col) in enumerate(ARMS):
+        m, p = by_rate(rd, arms, "mean", rates), by_rate(rd, arms, 90, rates)
+        ten = [float(np.mean([pd.read_csv(os.path.join(CA, rd, f"{a}_phases.csv")).query("rps == @r").ft_tok_s.mean() for a in arms])) / 1e3 for r in rates]
+        avg = [(m[r] / bm[r] - 1) * 100 for r in rates]; p90 = [(p[r] / b90[r] - 1) * 100 for r in rates]
+        print(f"{name:32s} avg " + " ".join(f"{v:+.1f}%" for v in avg) + "  p90 " + " ".join(f"{v:+.1f}%" for v in p90) + "  tenant " + " ".join(f"{v:.2f}k" for v in ten))
+        for i in range(len(rates)):
+            xa = i + (k - (n - 1) / 2) * (2 * (w + gap) + 0.03) - (w + gap) / 2; xp = xa + w + gap
+            ax[0].bar(xa, avg[i], w, color=col, lw=0, zorder=2); ax[0].bar(xp, p90[i], w, color=col, lw=0, alpha=0.45, hatch="///", edgecolor=col, zorder=2)
+            for x, v in ((xa, avg[i]), (xp, p90[i])): ax[0].text(x, v + 0.12, f"{v:+.1f}", ha="center", va="bottom", fontsize=9, color=INK)
+            xt = i + (k - (n - 1) / 2) * 0.27; ax[1].bar(xt, ten[i], 0.25, color=col, lw=0, zorder=2); ax[1].text(xt, ten[i] + 0.06, f"{ten[i]:.2f}k", ha="center", va="bottom", fontsize=9, color=INK)
+    for a, name, ymax, yl in zip(ax, ("Decode TPOT: average and p90", "Tenant progress"), (10, 4.8), ("slowdown against decode alone (%)", "thousand tokens/s")):
+        a.set_title(name, loc="left", fontsize=11, fontweight="bold"); a.set_xticks(range(len(rates))); a.set_xticklabels([f"{r:g} req/s" for r in rates], fontsize=10); a.set_ylim(0, ymax); a.set_ylabel(yl, fontsize=9.5)
+        a.set_xlim(-0.5, len(rates) - 0.5); a.grid(True, axis="y", alpha=0.25); a.set_axisbelow(True); a.spines[["top", "right"]].set_visible(False)
+    fig.legend(handles=[Patch(color=c, label=nm) for _, nm, c in ARMS] + [Patch(facecolor="#5f6368", label="average"), Patch(facecolor="#5f6368", alpha=0.45, hatch="///", edgecolor="#5f6368", label="p90")],
+               loc="lower center", ncol=5, frameon=False, fontsize=10, bbox_to_anchor=(0.5, 0.01), columnspacing=1.8)
+    out = os.path.join(H, "figures", out_name); fig.savefig(out, dpi=140); plt.close(fig); print(out)
+changes_result()
