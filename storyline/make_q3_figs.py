@@ -156,17 +156,28 @@ def aggr(path, series, m):
         pts_ += [(float(r.aggr_gbps.iloc[0]), (r.step_ms.median() / base - 1) * 100) for t, r in s_[~s_.target_gbps.isin(["0", "max"])].groupby("target_gbps")]
         out[B] = sorted(pts_)
     return out
-LINES = [("second task on 64 SMs, decode on the other 106", aggr("aggr_corun.csv", "corun", 64), "#6baed6"),
-         ("second task on 96 SMs, decode on the other 74", aggr("aggr_corun.csv", "corun", 96), "#08306b"),
-         ("both tasks on all 170 SMs", aggr("aggr_corun_shared.csv", "corun_shared", 0), ORG)]
-fig, ax = plt.subplots(1, 2, figsize=(11.5, 4.7), sharey=True); fig.subplots_adjust(top=0.88, bottom=0.27, left=0.075, right=0.985, wspace=0.08)
+# Lines: decode keeps more SMs than the 80 it needs for full speed, so only the traffic changes (aggr_corun_d98_122.csv, Nov 22: the driver
+# hands out SMs in groups of 8, the second task first, so decode gets 98 and 122 rather than 96 and 120).
+LINES = [("decode on 98 SMs, bandwidth workload on the other 72", aggr("aggr_corun_d98_122.csv", "corun", 72), "#6baed6"),
+         ("decode on 122 SMs, bandwidth workload on the other 48", aggr("aggr_corun_d98_122.csv", "corun", 48), "#08306b")]
+# The real fine-tune tenant on 32 SMs next to the same decode step on the other 138 (coloc_adjust/results/knee_bw2_summary.md, series "disjoint").
+# Its traffic = its tokens/s x the MB per token it moves alone on 32 SMs; decode's slowdown against decode alone on the same 138 SMs.
+# Only this setting: with more SMs the tenant also takes SMs decode needs.   {B: [(label, GB/s, slowdown %, ring colour, label position)]}
+TEN = {1: [("fine-tune tenant on 32 SMs", 108, 9.7, "white", (150, 36))],
+       8: [("fine-tune tenant on 32 SMs", 126, 14.4, "white", (160, 40))]}
+RED = "#c5221f"
+fig, ax = plt.subplots(1, 2, figsize=(13.5, 5.0), sharey=True); fig.subplots_adjust(top=0.89, bottom=0.27, left=0.065, right=0.985, wspace=0.08)
 for a, B in zip(ax, (1, 8)):
     for name, d_, col in LINES:
         xy = d_[B]; a.plot([p[0] for p in xy], [p[1] for p in xy], "-o", color=col, lw=2, ms=6, markeredgecolor="white", markeredgewidth=0.8, label=name)
         print(f"{name}, {B} in batch: " + "  ".join(f"{x:.0f} GB/s: {y:+.1f}%" for x, y in xy))
-    title(a, f"Decode with {B} request{'s' if B > 1 else ''} in the batch"); a.set_xlabel("GPU-memory traffic of the second task (GB/s)"); xmax = min(d_[B][-1][0] for _, d_, _ in LINES)   # the plot ends where all three lines still have a value
-    a.set_xlim(-20, xmax + 14); a.set_ylim(-2, 85); a.axhline(0, color=MUTE, lw=0.6); clean(a); print(f"  {B} in batch: x axis ends at {xmax:.0f} GB/s")
-ax[0].set_ylabel("decode slower than with no second task (%)")
+    for k, (name, tx, ty, ring, pos) in enumerate(TEN[B]):
+        a.plot([tx], [ty], "o", ms=12, mfc=RED, mec=ring, mew=1.5, zorder=8, label="the fine-tune tenant on 32 SMs, decode on the other 138" if k == 0 else None)
+        a.annotate(f"{name}:\n{tx} GB/s, +{ty:g} %", xy=(tx, ty), xytext=pos, fontsize=9, color=RED, fontweight="bold", linespacing=1.25, ha="left", va="bottom",
+                   arrowprops=dict(arrowstyle="-", color=RED, lw=0.9, shrinkB=6))
+    title(a, f"Decode with {B} request{'s' if B > 1 else ''} in the batch"); a.set_xlabel("GPU-memory traffic of the bandwidth workload (GB/s)")
+    a.set_xlim(-20, 860); a.set_ylim(-2, 85); a.axhline(0, color=MUTE, lw=0.6); clean(a)
+ax[0].set_ylabel("decode slower than with no second workload (%)")
 h, l = ax[0].get_legend_handles_labels(); fig.legend(h, l, loc="lower center", ncol=3, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, 0.055))
-fig.text(0.5, 0.012, "Simulated decode step; the second task only reads GPU memory at a set rate. At 0 GB/s the second task is there but idle.", ha="center", fontsize=8.5, color=MUTE)
+fig.text(0.5, 0.012, "Simulated decode step. Bandwidth workload: a task that only reads GPU memory at a set rate (at 0 GB/s it is there but idle). Red point: the real fine-tune tenant.", ha="center", fontsize=8.5, color=MUTE)
 out = os.path.join(F, "q3_aggressor.png"); fig.savefig(out, dpi=140); plt.close(fig); print(out)
