@@ -129,6 +129,8 @@ for k, (arm, name, col, short) in enumerate(ARMS):
 for a, r in zip(ax[:5], RATES):
     a.set_title(f"Decode at {r:g} req/s", loc="left", fontsize=10.5, fontweight="bold")
     a.text(0.02, 0.97, f"with no tenant: mean {bm[r]:.1f} ms, p90 {b90[r]:.1f} ms per token", transform=a.transAxes, ha="left", va="top", fontsize=8.5, color=MUTE)
+    if r == 4:   # the engine's own queue-wait counter in the no-tenant run: 1.3 s in this phase (coloc_adjust/results/adjust_notenant_phases.csv)
+        a.text(0.02, 0.905, "the baseline is already queuing here (1.3 s wait)", transform=a.transAxes, ha="left", va="top", fontsize=9, color=INK, fontweight="bold")
     a.set_ylim(-4, 62); a.axhline(0, color=INK, lw=0.8); a.set_xticks(range(4)); a.set_xticklabels([sh for *_, sh in ARMS], fontsize=9)
     a.set_ylabel("slower than with no tenant (%)")
 ax[5].set_title("Tenant throughput", loc="left", fontsize=10.5, fontweight="bold"); ax[5].set_ylim(0, 15); ax[5].set_ylabel("thousand tokens / s")
